@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Transfer Compliance Dashboard | HSBC</title>
+    <!-- Include Select2 for multi-select -->
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --hsbc-red: #DB0011;
+            --hsbc-black: #000000;
+            --hsbc-dark-gray: #333333;
+            --hsbc-gray: #707070;
+            --hsbc-light-gray: #F7F7F7;
+            --hsbc-border: #D8D8D8;
+            --hsbc-white: #FFFFFF;
+            --hsbc-blue: #0077C8;
+            --success-green: #00A758;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+            background-color: var(--hsbc-white);
+            color: var(--hsbc-dark-gray);
+            line-height: 1.6;
+            font-weight: 300;
+        }
+
+        .header {
+            background-color: var(--hsbc-white);
+            color: var(--hsbc-black);
+            padding: 1.2rem 0;
+            border-bottom: 1px solid var(--hsbc-border);
+        }
+
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 3rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .logo-text {
+            font-size: 1.4rem;
+            font-weight: 400;
+            color: var(--hsbc-black);
+            letter-spacing: -0.5px;
+        }
+
+        .logo-subtitle {
+            font-size: 0.85rem;
+            color: var(--hsbc-gray);
+            margin-top: 0.1rem;
+            font-weight: 300;
+        }
+
+        .stats-bar {
+            background-color: var(--hsbc-light-gray);
+            padding: 2.5rem 3rem;
+            border-bottom: 1px solid var(--hsbc-border);
+        }
+
+        .stats-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 3rem;
+        }
+
+        .stat-card {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 300;
+            color: var(--hsbc-black);
+            display: block;
+            letter-spacing: -1px;
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: var(--hsbc-gray);
+            margin-top: 0.5rem;
+            font-weight: 300;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 3rem;
+        }
+
+        .card {
+            background-color: var(--hsbc-white);
+            padding: 3rem;
+            margin: 3rem 0;
+            border: 1px solid var(--hsbc-border);
+        }
+
+        .card-title {
+            font-size: 1.8rem;
+            font-weight: 300;
+            color: var(--hsbc-black);
+            margin-bottom: 2rem;
+            letter-spacing: -0.5px;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-label {
+            font-size: 0.85rem;
+            font-weight: 400;
+            color: var(--hsbc-dark-gray);
+            margin-bottom: 0.6rem;
+        }
+
+        .form-input,
+        .form-select {
+            padding: 0.9rem 1rem;
+            border: 1px solid var(--hsbc-border);
+            font-size: 0.95rem;
+            background-color: var(--hsbc-white);
+            font-weight: 300;
+            color: var(--hsbc-dark-gray);
+        }
+
+        .form-select {
+            appearance: none;
+            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+            background-repeat: no-repeat;
+            background-position: right 1rem center;
+            background-size: 1.2em;
+            padding-right: 3rem;
+        }
+
+        /* Select2 styling */
+        .select2-container--default .select2-selection--multiple {
+            border: 1px solid var(--hsbc-border);
+            padding: 0.5rem;
+            min-height: 42px;
+        }
+
+        .btn-primary {
+            background-color: var(--hsbc-black);
+            color: var(--hsbc-white);
+            padding: 1rem 3rem;
+            border: none;
+            font-size: 0.9rem;
+            font-weight: 400;
+            cursor: pointer;
+        }
+
+        .btn-primary:hover {
+            background-color: var(--hsbc-dark-gray);
+        }
+
+        .btn-secondary {
+            background-color: var(--hsbc-white);
+            color: var(--hsbc-black);
+            padding: 1rem 3rem;
+            border: 1px solid var(--hsbc-black);
+            font-size: 0.9rem;
+            font-weight: 400;
+            cursor: pointer;
+            margin-left: 1rem;
+        }
+
+        .btn-secondary:hover {
+            background-color: var(--hsbc-black);
+            color: var(--hsbc-white);
+        }
+
+        .button-group {
+            display: flex;
+            gap: 1rem;
+            margin-top: 2rem;
+        }
+
+        .results-section {
+            display: none;
+        }
+
+        .results-section.show {
+            display: block;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background-color: var(--hsbc-white);
+        }
+
+        thead {
+            background-color: var(--hsbc-light-gray);
+        }
+
+        th {
+            padding: 1.2rem 1rem;
+            text-align: left;
+            font-weight: 400;
+            font-size: 0.8rem;
+            border-bottom: 1px solid var(--hsbc-border);
+        }
+
+        td {
+            padding: 1.2rem 1rem;
+            border-bottom: 1px solid var(--hsbc-border);
+            font-size: 0.9rem;
+            font-weight: 300;
+        }
+
+        tr:hover {
+            background-color: var(--hsbc-light-gray);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            display: none;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .alert {
+            padding: 1rem 1.5rem;
+            margin-bottom: 1.5rem;
+            display: none;
+        }
+
+        .alert.show {
+            display: block;
+        }
+
+        .alert-error {
+            background-color: #fff5f5;
+            border-left: 3px solid var(--hsbc-red);
+            color: var(--hsbc-red);
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <div>
+                <div class="logo-text">HSBC</div>
+                <div class="logo-subtitle">Data Transfer Compliance</div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Stats Bar -->
+    <div class="stats-bar">
+        <div class="stats-container">
+            <div class="stat-card">
+                <span class="stat-value" id="stat-cases">-</span>
+                <span class="stat-label">Total Cases</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value" id="stat-countries">-</span>
+                <span class="stat-label">Countries</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value" id="stat-jurisdictions">-</span>
+                <span class="stat-label">Jurisdictions</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value" id="stat-pii">-</span>
+                <span class="stat-label">Cases with PII</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <div class="container">
+        <!-- Alert Messages -->
+        <div id="alert-container"></div>
+
+        <!-- Search Form -->
+        <div class="card">
+            <h2 class="card-title">Transfer Compliance Search</h2>
+
+            <form id="search-form">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label" for="origin-country">Originating Country *</label>
+                        <input type="text" id="origin-country" class="form-input" placeholder="e.g., Ireland"
+                            list="origin-countries-list" required>
+                        <datalist id="origin-countries-list"></datalist>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="receiving-country">Receiving Country *</label>
+                        <input type="text" id="receiving-country" class="form-input" placeholder="e.g., Poland"
+                            list="receiving-countries-list" required>
+                        <datalist id="receiving-countries-list"></datalist>
+                    </div>
+
+                    <!-- NEW: Multi-select Purposes -->
+                    <div class="form-group" style="grid-column: 1 / -1;">
+                        <label class="form-label" for="purposes">Legal Processing Purposes (Multi-select)</label>
+                        <select id="purposes" class="form-select" multiple="multiple" style="width: 100%;">
+                        </select>
+                    </div>
+
+                    <!-- NEW: Process L1 -->
+                    <div class="form-group">
+                        <label class="form-label" for="process-l1">Process Area (L1)</label>
+                        <select id="process-l1" class="form-select">
+                            <option value="">-- All Areas --</option>
+                        </select>
+                    </div>
+
+                    <!-- NEW: Process L2 -->
+                    <div class="form-group">
+                        <label class="form-label" for="process-l2">Process Function (L2)</label>
+                        <select id="process-l2" class="form-select">
+                            <option value="">-- All Functions --</option>
+                        </select>
+                    </div>
+
+                    <!-- NEW: Process L3 -->
+                    <div class="form-group">
+                        <label class="form-label" for="process-l3">Process Detail (L3)</label>
+                        <select id="process-l3" class="form-select">
+                            <option value="">-- All Details --</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="has-pii">Contains Personal Data (PII)</label>
+                        <select id="has-pii" class="form-select">
+                            <option value="">-- Select --</option>
+                            <option value="yes">Yes</option>
+                            <option value="no">No</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="button-group">
+                    <button type="submit" class="btn-primary">Search Now</button>
+                    <button type="button" class="btn-secondary" id="reset-btn">Reset Filters</button>
+                    <p style="margin-left: 1rem; color: var(--hsbc-gray); font-size: 0.85rem; align-self: center;">
+                        Search updates automatically as you change filters
+                    </p>
+                </div>
+            </form>
+        </div>
+
+        <!-- Loading Indicator -->
+        <div class="loading" id="loading">
+            <p>Analyzing compliance rules...</p>
+        </div>
+
+        <!-- Triggered Rules Section -->
+        <div class="results-section" id="rules-section">
+            <div class="card">
+                <h2 class="card-title">Triggered Compliance Rules (<span id="rules-count">0</span>)</h2>
+                <div id="rules-container"></div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div class="results-section" id="results-section">
+            <div class="card">
+                <h2 class="card-title">Matching Cases (<span id="results-count">0</span>)</h2>
+                <div id="results-container"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+    <script>
+        const API_BASE = '';
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', () => {
+            loadStats();
+            loadCountries();
+            loadPurposes();  // NEW
+            loadProcesses();  // NEW
+            setupEventListeners();
+        });
+
+        // Load statistics
+        async function loadStats() {
+            try {
+                const response = await fetch(`${API_BASE}/api/stats`);
+                const data = await response.json();
+
+                if (data.success) {
+                    document.getElementById('stat-cases').textContent = data.stats.total_cases.toLocaleString();
+                    document.getElementById('stat-countries').textContent = data.stats.total_countries.toLocaleString();
+                    document.getElementById('stat-jurisdictions').textContent = data.stats.total_jurisdictions.toLocaleString();
+                    document.getElementById('stat-pii').textContent = data.stats.cases_with_pii.toLocaleString();
+                }
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        // Load countries
+        async function loadCountries() {
+            try {
+                const response = await fetch(`${API_BASE}/api/countries`);
+                const data = await response.json();
+
+                if (data.success) {
+                    const originList = document.getElementById('origin-countries-list');
+                    const receivingList = document.getElementById('receiving-countries-list');
+
+                    data.countries.forEach(country => {
+                        const option1 = document.createElement('option');
+                        option1.value = country;
+                        originList.appendChild(option1);
+
+                        const option2 = document.createElement('option');
+                        option2.value = country;
+                        receivingList.appendChild(option2);
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading countries:', error);
+            }
+        }
+
+        // NEW: Load purposes
+        async function loadPurposes() {
+            try {
+                console.log('Loading purposes from:', `${API_BASE}/api/purposes`);
+                const response = await fetch(`${API_BASE}/api/purposes`);
+                const data = await response.json();
+                console.log('Purposes response:', data);
+
+                if (data.success && data.purposes) {
+                    const purposesSelect = document.getElementById('purposes');
+                    console.log('Populating', data.purposes.length, 'purposes');
+
+                    data.purposes.forEach(purpose => {
+                        const option = document.createElement('option');
+                        option.value = purpose;
+                        option.textContent = purpose;
+                        purposesSelect.appendChild(option);
+                    });
+
+                    // Initialize Select2 for multi-select
+                    $('#purposes').select2({
+                        placeholder: 'Select purposes...',
+                        allowClear: true
+                    });
+                    console.log('Select2 initialized for purposes');
+                } else {
+                    console.error('Invalid purposes response:', data);
+                }
+            } catch (error) {
+                console.error('Error loading purposes:', error);
+            }
+        }
+
+        // NEW: Load processes
+        async function loadProcesses() {
+            try {
+                console.log('Loading processes from:', `${API_BASE}/api/processes`);
+                const response = await fetch(`${API_BASE}/api/processes`);
+                const data = await response.json();
+                console.log('Processes response:', data);
+
+                if (data.success) {
+                    // Populate Process L1
+                    const l1Select = document.getElementById('process-l1');
+                    console.log('Populating', data.process_l1.length, 'L1 processes');
+                    data.process_l1.forEach(item => {
+                        const option = document.createElement('option');
+                        option.value = item;
+                        option.textContent = item;
+                        l1Select.appendChild(option);
+                    });
+
+                    // Populate Process L2
+                    const l2Select = document.getElementById('process-l2');
+                    console.log('Populating', data.process_l2.length, 'L2 processes');
+                    data.process_l2.forEach(item => {
+                        const option = document.createElement('option');
+                        option.value = item;
+                        option.textContent = item;
+                        l2Select.appendChild(option);
+                    });
+
+                    // Populate Process L3
+                    const l3Select = document.getElementById('process-l3');
+                    console.log('Populating', data.process_l3.length, 'L3 processes');
+                    data.process_l3.forEach(item => {
+                        const option = document.createElement('option');
+                        option.value = item;
+                        option.textContent = item;
+                        l3Select.appendChild(option);
+                    });
+                    console.log('All process dropdowns populated');
+                } else {
+                    console.error('Invalid processes response:', data);
+                }
+            } catch (error) {
+                console.error('Error loading processes:', error);
+            }
+        }
+
+        // Debounce function to prevent too many API calls
+        let searchTimeout;
+        function debounceSearch() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                triggerDynamicSearch();
+            }, 500);  // Wait 500ms after user stops typing
+        }
+
+        // Setup event listeners
+        function setupEventListeners() {
+            // Keep form submit for Enter key
+            document.getElementById('search-form').addEventListener('submit', (e) => {
+                e.preventDefault();
+                triggerDynamicSearch();
+            });
+
+            // Dynamic search on input changes
+            document.getElementById('origin-country').addEventListener('input', debounceSearch);
+            document.getElementById('receiving-country').addEventListener('input', debounceSearch);
+            document.getElementById('has-pii').addEventListener('change', debounceSearch);
+            document.getElementById('process-l1').addEventListener('change', debounceSearch);
+            document.getElementById('process-l2').addEventListener('change', debounceSearch);
+            document.getElementById('process-l3').addEventListener('change', debounceSearch);
+
+            // Select2 change event for purposes
+            $('#purposes').on('change', function() {
+                debounceSearch();
+            });
+
+            document.getElementById('reset-btn').addEventListener('click', resetForm);
+        }
+
+        // Trigger dynamic search
+        function triggerDynamicSearch() {
+            const originCountry = document.getElementById('origin-country').value.trim();
+            const receivingCountry = document.getElementById('receiving-country').value.trim();
+
+            // Only search if both origin and receiving are provided
+            if (originCountry && receivingCountry) {
+                const purposes = $('#purposes').val() || [];
+                const processL1 = document.getElementById('process-l1').value;
+                const processL2 = document.getElementById('process-l2').value;
+                const processL3 = document.getElementById('process-l3').value;
+                const hasPii = document.getElementById('has-pii').value;
+
+                performSearch(originCountry, receivingCountry, purposes, processL1, processL2, processL3, hasPii);
+            } else {
+                // Clear results if criteria not met
+                document.getElementById('rules-section').classList.remove('show');
+                document.getElementById('results-section').classList.remove('show');
+            }
+        }
+
+
+        // Perform search
+        async function performSearch(originCountry, receivingCountry, purposes, processL1, processL2, processL3, hasPii) {
+            document.getElementById('loading').classList.add('show');
+            document.getElementById('rules-section').classList.remove('show');
+            document.getElementById('results-section').classList.remove('show');
+
+            try {
+                console.log('Searching with:', {originCountry, receivingCountry, purposes, processL1, processL2, processL3});
+
+                // Evaluate rules first
+                const rulesResponse = await fetch(`${API_BASE}/api/evaluate-rules`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        origin_country: originCountry,
+                        receiving_country: receivingCountry,
+                        has_pii: hasPii === 'yes' ? true : hasPii === 'no' ? false : null
+                    })
+                });
+
+                const rulesData = await rulesResponse.json();
+                console.log('Rules data:', rulesData);
+
+                // Display triggered rules
+                displayTriggeredRules(rulesData.triggered_rules || []);
+
+                // Search cases with NEW parameters
+                const searchResponse = await fetch(`${API_BASE}/api/search-cases`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        origin_country: originCountry,
+                        receiving_country: receivingCountry,
+                        purposes: purposes,  // NEW: Array
+                        process_l1: processL1,  // NEW
+                        process_l2: processL2,  // NEW
+                        process_l3: processL3,  // NEW
+                        has_pii: hasPii || null,
+                        requirements: rulesData.requirements || {}
+                    })
+                });
+
+                const searchData = await searchResponse.json();
+                console.log('Cases found:', searchData.total_cases);
+
+                if (searchData.success) {
+                    displayResults(searchData.cases);
+                } else {
+                    showAlert(searchData.error || 'Search failed', 'error');
+                }
+
+            } catch (error) {
+                console.error('Search error:', error);
+                showAlert('An error occurred while searching', 'error');
+            } finally {
+                document.getElementById('loading').classList.remove('show');
+            }
+        }
+
+        // Display triggered rules
+        function displayTriggeredRules(rules) {
+            const rulesSection = document.getElementById('rules-section');
+            const rulesCount = document.getElementById('rules-count');
+            const rulesContainer = document.getElementById('rules-container');
+
+            rulesCount.textContent = rules.length;
+
+            if (rules.length === 0) {
+                rulesContainer.innerHTML = '<p>No compliance rules triggered for this transfer.</p>';
+            } else {
+                let html = '<table><thead><tr>';
+                html += '<th>Rule ID</th><th>Description</th><th>Priority</th><th>Requirements</th>';
+                html += '</tr></thead><tbody>';
+
+                rules.forEach(rule => {
+                    const reqStr = Object.entries(rule.requirements || {})
+                        .map(([module, value]) => `${module}: ${value}`)
+                        .join(', ') || 'None';
+
+                    html += '<tr>';
+                    html += `<td><strong>${rule.rule_id}</strong></td>`;
+                    html += `<td>${rule.description}</td>`;
+                    html += `<td>${rule.priority}</td>`;
+                    html += `<td>${reqStr}</td>`;
+                    html += '</tr>';
+                });
+
+                html += '</tbody></table>';
+                rulesContainer.innerHTML = html;
+            }
+
+            rulesSection.classList.add('show');
+        }
+
+        // Display results
+        function displayResults(cases) {
+            const resultsSection = document.getElementById('results-section');
+            const resultsCount = document.getElementById('results-count');
+            const resultsContainer = document.getElementById('results-container');
+
+            resultsCount.textContent = cases.length;
+
+            if (cases.length === 0) {
+                resultsContainer.innerHTML = '<p>No cases found matching your criteria.</p>';
+            } else {
+                let html = '<table><thead><tr>';
+                html += '<th>Case ID</th><th>Origin</th><th>Receiving</th>';
+                html += '<th>Purposes</th><th>Process</th>';  // NEW
+                html += '<th>PIA</th><th>TIA</th><th>HRPR</th><th>PII</th>';
+                html += '</tr></thead><tbody>';
+
+                cases.forEach(c => {
+                    // NEW: Show purposes as comma-separated list
+                    const purposesStr = c.purposes && c.purposes.length > 0 ? c.purposes.slice(0, 2).join(', ') + (c.purposes.length > 2 ? '...' : '') : '-';
+
+                    // NEW: Show process hierarchy
+                    const processStr = [c.process_l1, c.process_l2, c.process_l3].filter(p => p).join(' → ') || '-';
+
+                    html += '<tr>';
+                    html += `<td><strong>${c.case_id}</strong></td>`;
+                    html += `<td>${c.origin_country}</td>`;
+                    html += `<td>${c.receiving_countries.join(', ')}</td>`;
+                    html += `<td title="${c.purposes ? c.purposes.join(', ') : ''}">${purposesStr}</td>`;
+                    html += `<td title="${processStr}">${processStr}</td>`;
+                    html += `<td>${c.pia_module || 'N/A'}</td>`;
+                    html += `<td>${c.tia_module || 'N/A'}</td>`;
+                    html += `<td>${c.hrpr_module || 'N/A'}</td>`;
+                    html += `<td>${c.has_pii ? 'Yes' : 'No'}</td>`;
+                    html += '</tr>';
+                });
+
+                html += '</tbody></table>';
+                resultsContainer.innerHTML = html;
+            }
+
+            resultsSection.classList.add('show');
+        }
+
+        // Show alert
+        function showAlert(message, type) {
+            const container = document.getElementById('alert-container');
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type} show`;
+            alert.textContent = message;
+            container.appendChild(alert);
+
+            setTimeout(() => {
+                alert.classList.remove('show');
+                setTimeout(() => alert.remove(), 300);
+            }, 5000);
+        }
+
+        // Reset form
+        function resetForm() {
+            document.getElementById('search-form').reset();
+            $('#purposes').val(null).trigger('change');  // Reset Select2
+            document.getElementById('rules-section').classList.remove('show');
+            document.getElementById('results-section').classList.remove('show');
+        }
+    </script>
+</body>
+
+</html>

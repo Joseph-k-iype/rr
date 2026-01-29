@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API Test</title>
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        .result { margin-top: 20px; padding: 15px; border: 1px solid #ccc; }
+        .success { background-color: #d4edda; }
+        .error { background-color: #f8d7da; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>FalkorDB API Diagnostic Test</h1>
+
+    <div>
+        <button onclick="testAPI()">Test API Search (Ireland → Poland)</button>
+        <button onclick="testStats()">Test Stats Endpoint</button>
+        <button onclick="testCountries()">Test Countries Endpoint</button>
+    </div>
+
+    <div id="results"></div>
+
+    <script>
+        const API_BASE = 'http://localhost:5001';
+
+        async function testAPI() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<p>Testing API search for Ireland → Poland...</p>';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/search-cases`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        origin_country: 'Ireland',
+                        receiving_country: 'Poland',
+                        purpose_level1: '',
+                        purpose_level2: '',
+                        purpose_level3: '',
+                        has_pii: null,
+                        requirements: {}
+                    })
+                });
+
+                const data = await response.json();
+
+                resultsDiv.innerHTML = `
+                    <div class="result success">
+                        <h3>✓ API Response Received</h3>
+                        <p><strong>Success:</strong> ${data.success}</p>
+                        <p><strong>Total Cases:</strong> ${data.total_cases}</p>
+                        <p><strong>Cases Found:</strong> ${data.cases ? data.cases.length : 0}</p>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    </div>
+                `;
+            } catch (error) {
+                resultsDiv.innerHTML = `
+                    <div class="result error">
+                        <h3>✗ Error</h3>
+                        <p>${error.message}</p>
+                        <p>Make sure the Flask server is running on port 5001</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function testStats() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<p>Testing stats endpoint...</p>';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/stats`);
+                const data = await response.json();
+
+                resultsDiv.innerHTML = `
+                    <div class="result success">
+                        <h3>✓ Stats Response</h3>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    </div>
+                `;
+            } catch (error) {
+                resultsDiv.innerHTML = `
+                    <div class="result error">
+                        <h3>✗ Error</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function testCountries() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<p>Testing countries endpoint...</p>';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/countries`);
+                const data = await response.json();
+
+                resultsDiv.innerHTML = `
+                    <div class="result success">
+                        <h3>✓ Countries Response</h3>
+                        <p><strong>Total Countries:</strong> ${data.countries ? data.countries.length : 0}</p>
+                        <p><strong>Has Ireland:</strong> ${data.countries && data.countries.includes('Ireland') ? 'Yes' : 'No'}</p>
+                        <p><strong>Has Poland:</strong> ${data.countries && data.countries.includes('Poland') ? 'Yes' : 'No'}</p>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    </div>
+                `;
+            } catch (error) {
+                resultsDiv.innerHTML = `
+                    <div class="result error">
+                        <h3>✗ Error</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+    </script>
+</body>
+</html>
