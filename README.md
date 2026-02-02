@@ -1,524 +1,401 @@
-# Graph-Based Compliance Architecture
+# Data Transfer Compliance System
 
-## System Overview
-
-```mermaid
-graph TB
-    UI[Dashboard UI] -->|Search Request| API[Flask API]
-    API -->|1. Evaluate Rules| RG[RulesGraph]
-    API -->|2. Search Cases| DG[DataTransferGraph]
-    RG -->|Triggered Rules + Requirements| API
-    DG -->|Matching Cases| API
-    API -->|Results| UI
-
-    style RG fill:#e1f5fe
-    style DG fill:#f3e5f5
-    style API fill:#fff3e0
-    style UI fill:#e8f5e9
-```
-
-## Architecture Components
-
-### 1. RulesGraph - Compliance Logic
-Stores all compliance rules and country groupings
-
-### 2. DataTransferGraph - Case Data
-Stores data transfer cases with enhanced structure
-
-### 3. Flask API
-Orchestrates queries between graphs
-
-### 4. Dashboard UI
-User interface with multi-select and filters
+**Version:** 3.0.0
+**Status:** ✅ Production Ready
+**Last Updated:** 2026-02-02
 
 ---
 
-## DataTransferGraph Structure
+## 📚 Documentation Index
 
-### Node Schema
-
-```mermaid
-graph LR
-    subgraph "Core Entities"
-    Case[":Case<br/>case_id<br/>eim_id<br/>business_app_id<br/>*_module"]
-    Country[":Country<br/>name"]
-    Jurisdiction[":Jurisdiction<br/>name"]
-    end
-
-    subgraph "Purposes & Processes"
-    Purpose[":Purpose<br/>name"]
-    ProcessL1[":ProcessL1<br/>name"]
-    ProcessL2[":ProcessL2<br/>name"]
-    ProcessL3[":ProcessL3<br/>name"]
-    end
-
-    subgraph "Personal Data"
-    PD[":PersonalData<br/>name"]
-    PDC[":PersonalDataCategory<br/>name"]
-    Cat[":Category<br/>name"]
-    end
-
-    style Case fill:#ffebee
-    style Purpose fill:#e8eaf6
-    style ProcessL1 fill:#f3e5f5
-    style ProcessL2 fill:#f3e5f5
-    style ProcessL3 fill:#f3e5f5
-```
-
-### Relationship Schema
-
-```mermaid
-graph TD
-    C[Case] -->|ORIGINATES_FROM| Country
-    C -->|TRANSFERS_TO| Juris[Jurisdiction]
-    C -->|HAS_PURPOSE| P1[Purpose 1]
-    C -->|HAS_PURPOSE| P2[Purpose 2]
-    C -->|HAS_PURPOSE| P3[Purpose N...]
-    C -->|HAS_PROCESS_L1| PL1[ProcessL1]
-    C -->|HAS_PROCESS_L2| PL2[ProcessL2]
-    C -->|HAS_PROCESS_L3| PL3[ProcessL3]
-    C -->|HAS_PERSONAL_DATA| PD[PersonalData]
-    C -->|HAS_PERSONAL_DATA_CATEGORY| PDC[PersonalDataCategory]
-    C -->|HAS_CATEGORY| Cat[Category]
-
-    style C fill:#ffcdd2
-```
-
-### Complete Data Model
-
-| **Node Type** | **Properties** | **Count** | **Description** |
-|---------------|----------------|-----------|-----------------|
-| `:Case` | case_id, eim_id, business_app_id, pia_module, tia_module, hrpr_module | 350 | Data transfer cases |
-| `:Country` | name | 23 | Origin countries |
-| `:Jurisdiction` | name | 29 | Receiving jurisdictions |
-| `:Purpose` | name | 35 | Legal processing purposes |
-| `:ProcessL1` | name | 5 | Process areas |
-| `:ProcessL2` | name | 14 | Process functions |
-| `:ProcessL3` | name | 22 | Process sub-processes |
-| `:PersonalData` | name | 20 | PII items |
-| `:PersonalDataCategory` | name | 8 | PII categories |
-| `:Category` | name | 8 | Case categories |
-
-| **Relationship** | **From** | **To** | **Count** | **Description** |
-|------------------|----------|---------|-----------|-----------------|
-| `:ORIGINATES_FROM` | Case | Country | 350 | Transfer origin |
-| `:TRANSFERS_TO` | Case | Jurisdiction | 627 | Transfer destination(s) |
-| `:HAS_PURPOSE` | Case | Purpose | 1,029 | Legal purposes (multiple) |
-| `:HAS_PROCESS_L1` | Case | ProcessL1 | 70 | Process area |
-| `:HAS_PROCESS_L2` | Case | ProcessL2 | 70 | Process function |
-| `:HAS_PROCESS_L3` | Case | ProcessL3 | 70 | Process detail |
-| `:HAS_PERSONAL_DATA` | Case | PersonalData | 1,923 | PII items |
-| `:HAS_PERSONAL_DATA_CATEGORY` | Case | PersonalDataCategory | 905 | PII categories |
-| `:HAS_CATEGORY` | Case | Category | 868 | Case categories |
+| Document | Description | Audience |
+|----------|-------------|----------|
+| **[ARCHITECTURE.md](ARCHITECTURE.md)** | Complete system architecture with Mermaid diagrams, graph schemas, and logic flows | Technical/Architects |
+| **[FIXES_SUMMARY.md](FIXES_SUMMARY.md)** | All logical errors fixed, ODRL alignment, test results | Technical/QA |
+| **[API_REDESIGN_SUMMARY.md](API_REDESIGN_SUMMARY.md)** | User-friendly API redesign, parameter structure, examples | Developers/Integrators |
+| **[HEALTH_DETECTION_SOLUTION.md](HEALTH_DETECTION_SOLUTION.md)** | Health data detection implementation, 244 keywords, configuration | Technical/Compliance |
+| **[QUICK_START.md](QUICK_START.md)** | Getting started guide, quick tests, common scenarios | All Users |
+| **[health_data_config.json](health_data_config.json)** | Comprehensive health data detection configuration | Configuration |
 
 ---
 
-## Key Design Patterns
+## 🎯 Quick Overview
 
-### 1. Purposes as Independent Nodes
+### What is This System?
 
-```mermaid
-graph LR
-    C["Case<br/>CASE00001"] -->|HAS_PURPOSE| P1["Payment<br/>Processing"]
-    C -->|HAS_PURPOSE| P2["Credit<br/>Scoring"]
-    C -->|HAS_PURPOSE| P3["AML<br/>Screening"]
+A **graph-based compliance engine** that evaluates data transfer regulations using:
+- **Deontic Logic** (Permissions, Prohibitions, Duties)
+- **ODRL** (Open Digital Rights Language) compliance
+- **Graph Database** (FalkorDB) for flexible rule storage
+- **Automatic Health Data Detection** (244 keywords)
+- **Priority-Based Rule Evaluation** (deterministic results)
 
-    style C fill:#ffcdd2
-    style P1 fill:#e8eaf6
-    style P2 fill:#e8eaf6
-    style P3 fill:#e8eaf6
+### Use Cases
+
+1. **Compliance Checking**: Evaluate if a data transfer complies with regulations
+2. **Rule Discovery**: Find which rules apply to specific transfers
+3. **Duty Identification**: Determine required obligations (PIA, TIA, legal approval)
+4. **Health Data Detection**: Automatically identify health-related transfers
+5. **Historical Search**: Find similar past transfer cases
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+```bash
+# Required
+- Python 3.8+
+- Redis (for FalkorDB)
+- FalkorDB module installed
+
+# Install dependencies
+pip install fastapi uvicorn falkordb pydantic
 ```
 
-**Why:**
-- A case can have unlimited purposes (not restricted to 3 levels)
-- Purposes are not hierarchical - they're independent attributes
-- Better for multi-select UI
-- Easier to query: "Find all cases with purpose X"
-
-**Example Data:**
-```cypher
-(:Case {case_id: "CASE00001"})-[:HAS_PURPOSE]->(:Purpose {name: "Payment Processing"})
-(:Case {case_id: "CASE00001"})-[:HAS_PURPOSE]->(:Purpose {name: "Credit Scoring"})
-(:Case {case_id: "CASE00001"})-[:HAS_PURPOSE]->(:Purpose {name: "AML Screening"})
+### 1. Build the Graph
+```bash
+cd "/Users/josephkiype/Desktop/development/code/deterministic policy"
+python build_rules_graph_deontic.py
 ```
 
-### 2. Process Hierarchy (L1-L2-L3)
-
-```mermaid
-graph TD
-    C["Case<br/>CASE00001"]
-    C -->|HAS_PROCESS_L1| L1["Back Office<br/>(Area)"]
-    C -->|HAS_PROCESS_L2| L2["HR<br/>(Function)"]
-    C -->|HAS_PROCESS_L3| L3["Payroll<br/>(Detail)"]
-
-    L1 -.->|Level 1| L1
-    L2 -.->|Level 2| L2
-    L3 -.->|Level 3| L3
-
-    style C fill:#ffcdd2
-    style L1 fill:#f3e5f5
-    style L2 fill:#e1bee7
-    style L3 fill:#ce93d8
+### 2. Start the API
+```bash
+uvicorn api_fastapi_deontic:app --reload --port 8000
 ```
 
-**Process Levels:**
-- **L1 (Area):** Business area - Back Office, Front Office, Operations, Risk, Compliance
-- **L2 (Function):** Functional area - HR, Finance, IT, Sales, Marketing, etc.
-- **L3 (Detail):** Sub-process - Payroll, AP, AR, Support, etc.
-
-**Example Data:**
+### 3. Open Dashboard
 ```
-Excel Column: "Back Office-HR-Payroll"
-Parsed to: {l1: "Back Office", l2: "HR", l3: "Payroll"}
+http://localhost:8000
+```
 
-Creates:
-(:Case)-[:HAS_PROCESS_L1]->(:ProcessL1 {name: "Back Office"})
-(:Case)-[:HAS_PROCESS_L2]->(:ProcessL2 {name: "HR"})
-(:Case)-[:HAS_PROCESS_L3]->(:ProcessL3 {name: "Payroll"})
+### 4. Run Tests
+```bash
+# Basic API tests
+python test_new_api.py
+
+# Health detection tests
+python test_health_detection.py
 ```
 
 ---
 
-## Query Flow
+## 📊 System Statistics
 
-### Complete Search Flow
+### RulesGraph
+- **Countries**: 87
+- **Country Groups**: 14
+- **Rules**: 11 (3 prohibitions, 8 permissions)
+- **Actions**: 4
+- **Duties**: 5
+- **Keywords**: 244 health-related terms
 
-```mermaid
-sequenceDiagram
-    participant UI as Dashboard UI
-    participant API as Flask API
-    participant RG as RulesGraph
-    participant DG as DataTransferGraph
+### Rules Breakdown
 
-    UI->>API: POST /api/search-cases<br/>{origin, receiving, purposes[], process_l1/2/3}
-    API->>RG: Query triggered rules
-    RG-->>API: Rules + Requirements
-    API->>DG: Query cases<br/>(filter by origin, receiving, purposes, processes)
-    DG-->>API: Matching cases
-    API-->>UI: Results + Compliance Status
-```
-
-### Example Search Query
-
-**User Input:**
-- Origin: Ireland
-- Receiving: Poland
-- Purposes: ["Payment Processing", "Credit Scoring"]
-- Process L1: "Back Office"
-- Process L2: "HR"
-
-**Generated Cypher:**
-```cypher
-MATCH (c:Case)-[:ORIGINATES_FROM]->(origin:Country)
-MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction)
-WHERE toLower(origin.name) CONTAINS toLower($origin)
-  AND toLower(receiving.name) CONTAINS toLower($receiving)
-
-WITH c, origin
-MATCH (c)-[:HAS_PURPOSE]->(purpose:Purpose)
-WHERE purpose.name IN $purposes
-
-WITH c, origin
-MATCH (c)-[:HAS_PROCESS_L1]->(p1:ProcessL1 {name: $process_l1})
-
-WITH c, origin
-MATCH (c)-[:HAS_PROCESS_L2]->(p2:ProcessL2 {name: $process_l2})
-
-// Collect all related data
-WITH c, origin
-MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction)
-WITH c, origin, collect(DISTINCT receiving.name) as receiving_countries
-
-OPTIONAL MATCH (c)-[:HAS_PURPOSE]->(purpose:Purpose)
-WITH c, origin, receiving_countries, collect(DISTINCT purpose.name) as purposes
-
-OPTIONAL MATCH (c)-[:HAS_PROCESS_L1]->(p1:ProcessL1)
-OPTIONAL MATCH (c)-[:HAS_PROCESS_L2]->(p2:ProcessL2)
-OPTIONAL MATCH (c)-[:HAS_PROCESS_L3]->(p3:ProcessL3)
-
-RETURN c.case_id, origin.name, receiving_countries,
-       purposes, p1.name, p2.name, p3.name,
-       c.pia_module, c.tia_module, c.hrpr_module
-```
+| Priority | Rule ID | Type | Description |
+|----------|---------|------|-------------|
+| 1 | RULE_10 | 🔴 Prohibition | US Data to China Cloud |
+| 1 | RULE_1 | ✅ Permission | EU/EEA Internal Transfer |
+| 2 | RULE_9 | 🔴 Prohibition | US PII to Restricted Countries |
+| 3 | RULE_11 | 🔴 Prohibition | US Health Data Transfer |
+| 4 | RULE_2 | ✅ Permission | EU to Adequacy Countries |
+| 5 | RULE_3 | ✅ Permission | Crown Dependencies |
+| 6 | RULE_4 | ✅ Permission | UK to Adequacy |
+| 7 | RULE_5 | ✅ Permission | Switzerland Transfer |
+| 8 | RULE_6 | ✅ Permission | EU to Rest of World |
+| 9 | RULE_7 | ✅ Permission | BCR Countries |
+| 10 | RULE_8 | ✅ Permission | PII Transfer |
 
 ---
 
-## UI Components
-
-### Form Layout
+## 🏗️ Architecture at a Glance
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Transfer Compliance Search                                   │
-├─────────────────────────────────────────────────────────────┤
-│ Origin Country: [Ireland ▼]    Receiving: [Poland ▼]       │
-├─────────────────────────────────────────────────────────────┤
-│ Legal Purposes (Multi-select):                              │
-│ ☑ Payment Processing                                        │
-│ ☑ Credit Scoring                                            │
-│ ☐ AML Screening                                             │
-│ ... (35 options)                                            │
-├─────────────────────────────────────────────────────────────┤
-│ Process Area (L1): [Back Office ▼]                          │
-│ Process Function (L2): [HR ▼]                               │
-│ Process Detail (L3): [Payroll ▼]                            │
-├─────────────────────────────────────────────────────────────┤
-│ Contains PII: [-- Select -- ▼]                              │
-├─────────────────────────────────────────────────────────────┤
-│ [Search Cases] [Reset]                                      │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Results Table
-
-| Case ID | Origin | Receiving | Purposes | Process | PIA | TIA | HRPR | PII |
-|---------|--------|-----------|----------|---------|-----|-----|------|-----|
-| CASE00001 | Ireland | Poland | Payment Processing, Credit Scoring | Back Office → HR → Payroll | CM | N/A | N/A | Yes |
-| CASE00044 | Ireland | Poland | Risk Management | Front Office → Sales → Closing | CM | N/A | N/A | No |
-
----
-
-## API Endpoints
-
-### GET /api/purposes
-**Returns all available purposes**
-
-**Response:**
-```json
-{
-  "success": true,
-  "purposes": [
-    "Payment Processing",
-    "Credit Scoring",
-    "AML Screening",
-    "Risk Management",
-    ...
-  ]
-}
-```
-
-### GET /api/processes
-**Returns all process levels**
-
-**Response:**
-```json
-{
-  "success": true,
-  "process_l1": ["Back Office", "Front Office", "Operations", "Risk", "Compliance"],
-  "process_l2": ["HR", "Finance", "IT", "Sales", "Marketing", ...],
-  "process_l3": ["Payroll", "Benefits", "AP", "AR", "Support", ...]
-}
-```
-
-### POST /api/search-cases
-**Search for matching cases**
-
-**Request:**
-```json
-{
-  "origin_country": "Ireland",
-  "receiving_country": "Poland",
-  "purposes": ["Payment Processing", "Credit Scoring"],
-  "process_l1": "Back Office",
-  "process_l2": "HR",
-  "process_l3": "Payroll",
-  "has_pii": null
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "total_cases": 3,
-  "cases": [
-    {
-      "case_id": "CASE00001",
-      "origin_country": "Ireland",
-      "receiving_countries": ["Poland"],
-      "purposes": ["Payment Processing", "Credit Scoring"],
-      "process_l1": "Back Office",
-      "process_l2": "HR",
-      "process_l3": "Payroll",
-      "pia_module": "CM",
-      "tia_module": null,
-      "hrpr_module": null,
-      "has_pii": true
-    }
-  ]
-}
+│                     Web Dashboard (UI)                      │
+│  • Search Form  • Metadata Builder  • Results Display      │
+└───────────────────────────┬─────────────────────────────────┘
+                            │ HTTP POST
+┌───────────────────────────▼─────────────────────────────────┐
+│                    FastAPI Server (API)                      │
+│  • /api/evaluate-rules  • /api/search-cases  • /docs       │
+└───────────┬─────────────────────┬───────────────────────────┘
+            │                     │
+            │                     │
+┌───────────▼───────────┐  ┌──────▼──────────────────────────┐
+│   Health Detector     │  │   Rules Evaluation Engine       │
+│  • 244 keywords       │  │  • Match type logic             │
+│  • Pattern matching   │  │  • Priority sorting             │
+│  • Word boundaries    │  │  • Deontic operators            │
+└───────────┬───────────┘  └──────┬──────────────────────────┘
+            │                     │
+            │                     │
+┌───────────▼─────────────────────▼───────────────────────────┐
+│              FalkorDB (Graph Database)                       │
+│                                                              │
+│  ┌──────────────────┐         ┌──────────────────────────┐ │
+│  │   RulesGraph     │         │  DataTransferGraph       │ │
+│  │  • 11 Rules      │         │  • Historical Cases      │ │
+│  │  • 87 Countries  │         │  • Personal Data         │ │
+│  │  • 14 Groups     │         │  • Purposes              │ │
+│  └──────────────────┘         └──────────────────────────┘ │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Data Loading
+## 🎯 Key Features
 
-### Excel Format
-
-| Column | Format | Example |
-|--------|--------|---------|
-| CaseId | CASE##### | CASE00001 |
-| LegalProcessingPurposeNames | Pipe-separated | `Payment Processing\|Credit Scoring` |
-| **Processes_L1_L2_L3** | **Hyphen-separated** | **`Back Office-HR-Payroll`** |
-| PersonalDataNames | Pipe-separated | `Full Name\|Bank Account` |
-
-### Loading Process
-
-```mermaid
-graph LR
-    E[Excel File] -->|Read| P[falkor_upload_enhanced.py]
-    P -->|Parse| D1[Purposes]
-    P -->|Parse| D2[Processes L1-L2-L3]
-    D1 -->|Create Nodes| DG[DataTransferGraph]
-    D2 -->|Create Nodes| DG
-    P -->|Create Cases| DG
-    P -->|Create Relationships| DG
-
-    style E fill:#e3f2fd
-    style P fill:#fff3e0
-    style DG fill:#f3e5f5
+### 1. **Automatic Health Data Detection**
+```json
+{
+  "other_metadata": {
+    "patient_id": "unique identifier",
+    "diagnosis_codes": "ICD-10 codes"
+  }
+}
 ```
+→ System automatically detects health data and triggers RULE_11
 
-**Command:**
+### 2. **Priority-Based Evaluation**
+Rules execute in priority order (1 = highest):
+- Priority 1: Absolute prohibitions (RULE_10)
+- Priority 2-3: Conditional prohibitions (RULE_9, RULE_11)
+- Priority 4-10: Permissions
+
+### 3. **ODRL Compliance**
+Every rule includes ODRL metadata:
+- `odrl_type`: Permission or Prohibition
+- `odrl_action`: transfer, store, process
+- `odrl_target`: Data, PII, HealthData
+
+### 4. **Comprehensive Testing**
+- ✅ 23/24 tests passing (95.8%)
+- Health detection verified
+- Priority ordering confirmed
+- False positive prevention validated
+
+---
+
+## 📋 API Examples
+
+### Example 1: Basic Transfer Evaluation
 ```bash
-python falkor_upload_enhanced.py
+curl -X POST http://localhost:8000/api/evaluate-rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "origin_country": "Ireland",
+    "receiving_country": "Poland",
+    "pii": true
+  }'
 ```
 
-**Output:**
-```
-✅ Created 35 Purpose nodes
-✅ Created 5 ProcessL1 nodes
-✅ Created 14 ProcessL2 nodes
-✅ Created 22 ProcessL3 nodes
-✅ Created 350 Case nodes
-✅ Created 1,029 HAS_PURPOSE relationships
-✅ Created 70 ProcessL1/L2/L3 relationships each
-```
-
----
-
-## Sample Data
-
-### Purpose Values (35 total)
-- Payment Processing
-- Credit Scoring
-- AML Screening
-- KYC Verification
-- Risk Management
-- Transaction Monitoring
-- Customer Due Diligence
-- Sanctions Screening
-- PEP Screening
-- ... (and 26 more)
-
-### Process Hierarchy Examples
-
-| L1 | L2 | L3 | Full String |
-|----|----|----|-------------|
-| Back Office | HR | Payroll | `Back Office-HR-Payroll` |
-| Back Office | Finance | AP | `Back Office-Finance-AP` |
-| Front Office | Sales | Lead Gen | `Front Office-Sales-Lead Gen` |
-| Operations | Processing | Batch | `Operations-Processing-Batch` |
-| Risk | Credit | Assessment | `Risk-Credit-Assessment` |
-| Compliance | AML | Screening | `Compliance-AML-Screening` |
-
----
-
-## Performance
-
-### Query Performance
-- **Get case purposes:** <5ms
-- **Filter by purpose:** <10ms
-- **Filter by process:** <10ms
-- **Combined filters:** <20ms
-- **Full search (all filters):** <30ms
-
-### Scalability
-- **Current:** 350 cases, 35 purposes, 41 process nodes
-- **Tested:** 10,000 cases, 100 purposes, 100 process nodes
-- **Performance:** O(log n) with graph indexes
-
----
-
-## Usage Examples
-
-### 1. Find Cases by Purpose
-```cypher
-MATCH (c:Case)-[:HAS_PURPOSE]->(p:Purpose {name: 'Payment Processing'})
-RETURN c.case_id
+**Response:**
+```json
+{
+  "success": true,
+  "triggered_rules": [
+    {
+      "rule_id": "RULE_1",
+      "description": "EU/EEA internal transfer",
+      "is_blocked": false,
+      "permission": {
+        "name": "EU/EEA Internal Transfer",
+        "duties": [
+          {"name": "Complete PIA Module (CM)"}
+        ]
+      }
+    }
+  ],
+  "has_prohibitions": false
+}
 ```
 
-### 2. Find Cases by Process Area
-```cypher
-MATCH (c:Case)-[:HAS_PROCESS_L1]->(p1:ProcessL1 {name: 'Back Office'})
-RETURN c.case_id
+### Example 2: Health Data Transfer (Auto-Detection)
+```bash
+curl -X POST http://localhost:8000/api/evaluate-rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "origin_country": "United States",
+    "receiving_country": "India",
+    "pii": true,
+    "other_metadata": {
+      "patient_id": "unique identifier",
+      "diagnosis_codes": "ICD-10 codes"
+    }
+  }'
 ```
 
-### 3. Complex Multi-filter
-```cypher
-MATCH (c:Case)-[:ORIGINATES_FROM]->(o:Country {name: 'Ireland'})
-MATCH (c)-[:TRANSFERS_TO]->(r:Jurisdiction {name: 'Poland'})
-MATCH (c)-[:HAS_PURPOSE]->(p:Purpose)
-WHERE p.name IN ['Payment Processing', 'Credit Scoring']
-MATCH (c)-[:HAS_PROCESS_L1]->(p1:ProcessL1 {name: 'Back Office'})
-RETURN c.case_id, collect(p.name) as purposes
-```
-
-### 4. Get Case with All Details
-```cypher
-MATCH (c:Case {case_id: 'CASE00001'})
-OPTIONAL MATCH (c)-[:HAS_PURPOSE]->(purpose:Purpose)
-OPTIONAL MATCH (c)-[:HAS_PROCESS_L1]->(p1:ProcessL1)
-OPTIONAL MATCH (c)-[:HAS_PROCESS_L2]->(p2:ProcessL2)
-OPTIONAL MATCH (c)-[:HAS_PROCESS_L3]->(p3:ProcessL3)
-RETURN c.case_id,
-       collect(DISTINCT purpose.name) as purposes,
-       p1.name as process_l1,
-       p2.name as process_l2,
-       p3.name as process_l3
+**Response:**
+```json
+{
+  "success": true,
+  "triggered_rules": [
+    {
+      "rule_id": "RULE_11",
+      "description": "US Health Data Transfer",
+      "is_blocked": true,
+      "prohibition": {
+        "name": "US Health Data Transfer",
+        "duties": [
+          {"name": "Obtain US Legal Exception"}
+        ]
+      }
+    }
+  ],
+  "has_prohibitions": true
+}
 ```
 
 ---
 
-## Summary
+## 🔍 Graph Schema Overview
 
-### Architecture Highlights
+### RulesGraph Structure
 
-✅ **Purposes as Nodes**
-- Multiple edges per case
-- Not hierarchical, independent
-- Multi-select UI support
-- Easy querying
+```
+Rule
+├── HAS_ACTION → Action
+├── HAS_PERMISSION → Permission → CAN_HAVE_DUTY → Duty
+├── HAS_PROHIBITION → Prohibition → CAN_HAVE_DUTY → Duty
+├── TRIGGERED_BY_ORIGIN → CountryGroup
+└── TRIGGERED_BY_RECEIVING → CountryGroup
 
-✅ **Process Hierarchy**
-- L1: Area (5 values)
-- L2: Function (14 values)
-- L3: Detail (22 values)
-- Hierarchical structure
+Country → BELONGS_TO → CountryGroup
+```
 
-✅ **Graph Structure**
-- Purpose: 35 nodes, 1,029 edges
-- ProcessL1: 5 nodes, 70 edges
-- ProcessL2: 14 nodes, 70 edges
-- ProcessL3: 22 nodes, 70 edges
+### DataTransferGraph Structure
 
-✅ **UI Components**
-- Multi-select dropdown for purposes
-- 3 separate dropdowns for processes
-- All filters work together
+```
+Case
+├── ORIGINATES_FROM → Country
+├── TRANSFERS_TO → Jurisdiction
+├── HAS_PURPOSE → Purpose
+├── HAS_PROCESS_L1 → ProcessL1
+├── HAS_PROCESS_L2 → ProcessL2
+├── HAS_PROCESS_L3 → ProcessL3
+├── HAS_PERSONAL_DATA → PersonalData
+├── HAS_PERSONAL_DATA_CATEGORY → PersonalDataCategory
+└── HAS_CATEGORY → Category
+```
 
-✅ **API Endpoints**
-- `/api/purposes` - Get all purposes
-- `/api/processes` - Get all process levels
-- `/api/search-cases` - Search with filters
-
-✅ **Performance**
-- Sub-30ms queries
-- O(log n) scalability
-- Graph indexes
+**See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed Mermaid diagrams**
 
 ---
 
-**Status:** Fully Implemented ✅
-**Loaded:** 350 cases with enhanced structure ✅
-**Ready:** Production ready ✅
+## 🛠️ Configuration
+
+### Health Data Keywords
+Stored in `health_data_config.json`:
+- **244 keywords**: patient, medical, diagnosis, prescription, etc.
+- **27 patterns**: ICD codes, CPT codes, medical record patterns
+- **16 categories**: Patient Demographics, Clinical Data, etc.
+
+### Rule Configuration
+Rules defined in `build_rules_graph_deontic.py`:
+- Geographic scope (origin/receiving countries)
+- Match type logic (ANY, ALL, NOT_IN)
+- Priority ordering
+- Data type filters (PII, health data)
+- ODRL metadata
+
+---
+
+## 🧪 Testing
+
+### Test Suites
+
+1. **Basic API Tests** (`test_new_api.py`)
+   - 4 test scenarios
+   - Validates basic functionality
+   - Tests ODRL metadata
+
+2. **Health Detection Tests** (`test_health_detection.py`)
+   - 24 comprehensive test cases
+   - Various health keywords
+   - Edge cases and false positives
+   - 95.8% pass rate
+
+### Run All Tests
+```bash
+# Install test server
+uvicorn api_fastapi_deontic:app --reload --port 8000 &
+
+# Run basic tests
+python test_new_api.py
+
+# Run health detection tests
+python test_health_detection.py
+
+# Stop server
+pkill -f uvicorn
+```
+
+---
+
+## 🚨 Common Issues & Solutions
+
+### Issue 1: Health data not detected
+**Problem:** `patient_id` not matching `patient`
+**Solution:** Fixed with underscore normalization (v3.0)
+**Verify:** `python test_health_detection.py`
+
+### Issue 2: Wrong rule priority
+**Problem:** Multiple rules with same priority
+**Solution:** US rules adjusted to priorities 1, 2, 3
+**Verify:** Check logs for rule order
+
+### Issue 3: RULE_11 not triggering
+**Problem:** Missing health metadata
+**Solution:** Provide `other_metadata` with health terms
+**Verify:** See [HEALTH_DETECTION_SOLUTION.md](HEALTH_DETECTION_SOLUTION.md)
+
+---
+
+## 📈 Roadmap
+
+### Completed ✅
+- [x] Deontic logic implementation
+- [x] ODRL compliance
+- [x] Health data auto-detection (244 keywords)
+- [x] Priority-based evaluation
+- [x] User-friendly API
+- [x] Comprehensive documentation
+- [x] Test suites (95.8% pass rate)
+
+### Future Enhancements
+- [ ] Temporal constraints (valid_from, valid_until)
+- [ ] Assignee/Assigner tracking
+- [ ] Asset nodes (formalize data types)
+- [ ] Audit logging
+- [ ] Rule versioning
+- [ ] Multi-language support
+
+---
+
+## 📝 Change Log
+
+### Version 3.0.0 (2026-02-02)
+- ✅ Implemented comprehensive health data detection (244 keywords)
+- ✅ Fixed underscore/hyphen handling in keyword matching
+- ✅ Added ODRL metadata to all rules
+- ✅ Improved rule priority ordering
+- ✅ Created extensive documentation with Mermaid diagrams
+- ✅ Added comprehensive test suites (95.8% pass rate)
+- ✅ User-friendly API redesign
+- ✅ Dynamic metadata builder in UI
+
+### Version 2.0.0 (Previous)
+- Deontic logic implementation
+- RulesGraph and DataTransferGraph
+- Basic health detection
+
+### Version 1.0.0 (Initial)
+- Basic rule evaluation
+- Country group matching
+
+---
+
+**System Status: 🟢 Production Ready**
+
+For detailed technical information, see [ARCHITECTURE.md](ARCHITECTURE.md)
