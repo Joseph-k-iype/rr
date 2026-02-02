@@ -12,9 +12,21 @@ from typing import Dict, List, Optional
 from falkordb import FalkorDB
 import logging
 from pathlib import Path
+import json
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Load health data configuration
+HEALTH_CONFIG_PATH = Path(__file__).parent / "health_data_config.json"
+HEALTH_CONFIG = {}
+if HEALTH_CONFIG_PATH.exists():
+    with open(HEALTH_CONFIG_PATH, 'r') as f:
+        HEALTH_CONFIG = json.load(f)
+        logger.info(f"✓ Loaded health data config: {len(HEALTH_CONFIG['detection_rules']['keywords'])} keywords, "
+                   f"{len(HEALTH_CONFIG['detection_rules']['patterns'])} patterns")
+else:
+    logger.warning("⚠️  health_data_config.json not found - using fallback keywords")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -86,11 +98,36 @@ class TriggeredRule(BaseModel):
 
 
 class RulesEvaluationRequest(BaseModel):
-    """Request to evaluate compliance rules"""
-    origin_country: str = Field(..., description="Originating country name")
-    receiving_country: str = Field(..., description="Receiving country name")
-    has_pii: Optional[bool] = Field(None, description="Whether transfer contains PII")
-    has_health_data: Optional[bool] = Field(None, description="Whether transfer contains health-related data")
+    """Request to evaluate compliance rules - all fields are optional for dynamic evaluation"""
+    origin_country: Optional[str] = Field(None, description="Originating country name (e.g., 'United States', 'Germany')")
+    receiving_country: Optional[str] = Field(None, description="Receiving country name (e.g., 'China', 'Canada')")
+    pii: Optional[bool] = Field(None, description="Whether transfer contains Personal Identifiable Information")
+    purpose_of_processing: Optional[List[str]] = Field(None, description="Purpose(s) of data processing (e.g., ['Marketing', 'Analytics'])")
+    process_l1: Optional[str] = Field(None, description="Process area Level 1 (e.g., 'Finance', 'HR')")
+    process_l2: Optional[str] = Field(None, description="Process function Level 2 (e.g., 'Payroll', 'Recruitment')")
+    process_l3: Optional[str] = Field(None, description="Process detail Level 3 (e.g., 'Salary Processing')")
+    other_metadata: Optional[Dict[str, str]] = Field(
+        None,
+        description="Additional metadata as key-value pairs. Example: {'patient_records': 'medical history', 'diagnosis_codes': 'ICD-10'}. System automatically detects health data from column names/descriptions."
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "origin_country": "United States",
+                "receiving_country": "Canada",
+                "pii": True,
+                "purpose_of_processing": ["Analytics", "Marketing"],
+                "process_l1": "Sales",
+                "process_l2": "Customer Management",
+                "process_l3": "CRM Operations",
+                "other_metadata": {
+                    "customer_email": "email addresses",
+                    "customer_name": "full names",
+                    "transaction_history": "purchase records"
+                }
+            }
+        }
 
 
 class RulesEvaluationResponse(BaseModel):
@@ -103,14 +140,15 @@ class RulesEvaluationResponse(BaseModel):
 
 
 class SearchCasesRequest(BaseModel):
-    """Request to search for cases"""
-    origin_country: Optional[str] = Field(None, description="Originating country (partial match)")
-    receiving_country: Optional[str] = Field(None, description="Receiving country (partial match)")
-    purposes: Optional[List[str]] = Field(None, description="List of legal processing purposes")
-    process_l1: Optional[str] = Field(None, description="Process area (L1)")
-    process_l2: Optional[str] = Field(None, description="Process function (L2)")
-    process_l3: Optional[str] = Field(None, description="Process detail (L3)")
-    has_pii: Optional[str] = Field(None, description="'yes', 'no', or null")
+    """Request to search for cases - all fields are optional for flexible searching"""
+    origin_country: Optional[str] = Field(None, description="Originating country (partial match, e.g., 'United', 'Germany')")
+    receiving_country: Optional[str] = Field(None, description="Receiving country (partial match, e.g., 'China', 'Can')")
+    pii: Optional[bool] = Field(None, description="Whether transfer contains PII")
+    purpose_of_processing: Optional[List[str]] = Field(None, description="Purpose(s) of data processing")
+    process_l1: Optional[str] = Field(None, description="Process area Level 1")
+    process_l2: Optional[str] = Field(None, description="Process function Level 2")
+    process_l3: Optional[str] = Field(None, description="Process detail Level 3")
+    other_metadata: Optional[Dict[str, str]] = Field(None, description="Additional metadata filters")
 
 
 class CaseData(BaseModel):
@@ -177,6 +215,19 @@ def query_triggered_rules_deontic(origin: str, receiving: str, has_pii: bool = N
     """
     Query the RulesGraph using deontic logic structure
     Returns rules with their actions, permissions, prohibitions, and duties
+
+    Args:
+        origin: Origin country name
+        receiving: Receiving country name
+        has_pii: Whether transfer contains PII. None is treated as False (no PII detected)
+        has_health_data: Whether transfer contains health data. None is treated as False (no health data detected)
+
+    Note on NULL semantics:
+        - None/null values are converted to False for filtering
+        - False means "explicitly verified as absent" or "not detected"
+        - True means "explicitly verified as present" or "detected"
+        - Rules with has_pii_required=True only trigger when has_pii=True
+        - Rules with health_data_required=True only trigger when has_health_data=True
     """
     logger.info(f"Querying Deontic RulesGraph for: {origin} → {receiving}, has_pii={has_pii}, has_health_data={has_health_data}")
 
@@ -238,6 +289,9 @@ def query_triggered_rules_deontic(origin: str, receiving: str, has_pii: bool = N
     RETURN r.rule_id as rule_id,
            r.description as description,
            r.priority as priority,
+           r.odrl_type as odrl_type,
+           r.odrl_action as odrl_action,
+           r.odrl_target as odrl_target,
            action.name as action_name,
            action.description as action_description,
            perm.name as permission_name,
@@ -268,14 +322,17 @@ def query_triggered_rules_deontic(origin: str, receiving: str, has_pii: bool = N
                 rule_id = row[0]
                 description = row[1]
                 priority = row[2]
-                action_name = row[3] if row[3] else None
-                action_description = row[4] if row[4] else None
-                permission_name = row[5] if row[5] else None
-                permission_description = row[6] if row[6] else None
-                permission_duties = row[7] if row[7] else []
-                prohibition_name = row[8] if row[8] else None
-                prohibition_description = row[9] if row[9] else None
-                prohibition_duties = row[10] if row[10] else []
+                odrl_type = row[3] if row[3] else None
+                odrl_action = row[4] if row[4] else None
+                odrl_target = row[5] if row[5] else None
+                action_name = row[6] if row[6] else None
+                action_description = row[7] if row[7] else None
+                permission_name = row[8] if row[8] else None
+                permission_description = row[9] if row[9] else None
+                permission_duties = row[10] if row[10] else []
+                prohibition_name = row[11] if row[11] else None
+                prohibition_description = row[12] if row[12] else None
+                prohibition_duties = row[13] if row[13] else []
 
                 # Build action
                 action_obj = None
@@ -336,6 +393,9 @@ def query_triggered_rules_deontic(origin: str, receiving: str, has_pii: bool = N
                     'rule_id': rule_id,
                     'description': description,
                     'priority': priority,
+                    'odrl_type': odrl_type,
+                    'odrl_action': odrl_action,
+                    'odrl_target': odrl_target,
                     'action': action_obj,
                     'permission': permission_obj,
                     'prohibition': prohibition_obj,
@@ -363,8 +423,111 @@ def query_triggered_rules_deontic(origin: str, receiving: str, has_pii: bool = N
         }
 
 
+def detect_health_data_from_metadata(other_metadata: Optional[Dict[str, str]], verbose: bool = True) -> Dict[str, any]:
+    """
+    Automatically detect if metadata contains health-related information
+    Analyzes both column names (keys) and descriptions (values)
+    Uses comprehensive health data configuration with word boundary matching
+
+    Args:
+        other_metadata: Dictionary with column names as keys and descriptions as values
+        verbose: If True, returns detailed detection info; if False, returns simple boolean
+
+    Returns:
+        Dictionary with detection results:
+        {
+            'detected': bool,
+            'matched_keywords': list,
+            'matched_patterns': list,
+            'matched_fields': list
+        }
+
+    Example:
+        {'patient_id': 'medical record number'}
+        -> {'detected': True, 'matched_keywords': ['patient', 'medical'], ...}
+    """
+    if not other_metadata:
+        return {'detected': False, 'matched_keywords': [], 'matched_patterns': [], 'matched_fields': []}
+
+    import re
+
+    # Load keywords from config, fallback to basic list
+    if HEALTH_CONFIG and 'detection_rules' in HEALTH_CONFIG:
+        health_keywords = HEALTH_CONFIG['detection_rules']['keywords']
+        health_patterns = HEALTH_CONFIG['detection_rules'].get('patterns', [])
+    else:
+        # Fallback keywords if config not loaded
+        health_keywords = [
+            'health', 'medical', 'patient', 'diagnosis', 'treatment', 'prescription',
+            'clinical', 'hospital', 'doctor', 'disease', 'illness', 'medication',
+            'healthcare', 'wellness', 'fitness', 'biometric', 'genetic', 'vaccine',
+            'surgery', 'therapy', 'pharmaceutical', 'radiology', 'lab', 'laboratory'
+        ]
+        health_patterns = [
+            r'icd-?\d+',
+            r'cpt-?\d+',
+            r'diagnosis code',
+            r'medical record'
+        ]
+
+    matched_keywords = []
+    matched_patterns = []
+    matched_fields = []
+
+    # Check each metadata field
+    for key, value in other_metadata.items():
+        # Normalize text: replace underscores and hyphens with spaces for better keyword matching
+        # This allows "patient_id" to match "patient" and "diagnosis-codes" to match "diagnosis"
+        field_text = f"{key} {value}".lower()
+        normalized_text = field_text.replace('_', ' ').replace('-', ' ')
+        field_matched = False
+
+        # Check keywords with word boundaries on normalized text
+        for keyword in health_keywords:
+            # Use word boundaries on normalized text (underscores replaced with spaces)
+            if re.search(r'\b' + re.escape(keyword.lower()) + r'\b', normalized_text):
+                if keyword not in matched_keywords:
+                    matched_keywords.append(keyword)
+                field_matched = True
+
+        # Check patterns on original text (to catch "ICD-10" style patterns)
+        for pattern in health_patterns:
+            if re.search(pattern, field_text, re.IGNORECASE):
+                if pattern not in matched_patterns:
+                    matched_patterns.append(pattern)
+                field_matched = True
+
+        if field_matched:
+            matched_fields.append({'key': key, 'value': value})
+
+    detected = len(matched_keywords) > 0 or len(matched_patterns) > 0
+
+    result = {
+        'detected': detected,
+        'matched_keywords': matched_keywords,
+        'matched_patterns': matched_patterns,
+        'matched_fields': matched_fields
+    }
+
+    if verbose and detected:
+        logger.info(f"🏥 Health data detected: {len(matched_keywords)} keywords, "
+                   f"{len(matched_patterns)} patterns in {len(matched_fields)} fields")
+        logger.info(f"   Matched keywords: {', '.join(matched_keywords[:5])}{'...' if len(matched_keywords) > 5 else ''}")
+        logger.info(f"   Matched fields: {', '.join([f['key'] for f in matched_fields])}")
+
+    return result
+
+
 def contains_health_data(personal_data: List[str], personal_data_categories: List[str]) -> bool:
-    """Check if personal data or categories contain health-related information"""
+    """
+    Check if personal data or categories contain health-related information
+    Uses word boundary matching to avoid false positives
+
+    Note: This is used for DataTransferGraph case search.
+    For rules evaluation API, use detect_health_data_from_metadata() instead.
+    """
+    import re
+
     health_keywords = [
         'health', 'medical', 'patient', 'diagnosis', 'treatment', 'prescription',
         'clinical', 'hospital', 'doctor', 'disease', 'illness', 'medication',
@@ -374,7 +537,14 @@ def contains_health_data(personal_data: List[str], personal_data_categories: Lis
     all_data = personal_data + personal_data_categories
     all_data_lower = [item.lower() for item in all_data if item]
 
-    return any(keyword in data_item for keyword in health_keywords for data_item in all_data_lower)
+    # Use word boundary matching to avoid false positives like "doctorate" matching "doctor"
+    for data_item in all_data_lower:
+        for keyword in health_keywords:
+            # Match whole words only using word boundaries
+            if re.search(r'\b' + re.escape(keyword) + r'\b', data_item):
+                return True
+
+    return False
 
 
 def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
@@ -615,17 +785,64 @@ async def evaluate_rules(request: RulesEvaluationRequest):
     """
     Evaluate which compliance rules are triggered using deontic logic structure
 
+    All parameters are optional for flexible, dynamic evaluation:
+    - origin_country, receiving_country: Required for most evaluations
+    - pii: Whether transfer contains PII
+    - purpose_of_processing: Purpose(s) of data processing
+    - process_l1, process_l2, process_l3: Process hierarchy levels
+    - other_metadata: Additional data attributes (system auto-detects health data)
+
     Returns rules with their actions, permissions/prohibitions, and associated duties.
     Prohibitions indicate blocked transfers.
+
+    Example:
+        {
+            "origin_country": "United States",
+            "receiving_country": "China",
+            "pii": true,
+            "other_metadata": {
+                "patient_records": "medical history",
+                "diagnosis_codes": "ICD-10 codes"
+            }
+        }
+        -> System automatically detects health data and triggers RULE_11
     """
     try:
-        logger.info(f"Evaluating rules via Deontic RulesGraph: {request.origin_country} → {request.receiving_country}")
+        # Validate required fields
+        if not request.origin_country or not request.receiving_country:
+            raise HTTPException(
+                status_code=400,
+                detail="origin_country and receiving_country are required"
+            )
+
+        # Automatically detect health data from other_metadata
+        has_health_data_detected = False
+        health_detection_details = {}
+
+        if request.other_metadata:
+            health_detection_details = detect_health_data_from_metadata(request.other_metadata, verbose=True)
+            has_health_data_detected = health_detection_details['detected']
+
+            if has_health_data_detected:
+                logger.info(f"🏥 Health data DETECTED from {len(request.other_metadata)} metadata fields:")
+                for field in health_detection_details['matched_fields']:
+                    logger.info(f"   • {field['key']}: {field['value']}")
+            else:
+                logger.info(f"✓ No health data detected in {len(request.other_metadata)} metadata fields")
+
+        # Use pii flag from request, or None if not provided
+        has_pii = request.pii
+
+        logger.info(f"Evaluating rules: {request.origin_country} → {request.receiving_country}, "
+                   f"PII={has_pii}, Health={has_health_data_detected}, "
+                   f"Purpose={request.purpose_of_processing}, "
+                   f"Process={request.process_l1}/{request.process_l2}/{request.process_l3}")
 
         result = query_triggered_rules_deontic(
             request.origin_country.strip(),
             request.receiving_country.strip(),
-            request.has_pii,
-            request.has_health_data
+            has_pii,
+            has_health_data_detected
         )
 
         return {
@@ -633,6 +850,8 @@ async def evaluate_rules(request: RulesEvaluationRequest):
             **result
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error evaluating rules: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -640,7 +859,18 @@ async def evaluate_rules(request: RulesEvaluationRequest):
 
 @app.post("/api/search-cases", response_model=SearchCasesResponse, tags=["Cases"])
 async def search_cases(request: SearchCasesRequest):
-    """Search for data transfer cases matching the specified criteria"""
+    """
+    Search for data transfer cases matching the specified criteria
+
+    All parameters are optional for flexible searching:
+    - origin_country: Partial match on originating country
+    - receiving_country: Partial match on receiving country  - pii: Filter by PII presence
+    - purpose_of_processing: Filter by processing purpose(s)
+    - process_l1, process_l2, process_l3: Filter by process hierarchy
+    - other_metadata: Additional metadata filters (future enhancement)
+
+    Returns matching cases from the DataTransferGraph with auto-detected health data.
+    """
     try:
         origin = request.origin_country.strip() if request.origin_country else None
         receiving = request.receiving_country.strip() if request.receiving_country else None
@@ -648,16 +878,26 @@ async def search_cases(request: SearchCasesRequest):
         process_l2 = request.process_l2.strip() if request.process_l2 else None
         process_l3 = request.process_l3.strip() if request.process_l3 else None
 
-        logger.info(f"Searching cases: {origin} → {receiving}, purposes={request.purposes}, processes={process_l1}/{process_l2}/{process_l3}")
+        # Convert pii boolean to legacy 'yes'/'no'/None format for search_data_graph
+        has_pii_str = None
+        if request.pii is True:
+            has_pii_str = 'yes'
+        elif request.pii is False:
+            has_pii_str = 'no'
+
+        logger.info(f"Searching cases: {origin} → {receiving}, "
+                   f"purposes={request.purpose_of_processing}, "
+                   f"processes={process_l1}/{process_l2}/{process_l3}, "
+                   f"pii={has_pii_str}")
 
         cases = search_data_graph(
             origin,
             receiving,
-            request.purposes if request.purposes else None,
+            request.purpose_of_processing if request.purpose_of_processing else None,
             process_l1,
             process_l2,
             process_l3,
-            request.has_pii
+            has_pii_str
         )
 
         return {

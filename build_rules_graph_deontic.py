@@ -9,10 +9,29 @@ Structure:
 - Permission -[:CAN_HAVE_DUTY]-> Duty
 - Rule -[:HAS_PROHIBITION]-> Prohibition
 - Prohibition -[:CAN_HAVE_DUTY]-> Duty
+- Rule -[:TRIGGERED_BY_ORIGIN]-> CountryGroup
+- Rule -[:TRIGGERED_BY_RECEIVING]-> CountryGroup
+
+ODRL Alignment:
+- Rules implement ODRL (Open Digital Rights Language) policies
+- Each Rule node has odrl_type (Permission/Prohibition), odrl_action, odrl_target
+- Permissions map to ODRL permissions with duties as obligations
+- Prohibitions map to ODRL prohibitions with duties as remedies/exceptions
+- Actions map to ODRL actions (transfer, store, process)
+- Assets are represented by data type flags (has_pii_required, health_data_required)
+- Constraints are represented by match_type logic and country groups
+
+Schema Conventions:
+- empty origin_groups + origin_match_type='ALL' = "any origin"
+- empty receiving_groups + receiving_match_type='ALL' = "any destination"
+- receiving_match_type='NOT_IN' = inverse match (NOT in specified groups)
+- Priority: lower number = higher priority (1 = highest, executes first)
 """
 
 from falkordb import FalkorDB
 import logging
+import json
+from pathlib import Path
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -79,19 +98,10 @@ def build_rules_graph_deontic():
             'Austria', 'Poland', 'Portugal', 'Romania', 'Slovenia', 'Slovakia',
             'Finland', 'Sweden', 'Gibraltar', 'Monaco'
         ],
-        'BCR_COUNTRIES': [
-            'Algeria', 'Australia', 'Bahrain', 'Bangladesh', 'Belgium', 'Bermuda',
-            'Brazil', 'Canada', 'Cayman Islands', 'Chile', 'China', 'Czech Republic',
-            'British Virgin Islands', 'Denmark', 'Egypt', 'France', 'Germany',
-            'Guernsey', 'Hong Kong', 'India', 'Indonesia', 'Ireland', 'Isle of Man',
-            'Italy', 'Japan', 'Jersey', 'Korea', 'Republic Of (South)', 'Kuwait',
-            'Luxembourg', 'Macao', 'Malaysia', 'Maldives', 'Malta', 'Mauritius',
-            'Mexico', 'Netherlands', 'New Zealand', 'Oman', 'Philippines', 'Poland',
-            'Qatar', 'Saudi Arabia', 'Singapore', 'South Africa', 'Spain', 'Sri Lanka',
-            'Sweden', 'Switzerland', 'Taiwan', 'Thailand', 'Turkey', 'Turkiye',
-            'United Arab Emirates', 'United Kingdom', 'United States of America',
-            'Uruguay', 'Vietnam'
-        ],
+        # BCR (Binding Corporate Rules) approved countries
+        # Note: This list includes countries with approved BCR frameworks
+        # EU/EEA member states are included as they support BCR under GDPR
+        'BCR_COUNTRIES': [],  # Will be computed from EU_EEA + additional BCR countries
         'CROWN_DEPENDENCIES_ONLY': ['Jersey', 'Isle of Man', 'Guernsey'],
         'UK_ONLY': ['United Kingdom'],
         'US': ['United States', 'United States of America', 'USA'],
@@ -119,6 +129,23 @@ def build_rules_graph_deontic():
     country_groups['ADEQUACY_PLUS_EU'] = list(set(
         country_groups['ADEQUACY_COUNTRIES'] +
         country_groups['EU_EEA_FULL']
+    ))
+
+    # Compute BCR_COUNTRIES: EU/EEA + additional countries with BCR frameworks
+    bcr_additional_countries = [
+        'Algeria', 'Australia', 'Bahrain', 'Bangladesh', 'Bermuda',
+        'Brazil', 'Canada', 'Cayman Islands', 'Chile', 'China',
+        'British Virgin Islands', 'Egypt', 'Hong Kong', 'India', 'Indonesia',
+        'Japan', 'Korea', 'Republic Of (South)', 'Kuwait', 'Macao', 'Malaysia',
+        'Maldives', 'Mauritius', 'Mexico', 'New Zealand', 'Oman', 'Philippines',
+        'Qatar', 'Saudi Arabia', 'Singapore', 'South Africa', 'Sri Lanka',
+        'Switzerland', 'Taiwan', 'Thailand', 'Turkey', 'Turkiye',
+        'United Arab Emirates', 'United Kingdom', 'United States of America',
+        'Uruguay', 'Vietnam'
+    ]
+    country_groups['BCR_COUNTRIES'] = list(set(
+        country_groups['EU_EEA_FULL'] +  # All EU/EEA member states
+        bcr_additional_countries  # Additional BCR-approved countries
     ))
 
     # Create CountryGroup nodes
@@ -343,6 +370,12 @@ def build_rules_graph_deontic():
     # 6. Create Rules with new structure
     logger.info("Creating rules with deontic structure...")
 
+    # Schema conventions:
+    # - empty origin_groups + origin_match_type='ALL' means "any origin country"
+    # - empty receiving_groups + receiving_match_type='ALL' means "any destination country"
+    # - Priority: lower number = higher priority (1 = highest)
+    # - ODRL metadata: odrl_type (Permission/Prohibition), odrl_action, odrl_target
+
     rules = [
         {
             'rule_id': 'RULE_1',
@@ -355,12 +388,15 @@ def build_rules_graph_deontic():
             'has_pii_required': False,
             'action': 'Transfer Data',
             'permission': 'EU/EEA Internal Transfer',
-            'prohibition': None
+            'prohibition': None,
+            'odrl_type': 'Permission',
+            'odrl_action': 'transfer',
+            'odrl_target': 'Data'
         },
         {
             'rule_id': 'RULE_2',
             'description': 'EU/EEA to Adequacy Decision countries',
-            'priority': 2,
+            'priority': 4,  # Adjusted to allow US rules higher priority
             'origin_groups': ['EU_EEA_FULL'],
             'receiving_groups': ['ADEQUACY_COUNTRIES'],
             'origin_match_type': 'ANY',
@@ -368,12 +404,15 @@ def build_rules_graph_deontic():
             'has_pii_required': False,
             'action': 'Transfer Data',
             'permission': 'EU to Adequacy Countries Transfer',
-            'prohibition': None
+            'prohibition': None,
+            'odrl_type': 'Permission',
+            'odrl_action': 'transfer',
+            'odrl_target': 'Data'
         },
         {
             'rule_id': 'RULE_3',
             'description': 'Crown Dependencies to Adequacy + EU/EEA',
-            'priority': 3,
+            'priority': 5,
             'origin_groups': ['CROWN_DEPENDENCIES_ONLY'],
             'receiving_groups': ['ADEQUACY_PLUS_EU'],
             'origin_match_type': 'ANY',
@@ -381,12 +420,15 @@ def build_rules_graph_deontic():
             'has_pii_required': False,
             'action': 'Transfer Data',
             'permission': 'Crown Dependencies Transfer',
-            'prohibition': None
+            'prohibition': None,
+            'odrl_type': 'Permission',
+            'odrl_action': 'transfer',
+            'odrl_target': 'Data'
         },
         {
             'rule_id': 'RULE_4',
             'description': 'United Kingdom to Adequacy (excluding UK) + EU/EEA',
-            'priority': 4,
+            'priority': 6,
             'origin_groups': ['UK_ONLY'],
             'receiving_groups': ['EU_EEA_ADEQUACY_UK'],
             'origin_match_type': 'ANY',
@@ -394,12 +436,15 @@ def build_rules_graph_deontic():
             'has_pii_required': False,
             'action': 'Transfer Data',
             'permission': 'UK to Adequacy Transfer',
-            'prohibition': None
+            'prohibition': None,
+            'odrl_type': 'Permission',
+            'odrl_action': 'transfer',
+            'odrl_target': 'Data'
         },
         {
             'rule_id': 'RULE_5',
             'description': 'Switzerland to approved jurisdictions',
-            'priority': 5,
+            'priority': 7,
             'origin_groups': ['SWITZERLAND'],
             'receiving_groups': ['SWITZERLAND_APPROVED'],
             'origin_match_type': 'ANY',
@@ -407,12 +452,15 @@ def build_rules_graph_deontic():
             'has_pii_required': False,
             'action': 'Transfer Data',
             'permission': 'Switzerland Transfer',
-            'prohibition': None
+            'prohibition': None,
+            'odrl_type': 'Permission',
+            'odrl_action': 'transfer',
+            'odrl_target': 'Data'
         },
         {
             'rule_id': 'RULE_6',
             'description': 'EU/EEA/Adequacy to Rest of World',
-            'priority': 6,
+            'priority': 8,
             'origin_groups': ['EU_EEA_ADEQUACY_UK'],
             'receiving_groups': ['EU_EEA_ADEQUACY_UK'],
             'origin_match_type': 'ANY',
@@ -420,39 +468,49 @@ def build_rules_graph_deontic():
             'has_pii_required': False,
             'action': 'Transfer Data',
             'permission': 'EU/EEA to Rest of World Transfer',
-            'prohibition': None
+            'prohibition': None,
+            'odrl_type': 'Permission',
+            'odrl_action': 'transfer',
+            'odrl_target': 'Data'
         },
         {
             'rule_id': 'RULE_7',
             'description': 'BCR Countries to any jurisdiction',
-            'priority': 7,
+            'priority': 9,
             'origin_groups': ['BCR_COUNTRIES'],
-            'receiving_groups': [],
+            'receiving_groups': [],  # Empty list with match_type='ALL' means "any destination"
             'origin_match_type': 'ANY',
             'receiving_match_type': 'ALL',
             'has_pii_required': False,
             'action': 'Transfer Data',
             'permission': 'BCR Countries Transfer',
-            'prohibition': None
+            'prohibition': None,
+            'odrl_type': 'Permission',
+            'odrl_action': 'transfer',
+            'odrl_target': 'Data'
         },
         {
             'rule_id': 'RULE_8',
             'description': 'Transfer contains Personal Data (PII)',
-            'priority': 8,
-            'origin_groups': [],
-            'receiving_groups': [],
+            'priority': 10,
+            'origin_groups': [],  # Empty list with match_type='ALL' means "any origin"
+            'receiving_groups': [],  # Empty list with match_type='ALL' means "any destination"
             'origin_match_type': 'ALL',
             'receiving_match_type': 'ALL',
             'has_pii_required': True,
             'action': 'Transfer PII',
             'permission': 'PII Transfer',
-            'prohibition': None
+            'prohibition': None,
+            'odrl_type': 'Permission',
+            'odrl_action': 'transfer',
+            'odrl_target': 'PII'
         },
         # NEW US BLOCKING RULES
+        # Priority adjusted: 1=absolute prohibition, 2=conditional prohibition, 3=restricted transfer
         {
             'rule_id': 'RULE_9',
             'description': 'US transfers of PII to restricted countries are PROHIBITED',
-            'priority': 1,
+            'priority': 2,  # Conditional prohibition (can get approval)
             'origin_groups': ['US'],
             'receiving_groups': ['US_RESTRICTED_COUNTRIES'],
             'origin_match_type': 'ANY',
@@ -460,12 +518,15 @@ def build_rules_graph_deontic():
             'has_pii_required': True,
             'action': 'Transfer PII',
             'permission': None,
-            'prohibition': 'US PII to Restricted Countries'
+            'prohibition': 'US PII to Restricted Countries',
+            'odrl_type': 'Prohibition',
+            'odrl_action': 'transfer',
+            'odrl_target': 'PII'
         },
         {
             'rule_id': 'RULE_10',
             'description': 'Data owned, created, developed, or maintained in US cannot be stored or processed in China cloud storage',
-            'priority': 1,
+            'priority': 1,  # Absolute prohibition (no exceptions)
             'origin_groups': ['US'],
             'receiving_groups': ['CHINA_CLOUD'],
             'origin_match_type': 'ANY',
@@ -473,46 +534,98 @@ def build_rules_graph_deontic():
             'has_pii_required': False,
             'action': 'Store in Cloud',
             'permission': None,
-            'prohibition': 'US Data to China Cloud'
+            'prohibition': 'US Data to China Cloud',
+            'odrl_type': 'Prohibition',
+            'odrl_action': 'store',
+            'odrl_target': 'Data'
         },
         {
             'rule_id': 'RULE_11',
             'description': 'Transfer of health-related data from US is PROHIBITED without approval',
-            'priority': 1,
+            'priority': 3,  # Restricted transfer (requires exception)
             'origin_groups': ['US'],
-            'receiving_groups': [],
+            'receiving_groups': [],  # Empty list with match_type='ALL' means "any destination"
             'origin_match_type': 'ANY',
             'receiving_match_type': 'ALL',
             'has_pii_required': False,
             'health_data_required': True,
             'action': 'Transfer Health Data',
             'permission': None,
-            'prohibition': 'US Health Data Transfer'
+            'prohibition': 'US Health Data Transfer',
+            'odrl_type': 'Prohibition',
+            'odrl_action': 'transfer',
+            'odrl_target': 'HealthData'
         }
     ]
 
+    # Load health data configuration for RULE_11
+    health_config_path = Path(__file__).parent / "health_data_config.json"
+    health_config_json = None
+    if health_config_path.exists():
+        with open(health_config_path, 'r') as f:
+            health_config = json.load(f)
+            health_config_json = json.dumps(health_config)
+            logger.info(f"✓ Loaded health data config: {len(health_config['detection_rules']['keywords'])} keywords")
+
     for rule in rules:
-        # Create rule node
-        query = """
-        CREATE (r:Rule {
-            rule_id: $rule_id,
-            description: $description,
-            priority: $priority,
-            origin_match_type: $origin_match_type,
-            receiving_match_type: $receiving_match_type,
-            has_pii_required: $has_pii_required,
-            health_data_required: $health_data_required
-        })
-        """
-        graph.query(query, params={
-            'rule_id': rule['rule_id'],
-            'description': rule['description'],
-            'priority': rule['priority'],
-            'origin_match_type': rule['origin_match_type'],
-            'receiving_match_type': rule['receiving_match_type'],
-            'has_pii_required': rule.get('has_pii_required', False),
-            'health_data_required': rule.get('health_data_required', False)
-        })
+        # Create rule node with ODRL metadata
+        # For RULE_11 (health data), include the health detection configuration
+        if rule['rule_id'] == 'RULE_11' and health_config_json:
+            query = """
+            CREATE (r:Rule {
+                rule_id: $rule_id,
+                description: $description,
+                priority: $priority,
+                origin_match_type: $origin_match_type,
+                receiving_match_type: $receiving_match_type,
+                has_pii_required: $has_pii_required,
+                health_data_required: $health_data_required,
+                odrl_type: $odrl_type,
+                odrl_action: $odrl_action,
+                odrl_target: $odrl_target,
+                health_detection_config: $health_config
+            })
+            """
+            graph.query(query, params={
+                'rule_id': rule['rule_id'],
+                'description': rule['description'],
+                'priority': rule['priority'],
+                'origin_match_type': rule['origin_match_type'],
+                'receiving_match_type': rule['receiving_match_type'],
+                'has_pii_required': rule.get('has_pii_required', False),
+                'health_data_required': rule.get('health_data_required', False),
+                'odrl_type': rule.get('odrl_type', 'Permission'),
+                'odrl_action': rule.get('odrl_action', 'transfer'),
+                'odrl_target': rule.get('odrl_target', 'Data'),
+                'health_config': health_config_json
+            })
+        else:
+            query = """
+            CREATE (r:Rule {
+                rule_id: $rule_id,
+                description: $description,
+                priority: $priority,
+                origin_match_type: $origin_match_type,
+                receiving_match_type: $receiving_match_type,
+                has_pii_required: $has_pii_required,
+                health_data_required: $health_data_required,
+                odrl_type: $odrl_type,
+                odrl_action: $odrl_action,
+                odrl_target: $odrl_target
+            })
+            """
+            graph.query(query, params={
+                'rule_id': rule['rule_id'],
+                'description': rule['description'],
+                'priority': rule['priority'],
+                'origin_match_type': rule['origin_match_type'],
+                'receiving_match_type': rule['receiving_match_type'],
+                'has_pii_required': rule.get('has_pii_required', False),
+                'health_data_required': rule.get('health_data_required', False),
+                'odrl_type': rule.get('odrl_type', 'Permission'),
+                'odrl_action': rule.get('odrl_action', 'transfer'),
+                'odrl_target': rule.get('odrl_target', 'Data')
+            })
 
         # Link to action
         if rule.get('action'):

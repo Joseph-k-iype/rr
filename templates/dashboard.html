@@ -396,6 +396,22 @@
                             <option value="no">No</option>
                         </select>
                     </div>
+
+                    <!-- NEW: Other Metadata JSON -->
+                    <div class="form-group" style="grid-column: 1 / -1;">
+                        <label class="form-label" for="other-metadata">
+                            Other Metadata (Optional)
+                            <span style="font-weight: 300; color: var(--hsbc-gray); margin-left: 0.5rem;">
+                                - Add data attributes as key-value pairs. Health data is auto-detected.
+                            </span>
+                        </label>
+                        <div id="metadata-container" style="margin-bottom: 1rem;">
+                            <!-- Dynamic metadata inputs will be added here -->
+                        </div>
+                        <button type="button" class="btn-secondary" id="add-metadata-btn" style="width: auto; padding: 0.5rem 1.5rem;">
+                            + Add Metadata Field
+                        </button>
+                    </div>
                 </div>
 
                 <div class="button-group">
@@ -597,7 +613,67 @@
                 debounceSearch();
             });
 
+            // Metadata field management
+            document.getElementById('add-metadata-btn').addEventListener('click', addMetadataField);
+
             document.getElementById('reset-btn').addEventListener('click', resetForm);
+        }
+
+        // Metadata field counter
+        let metadataFieldCounter = 0;
+
+        // Add metadata field
+        function addMetadataField() {
+            const container = document.getElementById('metadata-container');
+            const fieldId = `metadata-field-${metadataFieldCounter++}`;
+
+            const fieldDiv = document.createElement('div');
+            fieldDiv.className = 'metadata-field';
+            fieldDiv.id = fieldId;
+            fieldDiv.style.cssText = 'display: grid; grid-template-columns: 1fr 1fr auto; gap: 1rem; margin-bottom: 0.5rem; align-items: center;';
+
+            fieldDiv.innerHTML = `
+                <input type="text" class="form-input metadata-key" placeholder="Column name (e.g., patient_id)" />
+                <input type="text" class="form-input metadata-value" placeholder="Description (e.g., medical record number)" />
+                <button type="button" class="btn-remove" onclick="removeMetadataField('${fieldId}')"
+                        style="padding: 0.5rem 1rem; background: var(--hsbc-gray); color: white; border: none; cursor: pointer;">
+                    Remove
+                </button>
+            `;
+
+            container.appendChild(fieldDiv);
+
+            // Trigger search on metadata changes
+            const inputs = fieldDiv.querySelectorAll('input');
+            inputs.forEach(input => {
+                input.addEventListener('input', debounceSearch);
+            });
+        }
+
+        // Remove metadata field
+        function removeMetadataField(fieldId) {
+            const field = document.getElementById(fieldId);
+            if (field) {
+                field.remove();
+                debounceSearch();
+            }
+        }
+
+        // Collect metadata from form
+        function collectMetadata() {
+            const metadata = {};
+            const fields = document.querySelectorAll('.metadata-field');
+
+            fields.forEach(field => {
+                const key = field.querySelector('.metadata-key').value.trim();
+                const value = field.querySelector('.metadata-value').value.trim();
+
+                if (key && value) {
+                    metadata[key] = value;
+                }
+            });
+
+            return Object.keys(metadata).length > 0 ? metadata : null;
         }
 
         // Trigger dynamic search
@@ -612,8 +688,9 @@
                 const processL2 = document.getElementById('process-l2').value;
                 const processL3 = document.getElementById('process-l3').value;
                 const hasPii = document.getElementById('has-pii').value;
+                const metadata = collectMetadata();
 
-                performSearch(originCountry, receivingCountry, purposes, processL1, processL2, processL3, hasPii);
+                performSearch(originCountry, receivingCountry, purposes, processL1, processL2, processL3, hasPii, metadata);
             } else {
                 // Clear results if criteria not met
                 document.getElementById('rules-section').classList.remove('show');
@@ -623,27 +700,33 @@
 
 
         // Perform search
-        async function performSearch(originCountry, receivingCountry, purposes, processL1, processL2, processL3, hasPii) {
+        async function performSearch(originCountry, receivingCountry, purposes, processL1, processL2, processL3, hasPii, metadata) {
             document.getElementById('loading').classList.add('show');
             document.getElementById('rules-section').classList.remove('show');
             document.getElementById('results-section').classList.remove('show');
 
             try {
-                console.log('Searching with:', {originCountry, receivingCountry, purposes, processL1, processL2, processL3});
+                console.log('Searching with:', {originCountry, receivingCountry, purposes, processL1, processL2, processL3, metadata});
 
-                // First, search cases to detect health data
+                // Build request payload with new parameter names
+                const piiFlag = hasPii === 'yes' ? true : hasPii === 'no' ? false : null;
+
+                // First, search cases in DataTransferGraph
+                const searchPayload = {
+                    origin_country: originCountry,
+                    receiving_country: receivingCountry,
+                    pii: piiFlag,
+                    purpose_of_processing: purposes && purposes.length > 0 ? purposes : null,
+                    process_l1: processL1 || null,
+                    process_l2: processL2 || null,
+                    process_l3: processL3 || null,
+                    other_metadata: metadata
+                };
+
                 const searchResponse = await fetch(`${API_BASE}/api/search-cases`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        origin_country: originCountry,
-                        receiving_country: receivingCountry,
-                        purposes: purposes,
-                        process_l1: processL1,
-                        process_l2: processL2,
-                        process_l3: processL3,
-                        has_pii: hasPii || null
-                    })
+                    body: JSON.stringify(searchPayload)
                 });
 
                 const searchData = await searchResponse.json();
@@ -651,29 +734,42 @@
 
                 // Detect if any case has health data
                 const hasHealthData = searchData.cases && searchData.cases.some(c => c.has_health_data);
-                console.log('Health data detected:', hasHealthData);
+                console.log('Health data detected from cases:', hasHealthData);
 
-                // Evaluate rules with detected health data flag
+                // Evaluate rules with new API structure - health data auto-detected from metadata
+                const rulesPayload = {
+                    origin_country: originCountry,
+                    receiving_country: receivingCountry,
+                    pii: piiFlag,
+                    purpose_of_processing: purposes && purposes.length > 0 ? purposes : null,
+                    process_l1: processL1 || null,
+                    process_l2: processL2 || null,
+                    process_l3: processL3 || null,
+                    other_metadata: metadata
+                };
+
                 const rulesResponse = await fetch(`${API_BASE}/api/evaluate-rules`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        origin_country: originCountry,
-                        receiving_country: receivingCountry,
-                        has_pii: hasPii === 'yes' ? true : hasPii === 'no' ? false : null,
-                        has_health_data: hasHealthData
-                    })
+                    body: JSON.stringify(rulesPayload)
                 });
 
                 const rulesData = await rulesResponse.json();
                 console.log('Rules data:', rulesData);
+
+                // Show health data indicator if detected from either source
+                const healthDataDetected = hasHealthData || (metadata && Object.keys(metadata).some(key => {
+                    const text = (key + ' ' + metadata[key]).toLowerCase();
+                    return /\b(health|medical|patient|diagnosis|treatment|prescription|clinical|hospital|doctor|disease|illness|medication)\b/.test(text);
+                }));
+                console.log('Health data overall:', healthDataDetected);
 
                 // Display triggered rules
                 displayTriggeredRules(rulesData.triggered_rules || []);
 
                 // Display cases
                 if (searchData.success) {
-                    displayResults(searchData.cases, hasHealthData);
+                    displayResults(searchData.cases, healthDataDetected);
                 } else {
                     showAlert(searchData.error || 'Search failed', 'error');
                 }
@@ -864,6 +960,12 @@
         function resetForm() {
             document.getElementById('search-form').reset();
             $('#purposes').val(null).trigger('change');  // Reset Select2
+
+            // Clear all metadata fields
+            const metadataContainer = document.getElementById('metadata-container');
+            metadataContainer.innerHTML = '';
+            metadataFieldCounter = 0;
+
             document.getElementById('rules-section').classList.remove('show');
             document.getElementById('results-section').classList.remove('show');
         }
