@@ -78,12 +78,19 @@ def build_rules_graph():
             'Mexico', 'Netherlands', 'New Zealand', 'Oman', 'Philippines', 'Poland',
             'Qatar', 'Saudi Arabia', 'Singapore', 'South Africa', 'Spain', 'Sri Lanka',
             'Sweden', 'Switzerland', 'Taiwan', 'Thailand', 'Turkey', 'Turkiye',
-            'United Arab Emirates', 'United Kingdom', 'United States of America',
+            'United Arab Emirates', 'United States of America',
             'Uruguay', 'Vietnam'
         ],
         'CROWN_DEPENDENCIES_ONLY': ['Jersey', 'Isle of Man', 'Guernsey'],
         'UK_ONLY': ['United Kingdom'],
-        'EU_EEA_ADEQUACY_UK': []  # Will be computed
+        'EU_EEA_ADEQUACY_UK': [],  # Will be computed
+        # NEW: US-related country groups
+        'US': ['United States', 'United States of America', 'USA'],
+        'US_RESTRICTED_COUNTRIES': [
+            'China', 'Hong Kong', 'Macao', 'Macau',
+            'Cuba', 'Iran', 'North Korea', 'Russia', 'Venezuela'
+        ],
+        'CHINA_CLOUD': ['China', 'Hong Kong', 'Macao', 'Macau']
     }
 
     # Computed groups
@@ -231,11 +238,55 @@ def build_rules_graph():
             'receiving_match_type': 'ALL',
             'has_pii_required': True,  # Only triggers if has_pii=True
             'requirements': [{'module': 'pia_module', 'value': 'CM'}]
+        },
+        # NEW US BLOCKING RULES
+        {
+            'rule_id': 'RULE_9',
+            'description': 'US transfers of PII to restricted countries (China, Hong Kong, Macao, Cuba, Iran, North Korea, Russia, Venezuela) are PROHIBITED',
+            'priority': 1,  # Highest priority - blocking rule
+            'origin_groups': ['US'],
+            'receiving_groups': ['US_RESTRICTED_COUNTRIES'],
+            'origin_match_type': 'ANY',
+            'receiving_match_type': 'ANY',
+            'has_pii_required': True,  # Only triggers if has_pii=True
+            'blocked': True,
+            'status': 'BLOCKED',
+            'action': 'Only transfer with US legal approval',
+            'requirements': []  # No technical requirements - transfer is blocked
+        },
+        {
+            'rule_id': 'RULE_10',
+            'description': 'Data owned, created, developed, or maintained in US cannot be stored or processed in China cloud storage',
+            'priority': 1,  # Highest priority - blocking rule
+            'origin_groups': ['US'],
+            'receiving_groups': ['CHINA_CLOUD'],
+            'origin_match_type': 'ANY',
+            'receiving_match_type': 'ANY',
+            'has_pii_required': False,  # Applies to all data
+            'blocked': True,
+            'status': 'BLOCKED',
+            'action': 'Prohibited - no exceptions',
+            'requirements': []  # No technical requirements - transfer is blocked
+        },
+        {
+            'rule_id': 'RULE_11',
+            'description': 'Transfer of health-related data from US is PROHIBITED without US legal approval',
+            'priority': 1,  # Highest priority - blocking rule
+            'origin_groups': ['US'],
+            'receiving_groups': [],  # Any destination
+            'origin_match_type': 'ANY',
+            'receiving_match_type': 'ALL',  # Matches all destinations
+            'has_pii_required': False,
+            'blocked': True,
+            'status': 'BLOCKED',
+            'action': 'Obtain exception from US legal team',
+            'health_data_required': True,  # Special flag for health data
+            'requirements': []  # No technical requirements - transfer is blocked
         }
     ]
 
     for rule in rules:
-        # Create rule node
+        # Create rule node with new fields for blocking rules
         query = """
         CREATE (r:Rule {
             rule_id: $rule_id,
@@ -243,7 +294,11 @@ def build_rules_graph():
             priority: $priority,
             origin_match_type: $origin_match_type,
             receiving_match_type: $receiving_match_type,
-            has_pii_required: $has_pii_required
+            has_pii_required: $has_pii_required,
+            blocked: $blocked,
+            status: $status,
+            action: $action,
+            health_data_required: $health_data_required
         })
         """
         graph.query(query, params={
@@ -252,7 +307,11 @@ def build_rules_graph():
             'priority': rule['priority'],
             'origin_match_type': rule['origin_match_type'],
             'receiving_match_type': rule['receiving_match_type'],
-            'has_pii_required': rule.get('has_pii_required', False)
+            'has_pii_required': rule.get('has_pii_required', False),
+            'blocked': rule.get('blocked', False),
+            'status': rule.get('status', 'ALLOWED_WITH_REQUIREMENTS'),
+            'action': rule.get('action', ''),
+            'health_data_required': rule.get('health_data_required', False)
         })
 
         # Create relationships to origin groups

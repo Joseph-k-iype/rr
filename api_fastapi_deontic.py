@@ -1,13 +1,12 @@
 """
-Data Transfer Compliance Dashboard - Graph-Based FastAPI Backend
-All rule logic is in FalkorDB RulesGraph for scalability
-Includes automatic Swagger UI at /docs and ReDoc at /redoc
+Data Transfer Compliance Dashboard - FastAPI Backend with Deontic Logic
+Uses formal policy framework: Actions, Permissions, Prohibitions, Duties
+Swagger UI at /docs and ReDoc at /redoc
 """
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from typing import Dict, List, Optional
 from falkordb import FalkorDB
@@ -19,9 +18,9 @@ logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="Data Transfer Compliance API",
-    description="Graph-based compliance rule engine using FalkorDB. All business logic is stored in graphs for scalability.",
-    version="2.0.0",
+    title="Data Transfer Compliance API - Deontic Logic",
+    description="Graph-based compliance engine using deontic logic framework (Actions, Permissions, Prohibitions, Duties)",
+    version="3.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -45,10 +44,32 @@ data_graph = db.select_graph('DataTransferGraph')
 # PYDANTIC MODELS
 # ============================================================================
 
-class RuleRequirement(BaseModel):
-    """A single compliance requirement"""
-    module: str
-    value: str
+class Duty(BaseModel):
+    """A duty/obligation that must be fulfilled"""
+    name: str
+    description: str
+    module: Optional[str] = None
+    value: Optional[str] = None
+
+
+class Permission(BaseModel):
+    """A permission allowing an action with associated duties"""
+    name: str
+    description: str
+    duties: List[Duty] = Field(default_factory=list)
+
+
+class Prohibition(BaseModel):
+    """A prohibition blocking an action, possibly with duties to get exception"""
+    name: str
+    description: str
+    duties: List[Duty] = Field(default_factory=list)
+
+
+class Action(BaseModel):
+    """The action being evaluated"""
+    name: str
+    description: str
 
 
 class TriggeredRule(BaseModel):
@@ -56,11 +77,10 @@ class TriggeredRule(BaseModel):
     rule_id: str
     description: str
     priority: int
-    requirements: Dict[str, str] = Field(default_factory=dict)
-    blocked: bool = False
-    status: str = "ALLOWED_WITH_REQUIREMENTS"
-    action: str = ""
-    health_data_required: bool = False
+    action: Optional[Action] = None
+    permission: Optional[Permission] = None
+    prohibition: Optional[Prohibition] = None
+    is_blocked: bool = False  # True if has prohibition
     origin_group: str = ""
     receiving_group: str = ""
 
@@ -77,8 +97,9 @@ class RulesEvaluationResponse(BaseModel):
     """Response from rules evaluation"""
     success: bool = True
     triggered_rules: List[TriggeredRule]
-    requirements: Dict[str, str]
     total_rules_triggered: int
+    has_prohibitions: bool = False
+    consolidated_duties: List[Duty] = Field(default_factory=list)
 
 
 class SearchCasesRequest(BaseModel):
@@ -149,17 +170,17 @@ class ProcessesResponse(BaseModel):
 
 
 # ============================================================================
-# CORE LOGIC FUNCTIONS (unchanged from Flask version)
+# CORE LOGIC FUNCTIONS
 # ============================================================================
 
-def query_triggered_rules(origin: str, receiving: str, has_pii: bool = None, has_health_data: bool = None) -> Dict:
+def query_triggered_rules_deontic(origin: str, receiving: str, has_pii: bool = None, has_health_data: bool = None) -> Dict:
     """
-    Query the RulesGraph to find triggered rules and their requirements
-    All rule logic is now in the graph!
+    Query the RulesGraph using deontic logic structure
+    Returns rules with their actions, permissions, prohibitions, and duties
     """
-    logger.info(f"Querying RulesGraph for: {origin} → {receiving}, has_pii={has_pii}, has_health_data={has_health_data}")
+    logger.info(f"Querying Deontic RulesGraph for: {origin} → {receiving}, has_pii={has_pii}, has_health_data={has_health_data}")
 
-    # Comprehensive rule matching query
+    # Query with deontic structure
     query = """
     // Get origin country's groups
     MATCH (origin:Country {name: $origin_country})-[:BELONGS_TO]->(origin_group:CountryGroup)
@@ -183,14 +204,12 @@ def query_triggered_rules(origin: str, receiving: str, has_pii: bool = None, has
 
     // Filter rules based on match logic
     WITH r, origin_groups, receiving_groups, rule_origin_groups, rule_receiving_groups,
-         // Check if origin matches
          CASE
              WHEN r.origin_match_type = 'ALL' THEN true
              WHEN r.origin_match_type = 'ANY' AND size(rule_origin_groups) = 0 THEN false
              WHEN r.origin_match_type = 'ANY' THEN any(g IN origin_groups WHERE g IN rule_origin_groups)
              ELSE false
          END as origin_matches,
-         // Check if receiving matches
          CASE
              WHEN r.receiving_match_type = 'ALL' THEN true
              WHEN r.receiving_match_type = 'ANY' AND size(rule_receiving_groups) = 0 THEN false
@@ -202,22 +221,33 @@ def query_triggered_rules(origin: str, receiving: str, has_pii: bool = None, has
 
     // Only keep rules where both origin and receiving match
     WHERE origin_matches AND receiving_matches
-          // Additional PII filter for RULE_8
           AND (NOT r.has_pii_required OR $has_pii = true)
-          // Additional health data filter for RULE_11
           AND (NOT r.health_data_required OR $has_health_data = true)
 
-    // Get requirements for each matched rule
-    OPTIONAL MATCH (r)-[req:REQUIRES]->(:Requirement)
+    // Get action
+    OPTIONAL MATCH (r)-[:HAS_ACTION]->(action:Action)
+
+    // Get permission and its duties
+    OPTIONAL MATCH (r)-[:HAS_PERMISSION]->(perm:Permission)
+    OPTIONAL MATCH (perm)-[:CAN_HAVE_DUTY]->(perm_duty:Duty)
+
+    // Get prohibition and its duties
+    OPTIONAL MATCH (r)-[:HAS_PROHIBITION]->(prohib:Prohibition)
+    OPTIONAL MATCH (prohib)-[:CAN_HAVE_DUTY]->(prohib_duty:Duty)
 
     RETURN r.rule_id as rule_id,
            r.description as description,
            r.priority as priority,
-           r.blocked as blocked,
-           r.status as status,
-           r.action as action,
-           r.health_data_required as health_data_required,
-           collect({module: req.module, value: req.value}) as requirements
+           action.name as action_name,
+           action.description as action_description,
+           perm.name as permission_name,
+           perm.description as permission_description,
+           collect(DISTINCT {name: perm_duty.name, description: perm_duty.description,
+                            module: perm_duty.module, value: perm_duty.value}) as permission_duties,
+           prohib.name as prohibition_name,
+           prohib.description as prohibition_description,
+           collect(DISTINCT {name: prohib_duty.name, description: prohib_duty.description,
+                            module: prohib_duty.module, value: prohib_duty.value}) as prohibition_duties
     ORDER BY r.priority
     """
 
@@ -230,61 +260,111 @@ def query_triggered_rules(origin: str, receiving: str, has_pii: bool = None, has
         })
 
         triggered_rules = []
-        consolidated_requirements = {}
+        consolidated_duties_map = {}
+        has_prohibitions = False
 
         if result.result_set:
             for row in result.result_set:
                 rule_id = row[0]
                 description = row[1]
                 priority = row[2]
-                blocked = row[3] if len(row) > 3 else False
-                status = row[4] if len(row) > 4 else 'ALLOWED_WITH_REQUIREMENTS'
-                action = row[5] if len(row) > 5 else ''
-                health_data_required = row[6] if len(row) > 6 else False
-                requirements = row[7] if len(row) > 7 else []
+                action_name = row[3] if row[3] else None
+                action_description = row[4] if row[4] else None
+                permission_name = row[5] if row[5] else None
+                permission_description = row[6] if row[6] else None
+                permission_duties = row[7] if row[7] else []
+                prohibition_name = row[8] if row[8] else None
+                prohibition_description = row[9] if row[9] else None
+                prohibition_duties = row[10] if row[10] else []
 
-                # Build requirements dict
-                rule_requirements = {}
-                if requirements and requirements[0].get('module'):
-                    for req in requirements:
-                        if req.get('module'):
-                            rule_requirements[req['module']] = req['value']
-                            consolidated_requirements[req['module']] = req['value']
+                # Build action
+                action_obj = None
+                if action_name:
+                    action_obj = {
+                        'name': action_name,
+                        'description': action_description or ''
+                    }
+
+                # Build permission with duties
+                permission_obj = None
+                if permission_name:
+                    perm_duties_list = []
+                    for duty in permission_duties:
+                        if duty.get('name'):
+                            duty_obj = {
+                                'name': duty['name'],
+                                'description': duty.get('description', ''),
+                                'module': duty.get('module'),
+                                'value': duty.get('value')
+                            }
+                            perm_duties_list.append(duty_obj)
+                            # Add to consolidated duties
+                            consolidated_duties_map[duty['name']] = duty_obj
+
+                    permission_obj = {
+                        'name': permission_name,
+                        'description': permission_description or '',
+                        'duties': perm_duties_list
+                    }
+
+                # Build prohibition with duties
+                prohibition_obj = None
+                is_blocked = False
+                if prohibition_name:
+                    prohib_duties_list = []
+                    for duty in prohibition_duties:
+                        if duty.get('name'):
+                            duty_obj = {
+                                'name': duty['name'],
+                                'description': duty.get('description', ''),
+                                'module': duty.get('module'),
+                                'value': duty.get('value')
+                            }
+                            prohib_duties_list.append(duty_obj)
+                            # Add to consolidated duties
+                            consolidated_duties_map[duty['name']] = duty_obj
+
+                    prohibition_obj = {
+                        'name': prohibition_name,
+                        'description': prohibition_description or '',
+                        'duties': prohib_duties_list
+                    }
+                    is_blocked = True
+                    has_prohibitions = True
 
                 triggered_rules.append({
                     'rule_id': rule_id,
                     'description': description,
                     'priority': priority,
-                    'requirements': rule_requirements,
-                    'blocked': blocked,
-                    'status': status,
-                    'action': action,
-                    'health_data_required': health_data_required,
+                    'action': action_obj,
+                    'permission': permission_obj,
+                    'prohibition': prohibition_obj,
+                    'is_blocked': is_blocked,
                     'origin_group': '',
                     'receiving_group': ''
                 })
 
-        logger.info(f"Triggered {len(triggered_rules)} rules with requirements: {consolidated_requirements}")
+        logger.info(f"Triggered {len(triggered_rules)} rules, {has_prohibitions=}")
 
         return {
             'triggered_rules': triggered_rules,
-            'requirements': consolidated_requirements,
-            'total_rules_triggered': len(triggered_rules)
+            'total_rules_triggered': len(triggered_rules),
+            'has_prohibitions': has_prohibitions,
+            'consolidated_duties': list(consolidated_duties_map.values())
         }
 
     except Exception as e:
         logger.error(f"Error querying RulesGraph: {e}", exc_info=True)
         return {
             'triggered_rules': [],
-            'requirements': {},
-            'total_rules_triggered': 0
+            'total_rules_triggered': 0,
+            'has_prohibitions': False,
+            'consolidated_duties': []
         }
 
 
 def contains_health_data(personal_data: List[str], personal_data_categories: List[str]) -> bool:
-    """
-    Check if personal data or categories contain health-related information
-    """
+    """Check if personal data or categories contain health-related information"""
     health_keywords = [
         'health', 'medical', 'patient', 'diagnosis', 'treatment', 'prescription',
         'clinical', 'hospital', 'doctor', 'disease', 'illness', 'medication',
@@ -300,17 +380,12 @@ def contains_health_data(personal_data: List[str], personal_data_categories: Lis
 def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
                       process_l1: str = None, process_l2: str = None, process_l3: str = None,
                       has_pii: str = None) -> List[Dict]:
-    """
-    Query DataTransferGraph for matching cases
-    Supports purposes (list) and process L1/L2/L3 filtering
-    NO FILTERING BY REQUIREMENTS - shows all matching cases
-    """
+    """Query DataTransferGraph for matching cases"""
     logger.info(f"Searching DataTransferGraph: {origin} → {receiving}, purposes={purposes}, processes={process_l1}/{process_l2}/{process_l3}")
 
     conditions = []
     params = {}
 
-    # Country matching - use CONTAINS for flexibility
     if origin:
         conditions.append("toLower(origin.name) CONTAINS toLower($origin)")
         params['origin'] = origin.lower()
@@ -321,14 +396,12 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
 
     where_clause = " AND ".join(conditions) if conditions else "true"
 
-    # Build query with purpose and process filtering
     query = f"""
     MATCH (c:Case)-[:ORIGINATES_FROM]->(origin:Country)
     MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction)
     WHERE {where_clause}
     """
 
-    # Filter by purposes if provided
     if purposes and len(purposes) > 0:
         query += """
     WITH c, origin
@@ -337,7 +410,6 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
         """
         params['purposes'] = purposes
 
-    # Filter by process L1 if provided
     if process_l1:
         query += """
     WITH c, origin
@@ -345,7 +417,6 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
         """
         params['process_l1'] = process_l1
 
-    # Filter by process L2 if provided
     if process_l2:
         query += """
     WITH c, origin
@@ -353,7 +424,6 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
         """
         params['process_l2'] = process_l2
 
-    # Filter by process L3 if provided
     if process_l3:
         query += """
     WITH c, origin
@@ -361,36 +431,29 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
         """
         params['process_l3'] = process_l3
 
-    # Collect receiving jurisdictions
     query += """
     WITH c, origin
     MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction)
     WITH c, origin, collect(DISTINCT receiving.name) as receiving_countries
 
-    // Get purposes
     OPTIONAL MATCH (c)-[:HAS_PURPOSE]->(purpose:Purpose)
     WITH c, origin, receiving_countries, collect(DISTINCT purpose.name) as purposes
 
-    // Get processes
     OPTIONAL MATCH (c)-[:HAS_PROCESS_L1]->(p1:ProcessL1)
     OPTIONAL MATCH (c)-[:HAS_PROCESS_L2]->(p2:ProcessL2)
     OPTIONAL MATCH (c)-[:HAS_PROCESS_L3]->(p3:ProcessL3)
     WITH c, origin, receiving_countries, purposes, p1.name as process_l1, p2.name as process_l2, p3.name as process_l3
 
-    // Get personal data
     OPTIONAL MATCH (c)-[:HAS_PERSONAL_DATA]->(pd:PersonalData)
     WITH c, origin, receiving_countries, purposes, process_l1, process_l2, process_l3, collect(DISTINCT pd.name) as personal_data_items
 
-    // Get personal data categories
     OPTIONAL MATCH (c)-[:HAS_PERSONAL_DATA_CATEGORY]->(pdc:PersonalDataCategory)
     WITH c, origin, receiving_countries, purposes, process_l1, process_l2, process_l3, personal_data_items, collect(DISTINCT pdc.name) as pdc_items
 
-    // Get categories
     OPTIONAL MATCH (c)-[:HAS_CATEGORY]->(cat:Category)
     WITH c, origin, receiving_countries, purposes, process_l1, process_l2, process_l3, personal_data_items, pdc_items, collect(DISTINCT cat.name) as categories
     """
 
-    # Add PII filter if specified
     if has_pii == 'yes':
         query += "WHERE size(personal_data_items) > 0\n"
     elif has_pii == 'no':
@@ -422,7 +485,6 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
         cases = []
         if result.result_set:
             for row in result.result_set:
-                # Extract data safely
                 purposes = row[5] if len(row) > 5 and row[5] else []
                 process_l1 = row[6] if len(row) > 6 else None
                 process_l2 = row[7] if len(row) > 7 else None
@@ -431,13 +493,11 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
                 pdc_items = row[13] if len(row) > 13 and row[13] else []
                 categories = row[14] if len(row) > 14 and row[14] else []
 
-                # Clean up None values
                 purposes = [p for p in purposes if p] if purposes else []
                 personal_data_items = [pd for pd in personal_data_items if pd] if personal_data_items else []
                 pdc_items = [pdc for pdc in pdc_items if pdc] if pdc_items else []
                 categories = [cat for cat in categories if cat] if categories else []
 
-                # Check if case contains health data
                 has_health = contains_health_data(personal_data_items, pdc_items)
 
                 case_data = {
@@ -485,21 +545,12 @@ async def index():
 
 @app.get("/api/purposes", response_model=PurposesResponse, tags=["Metadata"])
 async def get_purposes():
-    """
-    Get all available legal processing purposes from the graph
-
-    Returns a list of all unique purpose names that can be used for filtering cases.
-    """
+    """Get all available legal processing purposes from the graph"""
     try:
         query = "MATCH (p:Purpose) RETURN DISTINCT p.name as name ORDER BY name"
         result = data_graph.query(query)
-
         purposes = [row[0] for row in result.result_set] if result.result_set else []
-
-        return {
-            'success': True,
-            'purposes': purposes
-        }
+        return {'success': True, 'purposes': purposes}
     except Exception as e:
         logger.error(f"Error fetching purposes: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -507,25 +558,16 @@ async def get_purposes():
 
 @app.get("/api/processes", response_model=ProcessesResponse, tags=["Metadata"])
 async def get_processes():
-    """
-    Get all available process levels (L1, L2, L3) from the graph
-
-    - **L1**: Process area (e.g., Back Office, Front Office)
-    - **L2**: Process function (e.g., HR, Finance)
-    - **L3**: Process detail (e.g., Payroll, AP)
-    """
+    """Get all available process levels (L1, L2, L3) from the graph"""
     try:
-        # Get Process L1
         query_l1 = "MATCH (p:ProcessL1) RETURN DISTINCT p.name as name ORDER BY name"
         result_l1 = data_graph.query(query_l1)
         process_l1 = [row[0] for row in result_l1.result_set] if result_l1.result_set else []
 
-        # Get Process L2
         query_l2 = "MATCH (p:ProcessL2) RETURN DISTINCT p.name as name ORDER BY name"
         result_l2 = data_graph.query(query_l2)
         process_l2 = [row[0] for row in result_l2.result_set] if result_l2.result_set else []
 
-        # Get Process L3
         query_l3 = "MATCH (p:ProcessL3) RETURN DISTINCT p.name as name ORDER BY name"
         result_l3 = data_graph.query(query_l3)
         process_l3 = [row[0] for row in result_l3.result_set] if result_l3.result_set else []
@@ -543,24 +585,17 @@ async def get_processes():
 
 @app.get("/api/countries", response_model=CountriesResponse, tags=["Metadata"])
 async def get_countries():
-    """
-    Get all unique countries from the data graph
-
-    Returns both origin countries and receiving jurisdictions.
-    """
+    """Get all unique countries from the data graph"""
     try:
-        # Get origin countries
         query_origin = "MATCH (c:Country) RETURN DISTINCT c.name as name ORDER BY name"
         result_origin = data_graph.query(query_origin)
 
-        # Get receiving jurisdictions
         query_receiving = "MATCH (j:Jurisdiction) RETURN DISTINCT j.name as name ORDER BY name"
         result_receiving = data_graph.query(query_receiving)
 
         origin_countries = [row[0] for row in result_origin.result_set] if result_origin.result_set else []
         receiving_countries = [row[0] for row in result_receiving.result_set] if result_receiving.result_set else []
 
-        # Combine and deduplicate
         all_countries = sorted(list(set(origin_countries + receiving_countries)))
 
         return {
@@ -578,22 +613,15 @@ async def get_countries():
 @app.post("/api/evaluate-rules", response_model=RulesEvaluationResponse, tags=["Compliance"])
 async def evaluate_rules(request: RulesEvaluationRequest):
     """
-    Evaluate which compliance rules are triggered for a data transfer
+    Evaluate which compliance rules are triggered using deontic logic structure
 
-    This endpoint queries the RulesGraph to determine which compliance rules apply
-    to a specific origin-to-receiving country transfer.
-
-    - **origin_country**: The country from which data originates
-    - **receiving_country**: The country receiving the data
-    - **has_pii**: Whether the transfer contains personally identifiable information
-
-    Returns all triggered rules with their compliance requirements.
+    Returns rules with their actions, permissions/prohibitions, and associated duties.
+    Prohibitions indicate blocked transfers.
     """
     try:
-        logger.info(f"Evaluating rules via RulesGraph: {request.origin_country} → {request.receiving_country}")
+        logger.info(f"Evaluating rules via Deontic RulesGraph: {request.origin_country} → {request.receiving_country}")
 
-        # Query the RulesGraph
-        result = query_triggered_rules(
+        result = query_triggered_rules_deontic(
             request.origin_country.strip(),
             request.receiving_country.strip(),
             request.has_pii,
@@ -612,21 +640,7 @@ async def evaluate_rules(request: RulesEvaluationRequest):
 
 @app.post("/api/search-cases", response_model=SearchCasesResponse, tags=["Cases"])
 async def search_cases(request: SearchCasesRequest):
-    """
-    Search for data transfer cases matching the specified criteria
-
-    All filters are optional. If no filters are provided, returns all cases (up to 1000).
-
-    - **origin_country**: Filter by origin country (partial match)
-    - **receiving_country**: Filter by receiving country (partial match)
-    - **purposes**: Filter by legal processing purposes (must match ANY)
-    - **process_l1**: Filter by process area
-    - **process_l2**: Filter by process function
-    - **process_l3**: Filter by process detail
-    - **has_pii**: Filter by PII presence ('yes', 'no', or null for any)
-
-    Returns all matching cases WITHOUT filtering by compliance requirements.
-    """
+    """Search for data transfer cases matching the specified criteria"""
     try:
         origin = request.origin_country.strip() if request.origin_country else None
         receiving = request.receiving_country.strip() if request.receiving_country else None
@@ -636,7 +650,6 @@ async def search_cases(request: SearchCasesRequest):
 
         logger.info(f"Searching cases: {origin} → {receiving}, purposes={request.purposes}, processes={process_l1}/{process_l2}/{process_l3}")
 
-        # Search DataTransferGraph
         cases = search_data_graph(
             origin,
             receiving,
@@ -660,28 +673,20 @@ async def search_cases(request: SearchCasesRequest):
 
 @app.get("/api/stats", response_model=StatsResponse, tags=["Metadata"])
 async def get_stats():
-    """
-    Get dashboard statistics
-
-    Returns counts of total cases, countries, jurisdictions, and cases with PII.
-    """
+    """Get dashboard statistics"""
     try:
-        # Total cases
         query_cases = "MATCH (c:Case) RETURN count(c) as count"
         result_cases = data_graph.query(query_cases)
         total_cases = result_cases.result_set[0][0] if result_cases.result_set else 0
 
-        # Total countries
         query_countries = "MATCH (c:Country) RETURN count(c) as count"
         result_countries = data_graph.query(query_countries)
         total_countries = result_countries.result_set[0][0] if result_countries.result_set else 0
 
-        # Total jurisdictions
         query_jurisdictions = "MATCH (j:Jurisdiction) RETURN count(j) as count"
         result_jurisdictions = data_graph.query(query_jurisdictions)
         total_jurisdictions = result_jurisdictions.result_set[0][0] if result_jurisdictions.result_set else 0
 
-        # Cases with PII
         query_pii = """
         MATCH (c:Case)
         OPTIONAL MATCH (c)-[:HAS_PERSONAL_DATA]->(pd:PersonalData)
@@ -709,43 +714,46 @@ async def get_stats():
 
 @app.get("/api/test-rules-graph", tags=["Testing"])
 async def test_rules_graph():
-    """
-    Test endpoint to verify RulesGraph is properly configured
-
-    Returns statistics about the RulesGraph (country groups, countries, rules).
-    """
+    """Test endpoint to verify RulesGraph is properly configured with deontic structure"""
     try:
-        # Query rules graph statistics
         query = """
         MATCH (cg:CountryGroup) WITH count(cg) as groups
         MATCH (c:Country) WITH groups, count(c) as countries
         MATCH (r:Rule) WITH groups, countries, count(r) as rules
-        RETURN groups, countries, rules
+        MATCH (a:Action) WITH groups, countries, rules, count(a) as actions
+        MATCH (p:Permission) WITH groups, countries, rules, actions, count(p) as permissions
+        MATCH (pr:Prohibition) WITH groups, countries, rules, actions, permissions, count(pr) as prohibitions
+        MATCH (d:Duty) WITH groups, countries, rules, actions, permissions, prohibitions, count(d) as duties
+        RETURN groups, countries, rules, actions, permissions, prohibitions, duties
         """
         result = rules_graph.query(query)
 
         if result.result_set:
-            groups, countries, rules = result.result_set[0]
+            groups, countries, rules, actions, permissions, prohibitions, duties = result.result_set[0]
             return {
                 'success': True,
                 'rules_graph_stats': {
                     'country_groups': groups,
                     'countries': countries,
-                    'rules': rules
+                    'rules': rules,
+                    'actions': actions,
+                    'permissions': permissions,
+                    'prohibitions': prohibitions,
+                    'duties': duties
                 },
-                'message': 'RulesGraph is operational'
+                'message': 'Deontic RulesGraph is operational'
             }
         else:
             raise HTTPException(
                 status_code=500,
-                detail='RulesGraph is empty. Run build_rules_graph.py first.'
+                detail='RulesGraph is empty. Run build_rules_graph_deontic.py first.'
             )
 
     except Exception as e:
         logger.error(f"Error testing RulesGraph: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f'RulesGraph may not be built. Run build_rules_graph.py. Error: {str(e)}'
+            detail=f'RulesGraph may not be built. Run build_rules_graph_deontic.py. Error: {str(e)}'
         )
 
 
@@ -753,9 +761,9 @@ if __name__ == '__main__':
     import uvicorn
 
     logger.info("=" * 70)
-    logger.info("GRAPH-BASED COMPLIANCE API - FastAPI")
+    logger.info("DEONTIC COMPLIANCE API - FastAPI")
     logger.info("=" * 70)
-    logger.info("Rule logic is in FalkorDB RulesGraph for scalability")
+    logger.info("Using formal deontic logic: Actions, Permissions, Prohibitions, Duties")
     logger.info("Starting server on http://0.0.0.0:5001")
     logger.info("Swagger UI: http://localhost:5001/docs")
     logger.info("ReDoc: http://localhost:5001/redoc")

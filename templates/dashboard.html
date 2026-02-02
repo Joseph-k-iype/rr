@@ -261,6 +261,41 @@
             border-left: 3px solid var(--hsbc-red);
             color: var(--hsbc-red);
         }
+
+        .alert-warning {
+            background-color: #fff9e6;
+            border-left: 3px solid #ff9800;
+            color: #e65100;
+        }
+
+        .rule-blocked {
+            background-color: #ffebee !important;
+            border-left: 3px solid var(--hsbc-red);
+        }
+
+        .rule-blocked td {
+            color: var(--hsbc-red);
+            font-weight: 500;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.3rem 0.6rem;
+            border-radius: 3px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+
+        .status-blocked {
+            background-color: var(--hsbc-red);
+            color: white;
+        }
+
+        .status-allowed {
+            background-color: var(--success-green);
+            color: white;
+        }
     </style>
 </head>
 
@@ -596,14 +631,37 @@
             try {
                 console.log('Searching with:', {originCountry, receivingCountry, purposes, processL1, processL2, processL3});
 
-                // Evaluate rules first
+                // First, search cases to detect health data
+                const searchResponse = await fetch(`${API_BASE}/api/search-cases`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        origin_country: originCountry,
+                        receiving_country: receivingCountry,
+                        purposes: purposes,
+                        process_l1: processL1,
+                        process_l2: processL2,
+                        process_l3: processL3,
+                        has_pii: hasPii || null
+                    })
+                });
+
+                const searchData = await searchResponse.json();
+                console.log('Cases found:', searchData.total_cases);
+
+                // Detect if any case has health data
+                const hasHealthData = searchData.cases && searchData.cases.some(c => c.has_health_data);
+                console.log('Health data detected:', hasHealthData);
+
+                // Evaluate rules with detected health data flag
                 const rulesResponse = await fetch(`${API_BASE}/api/evaluate-rules`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         origin_country: originCountry,
                         receiving_country: receivingCountry,
-                        has_pii: hasPii === 'yes' ? true : hasPii === 'no' ? false : null
+                        has_pii: hasPii === 'yes' ? true : hasPii === 'no' ? false : null,
+                        has_health_data: hasHealthData
                     })
                 });
 
@@ -613,27 +671,9 @@
                 // Display triggered rules
                 displayTriggeredRules(rulesData.triggered_rules || []);
 
-                // Search cases with NEW parameters
-                const searchResponse = await fetch(`${API_BASE}/api/search-cases`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        origin_country: originCountry,
-                        receiving_country: receivingCountry,
-                        purposes: purposes,  // NEW: Array
-                        process_l1: processL1,  // NEW
-                        process_l2: processL2,  // NEW
-                        process_l3: processL3,  // NEW
-                        has_pii: hasPii || null,
-                        requirements: rulesData.requirements || {}
-                    })
-                });
-
-                const searchData = await searchResponse.json();
-                console.log('Cases found:', searchData.total_cases);
-
+                // Display cases
                 if (searchData.success) {
-                    displayResults(searchData.cases);
+                    displayResults(searchData.cases, hasHealthData);
                 } else {
                     showAlert(searchData.error || 'Search failed', 'error');
                 }
@@ -646,64 +686,144 @@
             }
         }
 
-        // Display triggered rules
+        // Display triggered rules with deontic structure
         function displayTriggeredRules(rules) {
+            console.log('displayTriggeredRules called with:', rules);
+
             const rulesSection = document.getElementById('rules-section');
             const rulesCount = document.getElementById('rules-count');
             const rulesContainer = document.getElementById('rules-container');
 
             rulesCount.textContent = rules.length;
 
+            // Check for prohibitions (blocked rules)
+            const prohibitedRules = rules.filter(r => r.prohibition || r.is_blocked);
+
+            // Show warning if any rules have prohibitions
+            if (prohibitedRules.length > 0) {
+                const alertHtml = `
+                    <div class="alert alert-warning show" style="margin-bottom: 1rem;">
+                        <strong>⚠️ TRANSFER PROHIBITED:</strong> ${prohibitedRules.length} rule(s) prohibit this transfer.
+                        See required action below.
+                    </div>
+                `;
+                rulesContainer.innerHTML = alertHtml;
+            } else {
+                rulesContainer.innerHTML = '';
+            }
+
             if (rules.length === 0) {
-                rulesContainer.innerHTML = '<p>No compliance rules triggered for this transfer.</p>';
+                rulesContainer.innerHTML += '<p>No compliance rules triggered for this transfer.</p>';
             } else {
                 let html = '<table><thead><tr>';
-                html += '<th>Rule ID</th><th>Description</th><th>Priority</th><th>Requirements</th>';
+                html += '<th>Rule ID</th><th>Type</th><th>Status</th><th>Description</th><th>Duties/Action Required</th>';
                 html += '</tr></thead><tbody>';
 
                 rules.forEach(rule => {
-                    const reqStr = Object.entries(rule.requirements || {})
-                        .map(([module, value]) => `${module}: ${value}`)
-                        .join(', ') || 'None';
+                    console.log('Processing rule:', rule.rule_id);
+                    console.log('  prohibition:', rule.prohibition);
+                    console.log('  permission:', rule.permission);
+                    console.log('  action:', rule.action);
+                    console.log('  is_blocked:', rule.is_blocked);
 
-                    html += '<tr>';
+                    // Determine type and status
+                    const hasProhibition = rule.prohibition || rule.is_blocked;
+                    const hasPermission = rule.permission;
+
+                    let type = '-';
+                    let status = 'UNKNOWN';
+                    let statusBadge = '';
+                    let dutiesStr = 'None';
+                    let rowClass = '';
+
+                    if (hasProhibition) {
+                        type = 'Prohibition';
+                        status = 'BLOCKED';
+                        statusBadge = '<span class="status-badge status-blocked">PROHIBITED</span>';
+                        rowClass = 'rule-blocked';
+
+                        // Get duties from prohibition
+                        if (rule.prohibition && rule.prohibition.duties && rule.prohibition.duties.length > 0) {
+                            dutiesStr = rule.prohibition.duties.map(d => d.name).join('; ');
+                        } else {
+                            dutiesStr = 'Prohibited - no exceptions';
+                        }
+                    } else if (hasPermission) {
+                        type = 'Permission';
+                        status = 'ALLOWED';
+                        statusBadge = '<span class="status-badge status-allowed">ALLOWED</span>';
+
+                        // Get duties from permission
+                        if (rule.permission && rule.permission.duties && rule.permission.duties.length > 0) {
+                            dutiesStr = rule.permission.duties.map(d => {
+                                if (d.module) {
+                                    return `${d.name} (${d.module}: ${d.value})`;
+                                }
+                                return d.name;
+                            }).join('; ');
+                        }
+                    }
+
+                    // Show action if available
+                    const action = rule.action ? rule.action.name : '-';
+
+                    html += `<tr class="${rowClass}">`;
                     html += `<td><strong>${rule.rule_id}</strong></td>`;
+                    html += `<td>${type}<br/><small style="color: var(--hsbc-gray);">${action}</small></td>`;
+                    html += `<td>${statusBadge}</td>`;
                     html += `<td>${rule.description}</td>`;
-                    html += `<td>${rule.priority}</td>`;
-                    html += `<td>${reqStr}</td>`;
+                    html += `<td>${dutiesStr}</td>`;
                     html += '</tr>';
                 });
 
                 html += '</tbody></table>';
-                rulesContainer.innerHTML = html;
+                rulesContainer.innerHTML += html;
             }
 
             rulesSection.classList.add('show');
         }
 
         // Display results
-        function displayResults(cases) {
+        function displayResults(cases, hasHealthData) {
             const resultsSection = document.getElementById('results-section');
             const resultsCount = document.getElementById('results-count');
             const resultsContainer = document.getElementById('results-container');
 
             resultsCount.textContent = cases.length;
 
+            // Show health data warning if detected
+            if (hasHealthData) {
+                const alertHtml = `
+                    <div class="alert alert-warning show" style="margin-bottom: 1rem;">
+                        <strong>⚠️ Health Data Detected:</strong> One or more cases contain health-related data.
+                        Check compliance rules above for restrictions.
+                    </div>
+                `;
+                resultsContainer.innerHTML = alertHtml;
+            } else {
+                resultsContainer.innerHTML = '';
+            }
+
             if (cases.length === 0) {
-                resultsContainer.innerHTML = '<p>No cases found matching your criteria.</p>';
+                resultsContainer.innerHTML += '<p>No cases found matching your criteria.</p>';
             } else {
                 let html = '<table><thead><tr>';
                 html += '<th>Case ID</th><th>Origin</th><th>Receiving</th>';
-                html += '<th>Purposes</th><th>Process</th>';  // NEW
-                html += '<th>PIA</th><th>TIA</th><th>HRPR</th><th>PII</th>';
+                html += '<th>Purposes</th><th>Process</th>';
+                html += '<th>PIA</th><th>TIA</th><th>HRPR</th><th>PII</th><th>Health</th>';
                 html += '</tr></thead><tbody>';
 
                 cases.forEach(c => {
-                    // NEW: Show purposes as comma-separated list
+                    // Show purposes as comma-separated list
                     const purposesStr = c.purposes && c.purposes.length > 0 ? c.purposes.slice(0, 2).join(', ') + (c.purposes.length > 2 ? '...' : '') : '-';
 
-                    // NEW: Show process hierarchy
+                    // Show process hierarchy
                     const processStr = [c.process_l1, c.process_l2, c.process_l3].filter(p => p).join(' → ') || '-';
+
+                    // Health data indicator
+                    const healthIndicator = c.has_health_data
+                        ? '<span style="color: var(--hsbc-red); font-weight: 500;">⚕️ Yes</span>'
+                        : 'No';
 
                     html += '<tr>';
                     html += `<td><strong>${c.case_id}</strong></td>`;
@@ -715,11 +835,12 @@
                     html += `<td>${c.tia_module || 'N/A'}</td>`;
                     html += `<td>${c.hrpr_module || 'N/A'}</td>`;
                     html += `<td>${c.has_pii ? 'Yes' : 'No'}</td>`;
+                    html += `<td>${healthIndicator}</td>`;
                     html += '</tr>';
                 });
 
                 html += '</tbody></table>';
-                resultsContainer.innerHTML = html;
+                resultsContainer.innerHTML += html;
             }
 
             resultsSection.classList.add('show');
