@@ -520,6 +520,34 @@ def detect_health_data_from_metadata(other_metadata: Optional[Dict[str, str]], v
     return result
 
 
+def has_pii_data(personal_data_categories: List[str]) -> bool:
+    """
+    Check if a case contains PII based on personalDataCategory field.
+
+    Rules:
+    - If personalDataCategory has ANY value (other than N/A, null, NA, blank) → PII exists
+    - If personalDataCategory is N/A, null, NA, or blank → No PII
+
+    Args:
+        personal_data_categories: List of personal data category values
+
+    Returns:
+        True if PII exists, False otherwise
+    """
+    if not personal_data_categories:
+        return False
+
+    # Filter out N/A, NA, null, blank values
+    non_na_values = [
+        pdc.strip()
+        for pdc in personal_data_categories
+        if pdc and pdc.strip().upper() not in ['N/A', 'NA', 'NULL', '']
+    ]
+
+    # If any valid values remain, PII exists
+    return len(non_na_values) > 0
+
+
 def contains_health_data(personal_data: List[str], personal_data_categories: List[str]) -> bool:
     """
     Check if personal data or categories contain health-related information
@@ -552,16 +580,21 @@ def contains_health_data(personal_data: List[str], personal_data_categories: Lis
 def evaluate_assessment_compliance(required_assessments: List[str],
                                    pia_status: str = None,
                                    tia_status: str = None,
-                                   hrpr_status: str = None) -> Dict:
+                                   hrpr_status: str = None,
+                                   case_status: str = None) -> Dict:
     """
     Evaluate if assessment requirements are met.
-    STRICT: Only "Completed" status = compliant. Anything else = NON-COMPLIANT.
+    STRICT RULES:
+    1. Case status MUST be "Completed" - any other status = NON-COMPLIANT
+    2. Only "Completed" status = compliant for assessments
+    3. Anything else (N/A, In Progress, Not Started, WITHDRAWN, etc.) = NON-COMPLIANT
 
     Args:
         required_assessments: List of required assessments like ["PIA", "TIA", "HRPR"]
         pia_status: Status of PIA assessment
         tia_status: Status of TIA assessment
         hrpr_status: Status of HRPR assessment
+        case_status: Overall case status (MUST be "Completed")
 
     Returns:
         {
@@ -572,14 +605,34 @@ def evaluate_assessment_compliance(required_assessments: List[str],
             'missing': List[str]
         }
     """
-    if not required_assessments:
+    # CRITICAL: Case status MUST be "Completed"
+    if case_status and case_status.lower() != 'completed':
         return {
-            'compliant': True,
-            'message': '✅ No assessments required',
-            'required': [],
+            'compliant': False,
+            'message': f'❌ NON-COMPLIANT: Case status is "{case_status}" (must be "Completed")',
+            'required': required_assessments,
             'completed': [],
-            'missing': []
+            'missing': [f'Case Status (current: {case_status})']
         }
+
+    if not required_assessments:
+        # Even with no required assessments, case status must be Completed
+        if case_status and case_status.lower() == 'completed':
+            return {
+                'compliant': True,
+                'message': '✅ COMPLIANT: Case status is Completed',
+                'required': [],
+                'completed': [],
+                'missing': []
+            }
+        else:
+            return {
+                'compliant': False,
+                'message': f'❌ NON-COMPLIANT: Case status is "{case_status}" (must be "Completed")',
+                'required': [],
+                'completed': [],
+                'missing': [f'Case Status (current: {case_status})']
+            }
 
     status_map = {
         'PIA': pia_status,
@@ -601,7 +654,7 @@ def evaluate_assessment_compliance(required_assessments: List[str],
     is_compliant = len(missing) == 0
 
     if is_compliant:
-        message = f"✅ COMPLIANT: All {len(required_assessments)} required assessments are Completed"
+        message = f"✅ COMPLIANT: Case status is Completed and all {len(required_assessments)} required assessments are Completed"
     else:
         message = f"❌ NON-COMPLIANT: {len(missing)} assessment(s) not completed: {', '.join(missing)}"
 
@@ -652,9 +705,9 @@ def validate_precedents(origin: str, receiving: str,
 
     total_cases = len(matching_cases)
 
-    # Rule 1: No precedent found → PROHIBITED
+    # Rule 1: No precedent found → PROHIBITED (ALWAYS require precedent)
     if total_cases == 0:
-        # Check if any filters were provided
+        # Build filter description
         filters_provided = []
         if purposes: filters_provided.append(f"purposes={purposes}")
         if process_l1: filters_provided.append(f"process_l1={process_l1}")
@@ -662,23 +715,15 @@ def validate_precedents(origin: str, receiving: str,
         if process_l3: filters_provided.append(f"process_l3={process_l3}")
         if has_pii is not None: filters_provided.append(f"has_pii={has_pii}")
 
-        if filters_provided:
-            return {
-                'status': 'no_precedent',
-                'message': f'❌ PROHIBITED: No historical precedent found with matching filters ({", ".join(filters_provided)}). Please raise a governance ticket.',
-                'matching_cases': 0,
-                'compliant_cases': 0,
-                'cases': []
-            }
-        else:
-            # No filters provided, just country match
-            return {
-                'status': 'validated',
-                'message': f'✅ Country pair validated: {origin} → {receiving}',
-                'matching_cases': 0,
-                'compliant_cases': 0,
-                'cases': []
-            }
+        # Always PROHIBIT if no precedent found
+        filter_msg = f" with matching filters ({', '.join(filters_provided)})" if filters_provided else ""
+        return {
+            'status': 'no_precedent',
+            'message': f'❌ PROHIBITED: No historical precedent found for {origin} → {receiving}{filter_msg}. Please raise a governance ticket.',
+            'matching_cases': 0,
+            'compliant_cases': 0,
+            'cases': []
+        }
 
     # Rule 2: Check if at least ONE case has all required assessments completed
     if not required_assessments:
@@ -690,7 +735,8 @@ def validate_precedents(origin: str, receiving: str,
             required_assessments,
             pia_status=case.get('pia_status'),
             tia_status=case.get('tia_status'),
-            hrpr_status=case.get('hrpr_status')
+            hrpr_status=case.get('hrpr_status'),
+            case_status=case.get('case_status')
         )
 
         if compliance['compliant']:
@@ -851,6 +897,7 @@ def search_data_graph_strict(origin: str, receiving: str, purposes: List[str] = 
                 categories = [cat for cat in categories if cat] if categories else []
 
                 has_health = contains_health_data(personal_data_items, pdc_items)
+                has_pii = has_pii_data(pdc_items)
 
                 case_data = {
                     'case_id': row[0],
@@ -870,7 +917,7 @@ def search_data_graph_strict(origin: str, receiving: str, purposes: List[str] = 
                     'personal_data_categories': pdc_items,
                     'categories': categories,
                     'case_status': row[16] if len(row) > 16 else 'Unknown',
-                    'has_pii': len(personal_data_items) > 0,
+                    'has_pii': has_pii,
                     'has_health_data': has_health
                 }
                 cases.append(case_data)
@@ -1005,6 +1052,7 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
                 categories = [cat for cat in categories if cat] if categories else []
 
                 has_health = contains_health_data(personal_data_items, pdc_items)
+                has_pii = has_pii_data(pdc_items)
 
                 case_data = {
                     'case_id': row[0],
@@ -1022,7 +1070,7 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
                     'personal_data': personal_data_items,
                     'personal_data_categories': pdc_items,
                     'categories': categories,
-                    'has_pii': len(personal_data_items) > 0,
+                    'has_pii': has_pii,
                     'has_health_data': has_health
                 }
                 cases.append(case_data)
@@ -1340,11 +1388,9 @@ async def get_stats():
         total_jurisdictions = result_jurisdictions.result_set[0][0] if result_jurisdictions.result_set else 0
 
         query_pii = """
-        MATCH (c:Case)
-        OPTIONAL MATCH (c)-[:HAS_PERSONAL_DATA]->(pd:PersonalData)
-        WITH c, collect(pd.name) as pds
-        WHERE size(pds) > 0
-        RETURN count(c) as count
+        MATCH (c:Case)-[:HAS_PERSONAL_DATA_CATEGORY]->(pdc:PersonalDataCategory)
+        WHERE pdc.name <> 'N/A' AND pdc.name <> 'NA' AND pdc.name <> 'null'
+        RETURN count(DISTINCT c) as count
         """
         result_pii = data_graph.query(query_pii)
         cases_with_pii = result_pii.result_set[0][0] if result_pii.result_set else 0

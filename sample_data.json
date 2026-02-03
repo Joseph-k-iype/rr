@@ -79,7 +79,7 @@
     },
     {
         "caseRefId": "CASE_00007",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_782",
         "originatingCountry": "Romania",
         "receivingCountry": "Finland",
@@ -157,7 +157,7 @@
     },
     {
         "caseRefId": "CASE_00013",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_239",
         "originatingCountry": "Singapore",
         "receivingCountry": "Austria",
@@ -183,7 +183,7 @@
     },
     {
         "caseRefId": "CASE_00015",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_949",
         "originatingCountry": "Belgium",
         "receivingCountry": "South Africa|Ireland",
@@ -196,7 +196,7 @@
     },
     {
         "caseRefId": "CASE_00016",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_324",
         "originatingCountry": "United States",
         "receivingCountry": "Israel|Spain|Hungary|South Korea",
@@ -339,7 +339,7 @@
     },
     {
         "caseRefId": "CASE_00027",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_612",
         "originatingCountry": "Belgium",
         "receivingCountry": "Israel",
@@ -378,7 +378,7 @@
     },
     {
         "caseRefId": "CASE_00030",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_351",
         "originatingCountry": "Indonesia",
         "receivingCountry": "Portugal",
@@ -508,7 +508,7 @@
     },
     {
         "caseRefId": "CASE_00040",
-        "caseStatus": "Pending",
+        "caseStatus": "Completed",
         "appId": "APP_567",
         "originatingCountry": "Ireland",
         "receivingCountry": "Mexico",
@@ -521,7 +521,7 @@
     },
     {
         "caseRefId": "CASE_00041",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_898",
         "originatingCountry": "Romania",
         "receivingCountry": "Sweden",
@@ -586,7 +586,7 @@
     },
     {
         "caseRefId": "CASE_00046",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_731",
         "originatingCountry": "South Korea",
         "receivingCountry": "Australia|India",
@@ -599,7 +599,7 @@
     },
     {
         "caseRefId": "CASE_00047",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_686",
         "originatingCountry": "Italy",
         "receivingCountry": "Australia",
@@ -612,7 +612,7 @@
     },
     {
         "caseRefId": "CASE_00048",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_839",
         "originatingCountry": "Singapore",
         "receivingCountry": "Mexico",
@@ -651,7 +651,7 @@
     },
     {
         "caseRefId": "CASE_00051",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_239",
         "originatingCountry": "Denmark",
         "receivingCountry": "Finland",
@@ -690,7 +690,7 @@
     },
     {
         "caseRefId": "CASE_00054",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_512",
         "originatingCountry": "Israel",
         "receivingCountry": "Saudi Arabia|Germany",
@@ -703,7 +703,7 @@
     },
     {
         "caseRefId": "CASE_00055",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_167",
         "originatingCountry": "Denmark",
         "receivingCountry": "Czech Republic|Israel",
@@ -729,7 +729,7 @@
     },
     {
         "caseRefId": "CASE_00057",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_022",
         "originatingCountry": "Finland",
         "receivingCountry": "India",
@@ -742,7 +742,7 @@
     },
     {
         "caseRefId": "CASE_00058",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_278",
         "originatingCountry": "United States",
         "receivingCountry": "New Zealand",
@@ -755,7 +755,7 @@
     },
     {
         "caseRefId": "CASE_00059",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_559",
         "originatingCountry": "Philippines",
         "receivingCountry": "Canada",
@@ -794,7 +794,7 @@
     },
     {
         "caseRefId": "CASE_00062",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_417",
         "originatingCountry": "Czech Republic",
         "receivingCountry": "Mexico",
@@ -807,7 +807,7 @@
     },
     {
         "caseRefId": "CASE_00063",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_984",
         "originatingCountry": "Philippines",
         "receivingCountry": "Sweden",
@@ -924,7 +924,7 @@
     },
     {
         "caseRefId": "CASE_00072",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_388",
         "originatingCountry": "Finland",
         "receivingCountry": "Australia",
@@ -1041,7 +1041,7 @@
     },
     {
         "caseRefId": "CASE_00081",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_099",
         "originatingCountry": "Denmark",
         "receivingCountry": "Guernsey",
@@ -1184,7 +1184,7 @@
     },
     {
         "caseRefId": "CASE_00092",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_212",
         "originatingCountry": "United States",
         "receivingCountry": "Denmark|Spain",
@@ -1197,7 +1197,7 @@
     },
     {
         "caseRefId": "CASE_00093",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_298",
         "originatingCountry": "Italy",
         "receivingCountry": "Jersey",
@@ -1249,7 +1249,7 @@
     },
     {
         "caseRefId": "CASE_00097",
-        "caseStatus": "Active",
+        "caseStatus": "Completed",
         "appId": "APP_756",
         "originatingCountry": "United Kingdom",
         "receivingCountry": "Portugal",
