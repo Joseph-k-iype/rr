@@ -2,61 +2,101 @@
 # -*- coding: utf-8 -*-
 """
 Data Transfer Compliance Dashboard - FastAPI Backend with Deontic Logic
+OPTIMIZED VERSION for Large Scale (35K+ nodes, 10M+ edges)
+
 Uses formal policy framework: Actions, Permissions, Prohibitions, Duties
 Swagger UI at /docs and ReDoc at /redoc
+
+Key Features:
+- Case status filtering (only Completed/Complete/Active/Published searchable)
+- Dynamic PIA/TIA/HRPR rules evaluation
+- Country-specific rules take precedence over assessments
+- Optimized queries with caching for large graphs
+- Rules Overview endpoint for business users
 """
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from falkordb import FalkorDB
 import logging
 from pathlib import Path
 import json
+from functools import lru_cache
+import time
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# Query Optimization for Large Graphs (31k+ nodes, 1M+ edges)
+# CONSTANTS
 # ============================================================================
 
-# Query timeout in milliseconds
-QUERY_TIMEOUT_MS = 30000  # 30 seconds
+# Valid case statuses for search (others are skipped)
+VALID_CASE_STATUSES = ['Completed', 'Complete', 'Active', 'Published']
 
-def query_with_timeout(graph, query_str, params=None, timeout_ms=QUERY_TIMEOUT_MS, context=""):
+# Country-specific rule priority (higher = takes precedence)
+COUNTRY_RULE_PRIORITY = 100
+
+# Query timeout in milliseconds (optimized for large graphs)
+QUERY_TIMEOUT_MS = 60000  # 60 seconds for very large graphs
+
+# Cache TTL in seconds
+CACHE_TTL = 300  # 5 minutes
+
+# ============================================================================
+# Query Optimization for Large Graphs (35k+ nodes, 10M+ edges)
+# ============================================================================
+
+# Simple in-memory cache
+_query_cache = {}
+_cache_timestamps = {}
+
+
+def get_cached_result(cache_key: str):
+    """Get cached result if not expired"""
+    if cache_key in _query_cache:
+        if time.time() - _cache_timestamps.get(cache_key, 0) < CACHE_TTL:
+            return _query_cache[cache_key]
+    return None
+
+
+def set_cached_result(cache_key: str, result):
+    """Store result in cache"""
+    _query_cache[cache_key] = result
+    _cache_timestamps[cache_key] = time.time()
+
+
+def query_with_timeout(graph, query_str, params=None, timeout_ms=QUERY_TIMEOUT_MS, context="", use_cache=False, cache_key=None):
     """
     Execute query with timeout to prevent hanging on large graphs.
-
-    For graphs with 31k+ nodes and 1M+ edges, queries can be slow.
-    This ensures queries don't hang indefinitely.
-
-    Args:
-        graph: FalkorDB graph instance
-        query_str: Cypher query string
-        params: Query parameters dict
-        timeout_ms: Timeout in milliseconds
-        context: Description for logging
-
-    Returns:
-        Query result
-
-    Raises:
-        HTTPException: If query times out or fails
+    Optionally uses caching for frequently-run queries.
     """
+    # Check cache first
+    if use_cache and cache_key:
+        cached = get_cached_result(cache_key)
+        if cached is not None:
+            logger.debug(f"Cache hit: {context}")
+            return cached
+
     try:
         if context:
             logger.debug(f"Query: {context} (timeout: {timeout_ms}ms)")
 
         result = graph.query(query_str, params=params or {}, timeout=timeout_ms)
+
+        # Cache if requested
+        if use_cache and cache_key:
+            set_cached_result(cache_key, result)
+
         return result
 
     except Exception as e:
         error_msg = str(e).lower()
         if 'timeout' in error_msg or 'timed out' in error_msg:
-            logger.error(f"⏱️  TIMEOUT after {timeout_ms}ms - {context}")
+            logger.error(f"TIMEOUT after {timeout_ms}ms - {context}")
             logger.error("Consider: 1) Running optimize_graph_indexes.py, 2) Narrowing search criteria")
             raise HTTPException(
                 status_code=504,
@@ -66,6 +106,7 @@ def query_with_timeout(graph, query_str, params=None, timeout_ms=QUERY_TIMEOUT_M
             logger.error(f"Query error ({context}): {e}")
             raise HTTPException(status_code=500, detail=f"Database query error: {str(e)}")
 
+
 # ============================================================================
 # Load health data configuration
 # ============================================================================
@@ -74,16 +115,26 @@ HEALTH_CONFIG = {}
 if HEALTH_CONFIG_PATH.exists():
     with open(HEALTH_CONFIG_PATH, 'r', encoding='utf-8') as f:
         HEALTH_CONFIG = json.load(f)
-        logger.info(f"✓ Loaded health data config: {len(HEALTH_CONFIG['detection_rules']['keywords'])} keywords, "
+        logger.info(f"Loaded health data config: {len(HEALTH_CONFIG['detection_rules']['keywords'])} keywords, "
                    f"{len(HEALTH_CONFIG['detection_rules']['patterns'])} patterns")
 else:
-    logger.warning("⚠️  health_data_config.json not found - using fallback keywords")
+    logger.warning("health_data_config.json not found - using fallback keywords")
+
+# Load prohibition rules configuration
+PROHIBITION_CONFIG_PATH = Path(__file__).parent / "prohibition_rules_config.json"
+PROHIBITION_CONFIG = {}
+if PROHIBITION_CONFIG_PATH.exists():
+    with open(PROHIBITION_CONFIG_PATH, 'r', encoding='utf-8') as f:
+        PROHIBITION_CONFIG = json.load(f)
+        logger.info(f"Loaded prohibition rules config: {len(PROHIBITION_CONFIG.get('prohibition_rules', {}))} rules")
+else:
+    logger.warning("prohibition_rules_config.json not found")
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="Data Transfer Compliance API - Deontic Logic",
-    description="Graph-based compliance engine using deontic logic framework (Actions, Permissions, Prohibitions, Duties)",
-    version="3.0.0",
+    title="Data Transfer Compliance API - Deontic Logic (Optimized)",
+    description="Graph-based compliance engine using deontic logic framework (Actions, Permissions, Prohibitions, Duties). Optimized for 35K+ nodes and 10M+ edges.",
+    version="4.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -143,40 +194,34 @@ class TriggeredRule(BaseModel):
     action: Optional[Action] = None
     permission: Optional[Permission] = None
     prohibition: Optional[Prohibition] = None
-    is_blocked: bool = False  # True if has prohibition
+    is_blocked: bool = False
+    is_country_specific: bool = False
     origin_group: str = ""
     receiving_group: str = ""
 
 
 class RulesEvaluationRequest(BaseModel):
     """Request to evaluate compliance rules - all fields are optional for dynamic evaluation"""
-    origin_country: Optional[str] = Field(None, description="Originating country name (e.g., 'United States', 'Germany')")
-    receiving_country: Optional[str] = Field(None, description="Receiving country name (e.g., 'China', 'Canada')")
-    pii: Optional[bool] = Field(None, description="Whether transfer contains Personal Identifiable Information")
-    purpose_of_processing: Optional[List[str]] = Field(None, description="Purpose(s) of data processing (e.g., ['Marketing', 'Analytics'])")
-    process_l1: Optional[str] = Field(None, description="Process area Level 1 (e.g., 'Finance', 'HR')")
-    process_l2: Optional[str] = Field(None, description="Process function Level 2 (e.g., 'Payroll', 'Recruitment')")
-    process_l3: Optional[str] = Field(None, description="Process detail Level 3 (e.g., 'Salary Processing')")
-    other_metadata: Optional[Dict[str, str]] = Field(
-        None,
-        description="Additional metadata as key-value pairs. Example: {'patient_records': 'medical history', 'diagnosis_codes': 'ICD-10'}. System automatically detects health data from column names/descriptions."
-    )
+    origin_country: Optional[str] = Field(None, description="Originating country name")
+    receiving_country: Optional[str] = Field(None, description="Receiving country name")
+    pii: Optional[bool] = Field(None, description="Whether transfer contains PII")
+    purpose_of_processing: Optional[List[str]] = Field(None, description="Purpose(s) of data processing")
+    process_l1: Optional[str] = Field(None, description="Process area Level 1")
+    process_l2: Optional[str] = Field(None, description="Process function Level 2")
+    process_l3: Optional[str] = Field(None, description="Process detail Level 3")
+    other_metadata: Optional[Dict[str, str]] = Field(None, description="Additional metadata for health data detection")
 
     class Config:
         json_schema_extra = {
             "example": {
                 "origin_country": "United States",
-                "receiving_country": "Canada",
+                "receiving_country": "China",
                 "pii": True,
                 "purpose_of_processing": ["Analytics", "Marketing"],
                 "process_l1": "Sales",
                 "process_l2": "Customer Management",
                 "process_l3": "CRM Operations",
-                "other_metadata": {
-                    "customer_email": "email addresses",
-                    "customer_name": "full names",
-                    "transaction_history": "purchase records"
-                }
+                "other_metadata": {"patient_records": "medical history"}
             }
         }
 
@@ -184,16 +229,22 @@ class RulesEvaluationRequest(BaseModel):
 class RulesEvaluationResponse(BaseModel):
     """Response from rules evaluation"""
     success: bool = True
+    transfer_status: str  # ALLOWED or PROHIBITED
+    transfer_blocked: bool = False
+    blocked_reason: Optional[str] = None
     triggered_rules: List[TriggeredRule]
     total_rules_triggered: int
     has_prohibitions: bool = False
+    has_country_prohibition: bool = False
     consolidated_duties: List[Duty] = Field(default_factory=list)
+    precedent_validation: Optional[Dict] = None
+    assessment_compliance: Optional[Dict] = None
 
 
 class SearchCasesRequest(BaseModel):
-    """Request to search for cases - all fields are optional for flexible searching"""
-    origin_country: Optional[str] = Field(None, description="Originating country (partial match, e.g., 'United', 'Germany')")
-    receiving_country: Optional[str] = Field(None, description="Receiving country (partial match, e.g., 'China', 'Can')")
+    """Request to search for cases"""
+    origin_country: Optional[str] = Field(None, description="Originating country (partial match)")
+    receiving_country: Optional[str] = Field(None, description="Receiving country (partial match)")
     pii: Optional[bool] = Field(None, description="Whether transfer contains PII")
     purpose_of_processing: Optional[List[str]] = Field(None, description="Purpose(s) of data processing")
     process_l1: Optional[str] = Field(None, description="Process area Level 1")
@@ -221,6 +272,7 @@ class CaseData(BaseModel):
     categories: List[str]
     has_pii: bool
     has_health_data: bool = False
+    case_status: Optional[str] = None
 
 
 class SearchCasesResponse(BaseModel):
@@ -258,31 +310,198 @@ class ProcessesResponse(BaseModel):
     process_l3: List[str]
 
 
+class RuleOverview(BaseModel):
+    """Rule overview for business users"""
+    rule_id: str
+    name: str
+    description: str
+    rule_type: str  # Permission or Prohibition
+    priority: int
+    origin_countries: List[str]
+    receiving_countries: List[str]
+    requires_pii: bool
+    requires_health_data: bool
+    duties: List[str]
+    is_country_specific: bool
+
+
+class RulesOverviewResponse(BaseModel):
+    """Response with all rules for business users"""
+    success: bool = True
+    total_rules: int
+    permission_rules: List[RuleOverview]
+    prohibition_rules: List[RuleOverview]
+    country_specific_rules: List[RuleOverview]
+
+
 # ============================================================================
 # CORE LOGIC FUNCTIONS
 # ============================================================================
 
+def detect_health_data_from_metadata(other_metadata: Optional[Dict[str, str]], verbose: bool = True) -> Dict[str, any]:
+    """
+    Automatically detect if metadata contains health-related information
+    Uses comprehensive health data configuration with word boundary matching
+    """
+    if not other_metadata:
+        return {'detected': False, 'matched_keywords': [], 'matched_patterns': [], 'matched_fields': []}
+
+    import re
+
+    # Load keywords from config, fallback to basic list
+    if HEALTH_CONFIG and 'detection_rules' in HEALTH_CONFIG:
+        health_keywords = HEALTH_CONFIG['detection_rules']['keywords']
+        health_patterns = HEALTH_CONFIG['detection_rules'].get('patterns', [])
+    else:
+        health_keywords = [
+            'health', 'medical', 'patient', 'diagnosis', 'treatment', 'prescription',
+            'clinical', 'hospital', 'doctor', 'disease', 'illness', 'medication',
+            'healthcare', 'wellness', 'fitness', 'biometric', 'genetic', 'vaccine',
+            'surgery', 'therapy', 'pharmaceutical', 'radiology', 'lab', 'laboratory'
+        ]
+        health_patterns = [r'icd-?\d+', r'cpt-?\d+', r'diagnosis code', r'medical record']
+
+    matched_keywords = []
+    matched_patterns = []
+    matched_fields = []
+
+    for key, value in other_metadata.items():
+        field_text = f"{key} {value}".lower()
+        normalized_text = field_text.replace('_', ' ').replace('-', ' ')
+        field_matched = False
+
+        for keyword in health_keywords:
+            if re.search(r'\b' + re.escape(keyword.lower()) + r'\b', normalized_text):
+                if keyword not in matched_keywords:
+                    matched_keywords.append(keyword)
+                field_matched = True
+
+        for pattern in health_patterns:
+            if re.search(pattern, field_text, re.IGNORECASE):
+                if pattern not in matched_patterns:
+                    matched_patterns.append(pattern)
+                field_matched = True
+
+        if field_matched:
+            matched_fields.append({'key': key, 'value': value})
+
+    detected = len(matched_keywords) > 0 or len(matched_patterns) > 0
+
+    if verbose and detected:
+        logger.info(f"Health data detected: {len(matched_keywords)} keywords in {len(matched_fields)} fields")
+
+    return {
+        'detected': detected,
+        'matched_keywords': matched_keywords,
+        'matched_patterns': matched_patterns,
+        'matched_fields': matched_fields
+    }
+
+
+def has_pii_data(personal_data_categories: List[str]) -> bool:
+    """Check if a case contains PII based on personalDataCategory field."""
+    if not personal_data_categories:
+        return False
+
+    non_na_values = [
+        pdc.strip()
+        for pdc in personal_data_categories
+        if pdc and pdc.strip().upper() not in ['N/A', 'NA', 'NULL', '']
+    ]
+
+    return len(non_na_values) > 0
+
+
+def contains_health_data(personal_data: List[str], personal_data_categories: List[str]) -> bool:
+    """Check if personal data or categories contain health-related information"""
+    import re
+
+    health_keywords = [
+        'health', 'medical', 'patient', 'diagnosis', 'treatment', 'prescription',
+        'clinical', 'hospital', 'doctor', 'disease', 'illness', 'medication',
+        'healthcare', 'wellness', 'fitness', 'biometric', 'genetic'
+    ]
+
+    all_data = personal_data + personal_data_categories
+    all_data_lower = [item.lower() for item in all_data if item]
+
+    for data_item in all_data_lower:
+        for keyword in health_keywords:
+            if re.search(r'\b' + re.escape(keyword) + r'\b', data_item):
+                return True
+
+    return False
+
+
+def check_country_specific_prohibition(origin: str, receiving: str, has_pii: bool = None, has_health_data: bool = None) -> Optional[Dict]:
+    """
+    Check if there's a country-specific prohibition rule that takes precedence.
+    Country-specific rules OVERRIDE PIA/TIA/HRPR assessments.
+
+    Returns:
+        Dict with prohibition details if found, None otherwise
+    """
+    if not PROHIBITION_CONFIG or 'prohibition_rules' not in PROHIBITION_CONFIG:
+        return None
+
+    for rule_name, rule_config in PROHIBITION_CONFIG['prohibition_rules'].items():
+        if not rule_config.get('enabled', True):
+            continue
+
+        # Check origin match
+        origin_countries = rule_config.get('origin_countries', [])
+        origin_match = any(
+            origin.lower() == c.lower() or origin.lower() in c.lower()
+            for c in origin_countries
+        )
+
+        if not origin_match:
+            continue
+
+        # Check receiving match
+        receiving_countries = rule_config.get('receiving_countries', [])
+        if 'ANY' not in receiving_countries:
+            receiving_match = any(
+                receiving.lower() == c.lower() or receiving.lower() in c.lower()
+                for c in receiving_countries
+            )
+            if not receiving_match:
+                continue
+
+        # Check PII requirement
+        if rule_config.get('requires_pii') and not has_pii:
+            continue
+
+        # Check health data requirement
+        if rule_config.get('requires_health_data') and not has_health_data:
+            continue
+
+        # Found a matching country-specific prohibition
+        return {
+            'rule_id': rule_config.get('rule_id', rule_name),
+            'rule_name': rule_name,
+            'prohibition_name': rule_config.get('prohibition_name', rule_name),
+            'prohibition_description': rule_config.get('prohibition_description', ''),
+            'duties': rule_config.get('duties', []),
+            'origin_countries': origin_countries,
+            'receiving_countries': receiving_countries,
+            'priority': COUNTRY_RULE_PRIORITY + rule_config.get('priority', 0),
+            'is_country_specific': True
+        }
+
+    return None
+
+
 def query_triggered_rules_deontic(origin: str, receiving: str, has_pii: bool = None, has_health_data: bool = None) -> Dict:
     """
-    Query the RulesGraph using deontic logic structure
-    Returns rules with their actions, permissions, prohibitions, and duties
-
-    Args:
-        origin: Origin country name
-        receiving: Receiving country name
-        has_pii: Whether transfer contains PII. None is treated as False (no PII detected)
-        has_health_data: Whether transfer contains health data. None is treated as False (no health data detected)
-
-    Note on NULL semantics:
-        - None/null values are converted to False for filtering
-        - False means "explicitly verified as absent" or "not detected"
-        - True means "explicitly verified as present" or "detected"
-        - Rules with has_pii_required=True only trigger when has_pii=True
-        - Rules with health_data_required=True only trigger when has_health_data=True
+    Query the RulesGraph using deontic logic structure.
+    Returns rules with their actions, permissions, prohibitions, and duties.
     """
-    logger.info(f"Querying Deontic RulesGraph for: {origin} → {receiving}, has_pii={has_pii}, has_health_data={has_health_data}")
+    logger.info(f"Querying Deontic RulesGraph for: {origin} -> {receiving}, pii={has_pii}, health={has_health_data}")
 
-    # Query with deontic structure
+    # First check for country-specific prohibition (takes precedence)
+    country_prohibition = check_country_specific_prohibition(origin, receiving, has_pii, has_health_data)
+
     query = """
     // Get origin country's groups
     MATCH (origin:Country {name: $origin_country})-[:BELONGS_TO]->(origin_group:CountryGroup)
@@ -295,16 +514,13 @@ def query_triggered_rules_deontic(origin: str, receiving: str, has_pii: bool = N
     // Match all rules and check their conditions
     MATCH (r:Rule)
 
-    // Get rule's origin groups (if any)
     OPTIONAL MATCH (r)-[:TRIGGERED_BY_ORIGIN]->(r_origin:CountryGroup)
     WITH r, origin_groups, receiving_groups, collect(DISTINCT r_origin.name) as rule_origin_groups
 
-    // Get rule's receiving groups (if any)
     OPTIONAL MATCH (r)-[:TRIGGERED_BY_RECEIVING]->(r_receiving:CountryGroup)
     WITH r, origin_groups, receiving_groups, rule_origin_groups,
          collect(DISTINCT r_receiving.name) as rule_receiving_groups
 
-    // Filter rules based on match logic
     WITH r, origin_groups, receiving_groups, rule_origin_groups, rule_receiving_groups,
          CASE
              WHEN r.origin_match_type = 'ALL' THEN true
@@ -321,19 +537,13 @@ def query_triggered_rules_deontic(origin: str, receiving: str, has_pii: bool = N
              ELSE false
          END as receiving_matches
 
-    // Only keep rules where both origin and receiving match
     WHERE origin_matches AND receiving_matches
           AND (NOT r.has_pii_required OR $has_pii = true)
           AND (NOT r.health_data_required OR $has_health_data = true)
 
-    // Get action
     OPTIONAL MATCH (r)-[:HAS_ACTION]->(action:Action)
-
-    // Get permission and its duties
     OPTIONAL MATCH (r)-[:HAS_PERMISSION]->(perm:Permission)
     OPTIONAL MATCH (perm)-[:CAN_HAVE_DUTY]->(perm_duty:Duty)
-
-    // Get prohibition and its duties
     OPTIONAL MATCH (r)-[:HAS_PROHIBITION]->(prohib:Prohibition)
     OPTIONAL MATCH (prohib)-[:CAN_HAVE_DUTY]->(prohib_duty:Duty)
 
@@ -372,7 +582,39 @@ def query_triggered_rules_deontic(origin: str, receiving: str, has_pii: bool = N
         triggered_rules = []
         consolidated_duties_map = {}
         has_prohibitions = False
+        has_country_prohibition = country_prohibition is not None
 
+        # Add country-specific prohibition rule first (highest priority)
+        if country_prohibition:
+            has_prohibitions = True
+            prohibition_duties = [
+                {'name': d, 'description': f'Required: {d}', 'module': None, 'value': None}
+                for d in country_prohibition['duties']
+            ]
+            for duty in prohibition_duties:
+                consolidated_duties_map[duty['name']] = duty
+
+            triggered_rules.append({
+                'rule_id': country_prohibition['rule_id'],
+                'description': country_prohibition['prohibition_description'],
+                'priority': country_prohibition['priority'],
+                'odrl_type': 'Prohibition',
+                'odrl_action': 'transfer',
+                'odrl_target': 'Data',
+                'action': {'name': 'Transfer Data', 'description': 'Cross-border data transfer'},
+                'permission': None,
+                'prohibition': {
+                    'name': country_prohibition['prohibition_name'],
+                    'description': country_prohibition['prohibition_description'],
+                    'duties': prohibition_duties
+                },
+                'is_blocked': True,
+                'is_country_specific': True,
+                'origin_group': ','.join(country_prohibition['origin_countries']),
+                'receiving_group': ','.join(country_prohibition['receiving_countries'])
+            })
+
+        # Process graph rules
         if result.result_set:
             for row in result.result_set:
                 rule_id = row[0]
@@ -390,15 +632,10 @@ def query_triggered_rules_deontic(origin: str, receiving: str, has_pii: bool = N
                 prohibition_description = row[12] if row[12] else None
                 prohibition_duties = row[13] if row[13] else []
 
-                # Build action
                 action_obj = None
                 if action_name:
-                    action_obj = {
-                        'name': action_name,
-                        'description': action_description or ''
-                    }
+                    action_obj = {'name': action_name, 'description': action_description or ''}
 
-                # Build permission with duties
                 permission_obj = None
                 if permission_name:
                     perm_duties_list = []
@@ -411,7 +648,6 @@ def query_triggered_rules_deontic(origin: str, receiving: str, has_pii: bool = N
                                 'value': duty.get('value')
                             }
                             perm_duties_list.append(duty_obj)
-                            # Add to consolidated duties
                             consolidated_duties_map[duty['name']] = duty_obj
 
                     permission_obj = {
@@ -420,7 +656,6 @@ def query_triggered_rules_deontic(origin: str, receiving: str, has_pii: bool = N
                         'duties': perm_duties_list
                     }
 
-                # Build prohibition with duties
                 prohibition_obj = None
                 is_blocked = False
                 if prohibition_name:
@@ -434,7 +669,6 @@ def query_triggered_rules_deontic(origin: str, receiving: str, has_pii: bool = N
                                 'value': duty.get('value')
                             }
                             prohib_duties_list.append(duty_obj)
-                            # Add to consolidated duties
                             consolidated_duties_map[duty['name']] = duty_obj
 
                     prohibition_obj = {
@@ -456,16 +690,21 @@ def query_triggered_rules_deontic(origin: str, receiving: str, has_pii: bool = N
                     'permission': permission_obj,
                     'prohibition': prohibition_obj,
                     'is_blocked': is_blocked,
+                    'is_country_specific': False,
                     'origin_group': '',
                     'receiving_group': ''
                 })
 
-        logger.info(f"Triggered {len(triggered_rules)} rules, {has_prohibitions=}")
+        # Sort by priority (country-specific rules first)
+        triggered_rules.sort(key=lambda r: (-r.get('priority', 0), r.get('rule_id', '')))
+
+        logger.info(f"Triggered {len(triggered_rules)} rules, has_prohibitions={has_prohibitions}, country_prohibition={has_country_prohibition}")
 
         return {
             'triggered_rules': triggered_rules,
             'total_rules_triggered': len(triggered_rules),
             'has_prohibitions': has_prohibitions,
+            'has_country_prohibition': has_country_prohibition,
             'consolidated_duties': list(consolidated_duties_map.values())
         }
 
@@ -475,160 +714,9 @@ def query_triggered_rules_deontic(origin: str, receiving: str, has_pii: bool = N
             'triggered_rules': [],
             'total_rules_triggered': 0,
             'has_prohibitions': False,
+            'has_country_prohibition': False,
             'consolidated_duties': []
         }
-
-
-def detect_health_data_from_metadata(other_metadata: Optional[Dict[str, str]], verbose: bool = True) -> Dict[str, any]:
-    """
-    Automatically detect if metadata contains health-related information
-    Analyzes both column names (keys) and descriptions (values)
-    Uses comprehensive health data configuration with word boundary matching
-
-    Args:
-        other_metadata: Dictionary with column names as keys and descriptions as values
-        verbose: If True, returns detailed detection info; if False, returns simple boolean
-
-    Returns:
-        Dictionary with detection results:
-        {
-            'detected': bool,
-            'matched_keywords': list,
-            'matched_patterns': list,
-            'matched_fields': list
-        }
-
-    Example:
-        {'patient_id': 'medical record number'}
-        -> {'detected': True, 'matched_keywords': ['patient', 'medical'], ...}
-    """
-    if not other_metadata:
-        return {'detected': False, 'matched_keywords': [], 'matched_patterns': [], 'matched_fields': []}
-
-    import re
-
-    # Load keywords from config, fallback to basic list
-    if HEALTH_CONFIG and 'detection_rules' in HEALTH_CONFIG:
-        health_keywords = HEALTH_CONFIG['detection_rules']['keywords']
-        health_patterns = HEALTH_CONFIG['detection_rules'].get('patterns', [])
-    else:
-        # Fallback keywords if config not loaded
-        health_keywords = [
-            'health', 'medical', 'patient', 'diagnosis', 'treatment', 'prescription',
-            'clinical', 'hospital', 'doctor', 'disease', 'illness', 'medication',
-            'healthcare', 'wellness', 'fitness', 'biometric', 'genetic', 'vaccine',
-            'surgery', 'therapy', 'pharmaceutical', 'radiology', 'lab', 'laboratory'
-        ]
-        health_patterns = [
-            r'icd-?\d+',
-            r'cpt-?\d+',
-            r'diagnosis code',
-            r'medical record'
-        ]
-
-    matched_keywords = []
-    matched_patterns = []
-    matched_fields = []
-
-    # Check each metadata field
-    for key, value in other_metadata.items():
-        # Normalize text: replace underscores and hyphens with spaces for better keyword matching
-        # This allows "patient_id" to match "patient" and "diagnosis-codes" to match "diagnosis"
-        field_text = f"{key} {value}".lower()
-        normalized_text = field_text.replace('_', ' ').replace('-', ' ')
-        field_matched = False
-
-        # Check keywords with word boundaries on normalized text
-        for keyword in health_keywords:
-            # Use word boundaries on normalized text (underscores replaced with spaces)
-            if re.search(r'\b' + re.escape(keyword.lower()) + r'\b', normalized_text):
-                if keyword not in matched_keywords:
-                    matched_keywords.append(keyword)
-                field_matched = True
-
-        # Check patterns on original text (to catch "ICD-10" style patterns)
-        for pattern in health_patterns:
-            if re.search(pattern, field_text, re.IGNORECASE):
-                if pattern not in matched_patterns:
-                    matched_patterns.append(pattern)
-                field_matched = True
-
-        if field_matched:
-            matched_fields.append({'key': key, 'value': value})
-
-    detected = len(matched_keywords) > 0 or len(matched_patterns) > 0
-
-    result = {
-        'detected': detected,
-        'matched_keywords': matched_keywords,
-        'matched_patterns': matched_patterns,
-        'matched_fields': matched_fields
-    }
-
-    if verbose and detected:
-        logger.info(f"🏥 Health data detected: {len(matched_keywords)} keywords, "
-                   f"{len(matched_patterns)} patterns in {len(matched_fields)} fields")
-        logger.info(f"   Matched keywords: {', '.join(matched_keywords[:5])}{'...' if len(matched_keywords) > 5 else ''}")
-        logger.info(f"   Matched fields: {', '.join([f['key'] for f in matched_fields])}")
-
-    return result
-
-
-def has_pii_data(personal_data_categories: List[str]) -> bool:
-    """
-    Check if a case contains PII based on personalDataCategory field.
-
-    Rules:
-    - If personalDataCategory has ANY value (other than N/A, null, NA, blank) → PII exists
-    - If personalDataCategory is N/A, null, NA, or blank → No PII
-
-    Args:
-        personal_data_categories: List of personal data category values
-
-    Returns:
-        True if PII exists, False otherwise
-    """
-    if not personal_data_categories:
-        return False
-
-    # Filter out N/A, NA, null, blank values
-    non_na_values = [
-        pdc.strip()
-        for pdc in personal_data_categories
-        if pdc and pdc.strip().upper() not in ['N/A', 'NA', 'NULL', '']
-    ]
-
-    # If any valid values remain, PII exists
-    return len(non_na_values) > 0
-
-
-def contains_health_data(personal_data: List[str], personal_data_categories: List[str]) -> bool:
-    """
-    Check if personal data or categories contain health-related information
-    Uses word boundary matching to avoid false positives
-
-    Note: This is used for DataTransferGraph case search.
-    For rules evaluation API, use detect_health_data_from_metadata() instead.
-    """
-    import re
-
-    health_keywords = [
-        'health', 'medical', 'patient', 'diagnosis', 'treatment', 'prescription',
-        'clinical', 'hospital', 'doctor', 'disease', 'illness', 'medication',
-        'healthcare', 'wellness', 'fitness', 'biometric', 'genetic'
-    ]
-
-    all_data = personal_data + personal_data_categories
-    all_data_lower = [item.lower() for item in all_data if item]
-
-    # Use word boundary matching to avoid false positives like "doctorate" matching "doctor"
-    for data_item in all_data_lower:
-        for keyword in health_keywords:
-            # Match whole words only using word boundaries
-            if re.search(r'\b' + re.escape(keyword) + r'\b', data_item):
-                return True
-
-    return False
 
 
 def evaluate_assessment_compliance(required_assessments: List[str],
@@ -639,54 +727,27 @@ def evaluate_assessment_compliance(required_assessments: List[str],
     """
     Evaluate if assessment requirements are met.
     STRICT RULES:
-    1. Case status MUST be "Completed" - any other status = NON-COMPLIANT
+    1. Case status MUST be in VALID_CASE_STATUSES
     2. Only "Completed" status = compliant for assessments
-    3. Anything else (N/A, In Progress, Not Started, WITHDRAWN, etc.) = NON-COMPLIANT
-
-    Args:
-        required_assessments: List of required assessments like ["PIA", "TIA", "HRPR"]
-        pia_status: Status of PIA assessment
-        tia_status: Status of TIA assessment
-        hrpr_status: Status of HRPR assessment
-        case_status: Overall case status (MUST be "Completed")
-
-    Returns:
-        {
-            'compliant': bool,
-            'message': str,
-            'required': List[str],
-            'completed': List[str],
-            'missing': List[str]
-        }
     """
-    # CRITICAL: Case status MUST be "Completed"
-    if case_status and case_status.lower() != 'completed':
+    # Check case status validity
+    if case_status and case_status not in VALID_CASE_STATUSES:
         return {
             'compliant': False,
-            'message': f'❌ NON-COMPLIANT: Case status is "{case_status}" (must be "Completed")',
+            'message': f'NON-COMPLIANT: Case status "{case_status}" is not valid for compliance',
             'required': required_assessments,
             'completed': [],
-            'missing': [f'Case Status (current: {case_status})']
+            'missing': [f'Case Status (current: {case_status}, valid: {VALID_CASE_STATUSES})']
         }
 
     if not required_assessments:
-        # Even with no required assessments, case status must be Completed
-        if case_status and case_status.lower() == 'completed':
-            return {
-                'compliant': True,
-                'message': '✅ COMPLIANT: Case status is Completed',
-                'required': [],
-                'completed': [],
-                'missing': []
-            }
-        else:
-            return {
-                'compliant': False,
-                'message': f'❌ NON-COMPLIANT: Case status is "{case_status}" (must be "Completed")',
-                'required': [],
-                'completed': [],
-                'missing': [f'Case Status (current: {case_status})']
-            }
+        return {
+            'compliant': True,
+            'message': 'COMPLIANT: No specific assessments required',
+            'required': [],
+            'completed': [],
+            'missing': []
+        }
 
     status_map = {
         'PIA': pia_status,
@@ -699,7 +760,6 @@ def evaluate_assessment_compliance(required_assessments: List[str],
 
     for assessment in required_assessments:
         status = status_map.get(assessment)
-        # STRICT: Only "Completed" is valid, everything else is non-compliant
         if status and status.lower() == 'completed':
             completed.append(assessment)
         else:
@@ -708,9 +768,9 @@ def evaluate_assessment_compliance(required_assessments: List[str],
     is_compliant = len(missing) == 0
 
     if is_compliant:
-        message = f"✅ COMPLIANT: Case status is Completed and all {len(required_assessments)} required assessments are Completed"
+        message = f"COMPLIANT: All {len(required_assessments)} required assessments are Completed"
     else:
-        message = f"❌ NON-COMPLIANT: {len(missing)} assessment(s) not completed: {', '.join(missing)}"
+        message = f"NON-COMPLIANT: {len(missing)} assessment(s) not completed: {', '.join(missing)}"
 
     return {
         'compliant': is_compliant,
@@ -727,25 +787,29 @@ def validate_precedents(origin: str, receiving: str,
                        process_l2: str = None,
                        process_l3: str = None,
                        has_pii: bool = None,
-                       required_assessments: List[str] = None) -> Dict:
+                       required_assessments: List[str] = None,
+                       has_country_prohibition: bool = False) -> Dict:
     """
     Validate transfer against historical precedents with STRICT filter matching.
+    ONLY searches cases with valid status (Completed, Complete, Active, Published).
 
     Business Rules:
-    1. ALL provided filters must match → find matching cases
-    2. NO matching cases → PROHIBITED (raise governance ticket)
-    3. At least ONE matching case with ALL assessments completed → ALLOWED
-    4. All matching cases have incomplete assessments → PROHIBITED
-
-    Returns:
-        {
-            'status': 'validated' | 'no_precedent' | 'non_compliant',
-            'message': str,
-            'matching_cases': int,
-            'compliant_cases': int,
-            'cases': List[Dict]
-        }
+    1. Country-specific prohibition -> PROHIBITED (overrides everything)
+    2. ALL provided filters must match -> find matching cases
+    3. NO matching cases -> PROHIBITED (raise governance ticket)
+    4. At least ONE matching case with ALL assessments completed -> ALLOWED
+    5. All matching cases have incomplete assessments -> PROHIBITED
     """
+    # If country-specific prohibition exists, skip precedent search
+    if has_country_prohibition:
+        return {
+            'status': 'country_prohibited',
+            'message': 'PROHIBITED: Country-specific rule blocks this transfer regardless of precedents or assessments',
+            'matching_cases': 0,
+            'compliant_cases': 0,
+            'cases': []
+        }
+
     # Search with STRICT filter matching
     matching_cases = search_data_graph_strict(
         origin=origin,
@@ -759,27 +823,29 @@ def validate_precedents(origin: str, receiving: str,
 
     total_cases = len(matching_cases)
 
-    # Rule 1: No precedent found → PROHIBITED (ALWAYS require precedent)
     if total_cases == 0:
-        # Build filter description
         filters_provided = []
-        if purposes: filters_provided.append(f"purposes={purposes}")
-        if process_l1: filters_provided.append(f"process_l1={process_l1}")
-        if process_l2: filters_provided.append(f"process_l2={process_l2}")
-        if process_l3: filters_provided.append(f"process_l3={process_l3}")
-        if has_pii is not None: filters_provided.append(f"has_pii={has_pii}")
+        if purposes:
+            filters_provided.append(f"purposes={purposes}")
+        if process_l1:
+            filters_provided.append(f"process_l1={process_l1}")
+        if process_l2:
+            filters_provided.append(f"process_l2={process_l2}")
+        if process_l3:
+            filters_provided.append(f"process_l3={process_l3}")
+        if has_pii is not None:
+            filters_provided.append(f"has_pii={has_pii}")
 
-        # Always PROHIBIT if no precedent found
         filter_msg = f" with matching filters ({', '.join(filters_provided)})" if filters_provided else ""
         return {
             'status': 'no_precedent',
-            'message': f'❌ PROHIBITED: No historical precedent found for {origin} → {receiving}{filter_msg}. Please raise a governance ticket.',
+            'message': f'PROHIBITED: No historical precedent found for {origin} -> {receiving}{filter_msg}. Please raise a governance ticket.',
             'matching_cases': 0,
             'compliant_cases': 0,
             'cases': []
         }
 
-    # Rule 2: Check if at least ONE case has all required assessments completed
+    # Check assessment compliance
     if not required_assessments:
         required_assessments = []
 
@@ -798,20 +864,20 @@ def validate_precedents(origin: str, receiving: str,
 
     compliant_count = len(compliant_cases)
 
-    # Rule 3: At least ONE compliant case → ALLOWED
+    # DYNAMIC LOGIC: At least ONE compliant case = ALLOWED
     if compliant_count > 0:
         return {
             'status': 'validated',
-            'message': f'✅ ALLOWED: Found {total_cases} matching case(s), {compliant_count} have all required assessments completed.',
+            'message': f'ALLOWED: Found {total_cases} matching case(s), {compliant_count} have all required assessments completed.',
             'matching_cases': total_cases,
             'compliant_cases': compliant_count,
-            'cases': matching_cases[:5]  # Return first 5 for reference
+            'cases': matching_cases[:5]
         }
 
-    # Rule 4: Cases found but NONE are compliant → PROHIBITED
+    # All cases found but none compliant
     return {
         'status': 'non_compliant',
-        'message': f'❌ PROHIBITED: Found {total_cases} matching case(s) but NONE have all required assessments completed.',
+        'message': f'PROHIBITED: Found {total_cases} matching case(s) but NONE have all required assessments completed.',
         'matching_cases': total_cases,
         'compliant_cases': 0,
         'cases': matching_cases[:5]
@@ -823,15 +889,16 @@ def search_data_graph_strict(origin: str, receiving: str, purposes: List[str] = 
                              has_pii: bool = None) -> List[Dict]:
     """
     STRICT precedent search: ALL provided filters must match exactly.
-    If a filter is provided but doesn't match → case is excluded.
-    Used for precedent-based compliance validation.
+    ONLY searches cases with valid status (Completed, Complete, Active, Published).
     """
-    logger.info(f"STRICT precedent search: {origin} → {receiving}, purposes={purposes}, processes={process_l1}/{process_l2}/{process_l3}, pii={has_pii}")
+    logger.info(f"STRICT search: {origin} -> {receiving}, purposes={purposes}, pii={has_pii}")
+
+    # Build valid status list for WHERE clause
+    valid_statuses_str = ', '.join([f"'{s}'" for s in VALID_CASE_STATUSES])
 
     conditions = []
     params = {}
 
-    # Exact country match (required)
     if origin:
         conditions.append("origin.name = $origin")
         params['origin'] = origin
@@ -840,16 +907,17 @@ def search_data_graph_strict(origin: str, receiving: str, purposes: List[str] = 
         conditions.append("receiving.name = $receiving")
         params['receiving'] = receiving
 
+    # CRITICAL: Only include valid case statuses
+    conditions.append(f"c.case_status IN [{valid_statuses_str}]")
+
     where_clause = " AND ".join(conditions) if conditions else "true"
 
-    # Optimized query: Use indexed properties in initial MATCH
     query = f"""
     MATCH (c:Case)-[:ORIGINATES_FROM]->(origin:Country)
     MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction)
     WHERE {where_clause}
     """
 
-    # STRICT purpose matching: if purposes provided, ALL must match
     if purposes and len(purposes) > 0:
         query += """
     WITH c, origin, receiving
@@ -859,7 +927,6 @@ def search_data_graph_strict(origin: str, receiving: str, purposes: List[str] = 
         """
         params['purposes'] = purposes
 
-    # STRICT process matching: if provided, must match exactly (uses indexed ProcessL1/L2/L3.name)
     if process_l1:
         query += """
     WITH c, origin, receiving
@@ -881,7 +948,6 @@ def search_data_graph_strict(origin: str, receiving: str, purposes: List[str] = 
         """
         params['process_l3'] = process_l3
 
-    # Cap results early to prevent memory issues on large graphs
     query += """
     WITH c, origin, receiving LIMIT 1000
     MATCH (c)-[:TRANSFERS_TO]->(recv:Jurisdiction)
@@ -905,11 +971,10 @@ def search_data_graph_strict(origin: str, receiving: str, purposes: List[str] = 
     WITH c, origin, receiving, receiving_countries, purposes, process_l1, process_l2, process_l3, personal_data_items, pdc_items, collect(DISTINCT cat.name) as categories
     """
 
-    # STRICT PII matching if specified
     if has_pii is True:
-        query += "WHERE size(personal_data_items) > 0\n"
+        query += "WHERE size(pdc_items) > 0 AND NOT ALL(p IN pdc_items WHERE p IN ['N/A', 'NA', 'null'])\n"
     elif has_pii is False:
-        query += "WHERE size(personal_data_items) = 0\n"
+        query += "WHERE size(pdc_items) = 0 OR ALL(p IN pdc_items WHERE p IN ['N/A', 'NA', 'null'])\n"
 
     query += """
     RETURN COALESCE(c.case_id, c.case_ref_id, 'UNKNOWN') as case_id,
@@ -934,12 +999,7 @@ def search_data_graph_strict(origin: str, receiving: str, purposes: List[str] = 
     """
 
     try:
-        result = query_with_timeout(
-            data_graph,
-            query,
-            params=params,
-            context="STRICT precedent search"
-        )
+        result = query_with_timeout(data_graph, query, params=params, context="STRICT precedent search")
 
         cases = []
         if result.result_set:
@@ -958,7 +1018,7 @@ def search_data_graph_strict(origin: str, receiving: str, purposes: List[str] = 
                 categories = [cat for cat in categories if cat] if categories else []
 
                 has_health = contains_health_data(personal_data_items, pdc_items)
-                has_pii = has_pii_data(pdc_items)
+                has_pii_flag = has_pii_data(pdc_items)
 
                 case_data = {
                     'case_id': row[0],
@@ -978,12 +1038,12 @@ def search_data_graph_strict(origin: str, receiving: str, purposes: List[str] = 
                     'personal_data_categories': pdc_items,
                     'categories': categories,
                     'case_status': row[16] if len(row) > 16 else 'Unknown',
-                    'has_pii': has_pii,
+                    'has_pii': has_pii_flag,
                     'has_health_data': has_health
                 }
                 cases.append(case_data)
 
-        logger.info(f"STRICT search found {len(cases)} exact-match cases")
+        logger.info(f"STRICT search found {len(cases)} exact-match cases (valid status only)")
         return cases
 
     except Exception as e:
@@ -995,7 +1055,9 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
                       process_l1: str = None, process_l2: str = None, process_l3: str = None,
                       has_pii: str = None) -> List[Dict]:
     """Query DataTransferGraph for matching cases (partial match for UI search)"""
-    logger.info(f"Searching DataTransferGraph: {origin} → {receiving}, purposes={purposes}, processes={process_l1}/{process_l2}/{process_l3}")
+    logger.info(f"Searching DataTransferGraph: {origin} -> {receiving}")
+
+    valid_statuses_str = ', '.join([f"'{s}'" for s in VALID_CASE_STATUSES])
 
     conditions = []
     params = {}
@@ -1008,16 +1070,17 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
         conditions.append("toLower(receiving.name) CONTAINS toLower($receiving)")
         params['receiving'] = receiving.lower()
 
+    # Only include valid case statuses
+    conditions.append(f"c.case_status IN [{valid_statuses_str}]")
+
     where_clause = " AND ".join(conditions) if conditions else "true"
 
-    # Optimized query: Use indexed properties and early filtering
     query = f"""
     MATCH (c:Case)-[:ORIGINATES_FROM]->(origin:Country)
     MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction)
     WHERE {where_clause}
     """
 
-    # Filter by purpose using indexed Purpose.name
     if purposes and len(purposes) > 0:
         query += """
     WITH c, origin
@@ -1026,7 +1089,6 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
         """
         params['purposes'] = purposes
 
-    # Filter by process levels using indexed ProcessL1/L2/L3.name
     if process_l1:
         query += """
     WITH c, origin
@@ -1048,7 +1110,6 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
         """
         params['process_l3'] = process_l3
 
-    # Cap results early before expensive COLLECT operations
     query += """
     WITH c, origin LIMIT 1000
     MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction)
@@ -1073,9 +1134,9 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
     """
 
     if has_pii == 'yes':
-        query += "WHERE size(personal_data_items) > 0\n"
+        query += "WHERE size(pdc_items) > 0 AND NOT ALL(p IN pdc_items WHERE p IN ['N/A', 'NA', 'null'])\n"
     elif has_pii == 'no':
-        query += "WHERE size(personal_data_items) = 0\n"
+        query += "WHERE size(pdc_items) = 0 OR ALL(p IN pdc_items WHERE p IN ['N/A', 'NA', 'null'])\n"
 
     query += """
     RETURN COALESCE(c.case_id, c.case_ref_id, 'UNKNOWN') as case_id,
@@ -1092,18 +1153,14 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
            COALESCE(c.hrpr_module, c.hrpr_status, 'N/A') as hrpr_module,
            personal_data_items,
            pdc_items,
-           categories
+           categories,
+           c.case_status as case_status
     ORDER BY case_id
     LIMIT 1000
     """
 
     try:
-        result = query_with_timeout(
-            data_graph,
-            query,
-            params=params,
-            context="UI case search"
-        )
+        result = query_with_timeout(data_graph, query, params=params, context="UI case search")
 
         cases = []
         if result.result_set:
@@ -1122,7 +1179,7 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
                 categories = [cat for cat in categories if cat] if categories else []
 
                 has_health = contains_health_data(personal_data_items, pdc_items)
-                has_pii = has_pii_data(pdc_items)
+                has_pii_flag = has_pii_data(pdc_items)
 
                 case_data = {
                     'case_id': row[0],
@@ -1140,17 +1197,137 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
                     'personal_data': personal_data_items,
                     'personal_data_categories': pdc_items,
                     'categories': categories,
-                    'has_pii': has_pii,
+                    'case_status': row[15] if len(row) > 15 else 'Unknown',
+                    'has_pii': has_pii_flag,
                     'has_health_data': has_health
                 }
                 cases.append(case_data)
 
-        logger.info(f"Found {len(cases)} cases in DataTransferGraph")
+        logger.info(f"Found {len(cases)} cases in DataTransferGraph (valid status only)")
         return cases
 
     except Exception as e:
         logger.error(f"Error querying DataTransferGraph: {e}", exc_info=True)
         return []
+
+
+def get_all_rules_overview() -> Dict:
+    """
+    Get all rules for business user overview.
+    Returns rules organized by type with aggregated information.
+    """
+    permission_rules = []
+    prohibition_rules = []
+    country_specific_rules = []
+
+    # Get prohibition rules from config
+    if PROHIBITION_CONFIG and 'prohibition_rules' in PROHIBITION_CONFIG:
+        for rule_name, rule_config in PROHIBITION_CONFIG['prohibition_rules'].items():
+            if not rule_config.get('enabled', True):
+                continue
+
+            rule_overview = {
+                'rule_id': rule_config.get('rule_id', rule_name),
+                'name': rule_config.get('prohibition_name', rule_name),
+                'description': rule_config.get('description', ''),
+                'rule_type': 'Prohibition',
+                'priority': COUNTRY_RULE_PRIORITY + rule_config.get('priority', 0),
+                'origin_countries': rule_config.get('origin_countries', []),
+                'receiving_countries': rule_config.get('receiving_countries', []),
+                'requires_pii': rule_config.get('requires_pii', False),
+                'requires_health_data': rule_config.get('requires_health_data', False),
+                'duties': rule_config.get('duties', []),
+                'is_country_specific': True
+            }
+            country_specific_rules.append(rule_overview)
+            prohibition_rules.append(rule_overview)
+
+    # Get rules from RulesGraph
+    try:
+        query = """
+        MATCH (r:Rule)
+        OPTIONAL MATCH (r)-[:HAS_PERMISSION]->(perm:Permission)
+        OPTIONAL MATCH (perm)-[:CAN_HAVE_DUTY]->(perm_duty:Duty)
+        OPTIONAL MATCH (r)-[:HAS_PROHIBITION]->(prohib:Prohibition)
+        OPTIONAL MATCH (prohib)-[:CAN_HAVE_DUTY]->(prohib_duty:Duty)
+        OPTIONAL MATCH (r)-[:TRIGGERED_BY_ORIGIN]->(origin_group:CountryGroup)
+        OPTIONAL MATCH (r)-[:TRIGGERED_BY_RECEIVING]->(recv_group:CountryGroup)
+        RETURN r.rule_id as rule_id,
+               r.description as description,
+               r.priority as priority,
+               r.has_pii_required as requires_pii,
+               r.health_data_required as requires_health_data,
+               perm.name as permission_name,
+               collect(DISTINCT perm_duty.name) as perm_duties,
+               prohib.name as prohibition_name,
+               collect(DISTINCT prohib_duty.name) as prohib_duties,
+               collect(DISTINCT origin_group.name) as origin_groups,
+               collect(DISTINCT recv_group.name) as receiving_groups
+        ORDER BY r.priority
+        """
+
+        result = query_with_timeout(
+            rules_graph, query,
+            context="Get rules overview",
+            use_cache=True,
+            cache_key="rules_overview"
+        )
+
+        if result.result_set:
+            for row in result.result_set:
+                rule_id = row[0]
+                description = row[1]
+                priority = row[2] or 0
+                requires_pii = row[3] or False
+                requires_health_data = row[4] or False
+                permission_name = row[5]
+                perm_duties = [d for d in (row[6] or []) if d]
+                prohibition_name = row[7]
+                prohib_duties = [d for d in (row[8] or []) if d]
+                origin_groups = [g for g in (row[9] or []) if g]
+                receiving_groups = [g for g in (row[10] or []) if g]
+
+                if permission_name:
+                    rule_overview = {
+                        'rule_id': rule_id,
+                        'name': permission_name,
+                        'description': description,
+                        'rule_type': 'Permission',
+                        'priority': priority,
+                        'origin_countries': origin_groups,
+                        'receiving_countries': receiving_groups,
+                        'requires_pii': requires_pii,
+                        'requires_health_data': requires_health_data,
+                        'duties': perm_duties,
+                        'is_country_specific': False
+                    }
+                    permission_rules.append(rule_overview)
+
+                if prohibition_name:
+                    rule_overview = {
+                        'rule_id': rule_id,
+                        'name': prohibition_name,
+                        'description': description,
+                        'rule_type': 'Prohibition',
+                        'priority': priority,
+                        'origin_countries': origin_groups,
+                        'receiving_countries': receiving_groups,
+                        'requires_pii': requires_pii,
+                        'requires_health_data': requires_health_data,
+                        'duties': prohib_duties,
+                        'is_country_specific': False
+                    }
+                    prohibition_rules.append(rule_overview)
+
+    except Exception as e:
+        logger.error(f"Error getting rules overview: {e}")
+
+    return {
+        'permission_rules': permission_rules,
+        'prohibition_rules': prohibition_rules,
+        'country_specific_rules': country_specific_rules,
+        'total_rules': len(permission_rules) + len(prohibition_rules)
+    }
 
 
 # ============================================================================
@@ -1167,12 +1344,43 @@ async def index():
         return "<h1>Dashboard template not found</h1><p>Expected at: templates/dashboard.html</p>"
 
 
+@app.get("/rules", response_class=HTMLResponse, tags=["Frontend"])
+async def rules_page():
+    """Serve the Rules Overview page for business users"""
+    template_path = Path(__file__).parent / "templates" / "rules_overview.html"
+    if template_path.exists():
+        return template_path.read_text()
+    else:
+        return "<h1>Rules Overview template not found</h1><p>Expected at: templates/rules_overview.html</p>"
+
+
+@app.get("/api/rules-overview", response_model=RulesOverviewResponse, tags=["Rules"])
+async def get_rules_overview():
+    """
+    Get all compliance rules overview for business users.
+    Returns rules organized by type (Permission, Prohibition, Country-Specific)
+    with aggregated information suitable for display in accordions.
+    """
+    try:
+        overview = get_all_rules_overview()
+        return {
+            'success': True,
+            'total_rules': overview['total_rules'],
+            'permission_rules': overview['permission_rules'],
+            'prohibition_rules': overview['prohibition_rules'],
+            'country_specific_rules': overview['country_specific_rules']
+        }
+    except Exception as e:
+        logger.error(f"Error getting rules overview: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/purposes", response_model=PurposesResponse, tags=["Metadata"])
 async def get_purposes():
     """Get all available legal processing purposes from the graph"""
     try:
         query = "MATCH (p:Purpose) RETURN DISTINCT p.name as name ORDER BY name"
-        result = query_with_timeout(data_graph, query, context="Get purposes")
+        result = query_with_timeout(data_graph, query, context="Get purposes", use_cache=True, cache_key="purposes")
         purposes = [row[0] for row in result.result_set] if result.result_set else []
         return {'success': True, 'purposes': purposes}
     except Exception as e:
@@ -1185,23 +1393,18 @@ async def get_processes():
     """Get all available process levels (L1, L2, L3) from the graph"""
     try:
         query_l1 = "MATCH (p:ProcessL1) RETURN DISTINCT p.name as name ORDER BY name"
-        result_l1 = query_with_timeout(data_graph, query_l1, context="Get ProcessL1")
+        result_l1 = query_with_timeout(data_graph, query_l1, context="Get ProcessL1", use_cache=True, cache_key="process_l1")
         process_l1 = [row[0] for row in result_l1.result_set] if result_l1.result_set else []
 
         query_l2 = "MATCH (p:ProcessL2) RETURN DISTINCT p.name as name ORDER BY name"
-        result_l2 = query_with_timeout(data_graph, query_l2, context="Get ProcessL2")
+        result_l2 = query_with_timeout(data_graph, query_l2, context="Get ProcessL2", use_cache=True, cache_key="process_l2")
         process_l2 = [row[0] for row in result_l2.result_set] if result_l2.result_set else []
 
         query_l3 = "MATCH (p:ProcessL3) RETURN DISTINCT p.name as name ORDER BY name"
-        result_l3 = query_with_timeout(data_graph, query_l3, context="Get ProcessL3")
+        result_l3 = query_with_timeout(data_graph, query_l3, context="Get ProcessL3", use_cache=True, cache_key="process_l3")
         process_l3 = [row[0] for row in result_l3.result_set] if result_l3.result_set else []
 
-        return {
-            'success': True,
-            'process_l1': process_l1,
-            'process_l2': process_l2,
-            'process_l3': process_l3
-        }
+        return {'success': True, 'process_l1': process_l1, 'process_l2': process_l2, 'process_l3': process_l3}
     except Exception as e:
         logger.error(f"Error fetching processes: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1212,10 +1415,10 @@ async def get_countries():
     """Get all unique countries from the data graph"""
     try:
         query_origin = "MATCH (c:Country) RETURN DISTINCT c.name as name ORDER BY name"
-        result_origin = query_with_timeout(data_graph, query_origin, context="Get origin countries")
+        result_origin = query_with_timeout(data_graph, query_origin, context="Get origin countries", use_cache=True, cache_key="origin_countries")
 
         query_receiving = "MATCH (j:Jurisdiction) RETURN DISTINCT j.name as name ORDER BY name"
-        result_receiving = query_with_timeout(data_graph, query_receiving, context="Get receiving countries")
+        result_receiving = query_with_timeout(data_graph, query_receiving, context="Get receiving countries", use_cache=True, cache_key="receiving_countries")
 
         origin_countries = [row[0] for row in result_origin.result_set] if result_origin.result_set else []
         receiving_countries = [row[0] for row in result_receiving.result_set] if result_receiving.result_set else []
@@ -1228,7 +1431,6 @@ async def get_countries():
             'origin_countries': origin_countries,
             'receiving_countries': receiving_countries
         }
-
     except Exception as e:
         logger.error(f"Error fetching countries: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1240,23 +1442,20 @@ async def evaluate_rules(request: RulesEvaluationRequest):
     Evaluate compliance rules with precedent validation and assessment compliance.
 
     Decision Logic (Priority Order):
-    1. Rule-Level Prohibitions → PROHIBITED (absolute)
-    2. No Precedent Found → PROHIBITED (raise governance ticket)
-    3. Assessment Non-Compliance → PROHIBITED
-    4. At Least One Compliant Precedent → ALLOWED
+    1. Country-Specific Prohibitions -> PROHIBITED (absolute, overrides PIA/TIA/HRPR)
+    2. Rule-Level Prohibitions -> PROHIBITED
+    3. No Precedent Found -> PROHIBITED (raise governance ticket)
+    4. PIA/TIA/HRPR Match with Completed Status -> ALLOWED (dynamic filtering)
+    5. All matching cases have incomplete assessments -> PROHIBITED
 
-    Returns complete evaluation including transfer status, triggered rules,
-    precedent validation, and assessment compliance.
+    Note: Country-specific rules (e.g., US to China) take precedence over PIA/TIA/HRPR
+    assessments. Even with completed assessments, country rules can block transfers.
     """
     try:
-        # Validate required fields
         if not request.origin_country or not request.receiving_country:
-            raise HTTPException(
-                status_code=400,
-                detail="origin_country and receiving_country are required"
-            )
+            raise HTTPException(status_code=400, detail="origin_country and receiving_country are required")
 
-        # Automatically detect health data from other_metadata
+        # Detect health data
         has_health_data_detected = False
         health_detection_details = {}
 
@@ -1264,22 +1463,12 @@ async def evaluate_rules(request: RulesEvaluationRequest):
             health_detection_details = detect_health_data_from_metadata(request.other_metadata, verbose=True)
             has_health_data_detected = health_detection_details['detected']
 
-            if has_health_data_detected:
-                logger.info(f"🏥 Health data DETECTED from {len(request.other_metadata)} metadata fields:")
-                for field in health_detection_details['matched_fields']:
-                    logger.info(f"   • {field['key']}: {field['value']}")
-            else:
-                logger.info(f"✓ No health data detected in {len(request.other_metadata)} metadata fields")
-
-        # Use pii flag from request, or None if not provided
         has_pii = request.pii
 
-        logger.info(f"Evaluating: {request.origin_country} → {request.receiving_country}, "
-                   f"PII={has_pii}, Health={has_health_data_detected}, "
-                   f"Purposes={request.purpose_of_processing}, "
-                   f"Processes={request.process_l1}/{request.process_l2}/{request.process_l3}")
+        logger.info(f"Evaluating: {request.origin_country} -> {request.receiving_country}, "
+                   f"PII={has_pii}, Health={has_health_data_detected}")
 
-        # Step 1: Query triggered rules
+        # Query triggered rules (includes country-specific check)
         rules_result = query_triggered_rules_deontic(
             request.origin_country.strip(),
             request.receiving_country.strip(),
@@ -1287,7 +1476,36 @@ async def evaluate_rules(request: RulesEvaluationRequest):
             has_health_data_detected
         )
 
-        # Step 2: Check for rule-level prohibitions (highest priority)
+        has_country_prohibition = rules_result.get('has_country_prohibition', False)
+
+        # PRIORITY 1: Country-specific prohibition (overrides everything)
+        if has_country_prohibition:
+            country_rules = [r for r in rules_result['triggered_rules'] if r.get('is_country_specific')]
+            prohibition_reasons = [r['prohibition']['name'] for r in country_rules if r.get('prohibition')]
+
+            return {
+                'success': True,
+                'transfer_status': 'PROHIBITED',
+                'transfer_blocked': True,
+                'blocked_reason': f"Country-specific prohibition: {', '.join(prohibition_reasons)}. This rule takes precedence over PIA/TIA/HRPR assessments.",
+                'triggered_rules': rules_result['triggered_rules'],
+                'total_rules_triggered': rules_result['total_rules_triggered'],
+                'has_prohibitions': True,
+                'has_country_prohibition': True,
+                'consolidated_duties': rules_result['consolidated_duties'],
+                'precedent_validation': {
+                    'status': 'country_prohibited',
+                    'message': 'Skipped - country-specific prohibition takes precedence',
+                    'matching_cases': 0,
+                    'compliant_cases': 0
+                },
+                'assessment_compliance': {
+                    'compliant': False,
+                    'message': 'Blocked by country-specific prohibition (overrides assessments)'
+                }
+            }
+
+        # PRIORITY 2: Other rule-level prohibitions
         if rules_result['has_prohibitions']:
             prohibited_rules = [r for r in rules_result['triggered_rules'] if r.get('is_blocked')]
             prohibition_reasons = [r['prohibition']['name'] for r in prohibited_rules if r.get('prohibition')]
@@ -1300,6 +1518,7 @@ async def evaluate_rules(request: RulesEvaluationRequest):
                 'triggered_rules': rules_result['triggered_rules'],
                 'total_rules_triggered': rules_result['total_rules_triggered'],
                 'has_prohibitions': True,
+                'has_country_prohibition': False,
                 'consolidated_duties': rules_result['consolidated_duties'],
                 'precedent_validation': {
                     'status': 'skipped',
@@ -1313,13 +1532,12 @@ async def evaluate_rules(request: RulesEvaluationRequest):
                 }
             }
 
-        # Step 3: Extract required assessments from permission rules
+        # Extract required assessments from permission rules
         required_assessments = set()
         for rule in rules_result['triggered_rules']:
             if rule.get('permission') and rule['permission'].get('duties'):
                 for duty in rule['permission']['duties']:
                     if duty.get('module'):
-                        # Extract assessment type from module name
                         if 'pia' in duty['module'].lower():
                             required_assessments.add('PIA')
                         elif 'tia' in duty['module'].lower():
@@ -1328,9 +1546,8 @@ async def evaluate_rules(request: RulesEvaluationRequest):
                             required_assessments.add('HRPR')
 
         required_assessments = list(required_assessments)
-        logger.info(f"Required assessments from rules: {required_assessments}")
 
-        # Step 4: Validate against historical precedents with STRICT filter matching
+        # PRIORITY 3-5: Validate against precedents
         precedent_validation = validate_precedents(
             origin=request.origin_country.strip(),
             receiving=request.receiving_country.strip(),
@@ -1339,10 +1556,11 @@ async def evaluate_rules(request: RulesEvaluationRequest):
             process_l2=request.process_l2,
             process_l3=request.process_l3,
             has_pii=has_pii,
-            required_assessments=required_assessments
+            required_assessments=required_assessments,
+            has_country_prohibition=has_country_prohibition
         )
 
-        # Step 5: Determine final transfer status based on precedent validation
+        # Determine final status
         transfer_blocked = False
         transfer_status = 'ALLOWED'
         blocked_reason = None
@@ -1359,11 +1577,9 @@ async def evaluate_rules(request: RulesEvaluationRequest):
             transfer_blocked = False
             transfer_status = 'ALLOWED'
 
-        # Step 6: Assessment compliance check (using request-provided statuses if available)
-        # This is informational - the precedent validation already checked historical compliance
         assessment_compliance = {
             'compliant': not transfer_blocked,
-            'message': precedent_validation['message'] if transfer_blocked else '✅ Transfer validated by precedents',
+            'message': precedent_validation['message'] if transfer_blocked else 'Transfer validated by precedents',
             'required': required_assessments
         }
 
@@ -1375,6 +1591,7 @@ async def evaluate_rules(request: RulesEvaluationRequest):
             'triggered_rules': rules_result['triggered_rules'],
             'total_rules_triggered': rules_result['total_rules_triggered'],
             'has_prohibitions': False,
+            'has_country_prohibition': False,
             'consolidated_duties': rules_result['consolidated_duties'],
             'precedent_validation': precedent_validation,
             'assessment_compliance': assessment_compliance
@@ -1390,16 +1607,8 @@ async def evaluate_rules(request: RulesEvaluationRequest):
 @app.post("/api/search-cases", response_model=SearchCasesResponse, tags=["Cases"])
 async def search_cases(request: SearchCasesRequest):
     """
-    Search for data transfer cases matching the specified criteria
-
-    All parameters are optional for flexible searching:
-    - origin_country: Partial match on originating country
-    - receiving_country: Partial match on receiving country  - pii: Filter by PII presence
-    - purpose_of_processing: Filter by processing purpose(s)
-    - process_l1, process_l2, process_l3: Filter by process hierarchy
-    - other_metadata: Additional metadata filters (future enhancement)
-
-    Returns matching cases from the DataTransferGraph with auto-detected health data.
+    Search for data transfer cases matching the specified criteria.
+    ONLY returns cases with valid status (Completed, Complete, Active, Published).
     """
     try:
         origin = request.origin_country.strip() if request.origin_country else None
@@ -1408,33 +1617,20 @@ async def search_cases(request: SearchCasesRequest):
         process_l2 = request.process_l2.strip() if request.process_l2 else None
         process_l3 = request.process_l3.strip() if request.process_l3 else None
 
-        # Convert pii boolean to legacy 'yes'/'no'/None format for search_data_graph
         has_pii_str = None
         if request.pii is True:
             has_pii_str = 'yes'
         elif request.pii is False:
             has_pii_str = 'no'
 
-        logger.info(f"Searching cases: {origin} → {receiving}, "
-                   f"purposes={request.purpose_of_processing}, "
-                   f"processes={process_l1}/{process_l2}/{process_l3}, "
-                   f"pii={has_pii_str}")
-
         cases = search_data_graph(
-            origin,
-            receiving,
+            origin, receiving,
             request.purpose_of_processing if request.purpose_of_processing else None,
-            process_l1,
-            process_l2,
-            process_l3,
+            process_l1, process_l2, process_l3,
             has_pii_str
         )
 
-        return {
-            'success': True,
-            'cases': cases,
-            'total_cases': len(cases)
-        }
+        return {'success': True, 'cases': cases, 'total_cases': len(cases)}
 
     except Exception as e:
         logger.error(f"Error searching cases: {e}", exc_info=True)
@@ -1445,9 +1641,16 @@ async def search_cases(request: SearchCasesRequest):
 async def get_stats():
     """Get dashboard statistics"""
     try:
-        query_cases = "MATCH (c:Case) RETURN count(c) as count"
-        result_cases = query_with_timeout(data_graph, query_cases, context="Count cases")
+        # Count only valid status cases
+        valid_statuses_str = ', '.join([f"'{s}'" for s in VALID_CASE_STATUSES])
+
+        query_cases = f"MATCH (c:Case) WHERE c.case_status IN [{valid_statuses_str}] RETURN count(c) as count"
+        result_cases = query_with_timeout(data_graph, query_cases, context="Count valid cases")
         total_cases = result_cases.result_set[0][0] if result_cases.result_set else 0
+
+        query_all_cases = "MATCH (c:Case) RETURN count(c) as count"
+        result_all = query_with_timeout(data_graph, query_all_cases, context="Count all cases")
+        all_cases = result_all.result_set[0][0] if result_all.result_set else 0
 
         query_countries = "MATCH (c:Country) RETURN count(c) as count"
         result_countries = query_with_timeout(data_graph, query_countries, context="Count countries")
@@ -1457,9 +1660,10 @@ async def get_stats():
         result_jurisdictions = query_with_timeout(data_graph, query_jurisdictions, context="Count jurisdictions")
         total_jurisdictions = result_jurisdictions.result_set[0][0] if result_jurisdictions.result_set else 0
 
-        query_pii = """
+        query_pii = f"""
         MATCH (c:Case)-[:HAS_PERSONAL_DATA_CATEGORY]->(pdc:PersonalDataCategory)
-        WHERE pdc.name <> 'N/A' AND pdc.name <> 'NA' AND pdc.name <> 'null'
+        WHERE c.case_status IN [{valid_statuses_str}]
+        AND pdc.name <> 'N/A' AND pdc.name <> 'NA' AND pdc.name <> 'null'
         RETURN count(DISTINCT c) as count
         """
         result_pii = query_with_timeout(data_graph, query_pii, context="Count cases with PII")
@@ -1469,6 +1673,7 @@ async def get_stats():
             'success': True,
             'stats': {
                 'total_cases': total_cases,
+                'all_cases_in_graph': all_cases,
                 'total_countries': total_countries,
                 'total_jurisdictions': total_jurisdictions,
                 'cases_with_pii': cases_with_pii
@@ -1482,43 +1687,36 @@ async def get_stats():
 
 @app.get("/api/all-dropdown-values", tags=["Metadata"])
 async def get_all_dropdown_values():
-    """
-    Get all dropdown values (countries, purposes, processes) in a single call
-    Used by the frontend dashboard to populate all dropdowns efficiently
-    """
+    """Get all dropdown values in a single call"""
     try:
-        # Get countries
         query_origin = "MATCH (c:Country) RETURN DISTINCT c.name as name ORDER BY name"
-        result_origin = query_with_timeout(data_graph, query_origin, context="Get all origin countries")
+        result_origin = query_with_timeout(data_graph, query_origin, context="Get all origin countries", use_cache=True, cache_key="all_origin")
 
         query_receiving = "MATCH (j:Jurisdiction) RETURN DISTINCT j.name as name ORDER BY name"
-        result_receiving = query_with_timeout(data_graph, query_receiving, context="Get all receiving countries")
+        result_receiving = query_with_timeout(data_graph, query_receiving, context="Get all receiving countries", use_cache=True, cache_key="all_receiving")
 
         origin_countries = [row[0] for row in result_origin.result_set] if result_origin.result_set else []
         receiving_countries = [row[0] for row in result_receiving.result_set] if result_receiving.result_set else []
         all_countries = sorted(list(set(origin_countries + receiving_countries)))
 
-        # Get purposes
         query_purposes = "MATCH (p:Purpose) RETURN DISTINCT p.name as name ORDER BY name"
-        result_purposes = query_with_timeout(data_graph, query_purposes, context="Get all purposes")
+        result_purposes = query_with_timeout(data_graph, query_purposes, context="Get all purposes", use_cache=True, cache_key="all_purposes")
         purposes = [row[0] for row in result_purposes.result_set] if result_purposes.result_set else []
 
-        # Get processes
         query_l1 = "MATCH (p:ProcessL1) RETURN DISTINCT p.name as name ORDER BY name"
-        result_l1 = query_with_timeout(data_graph, query_l1, context="Get all ProcessL1")
+        result_l1 = query_with_timeout(data_graph, query_l1, context="Get all ProcessL1", use_cache=True, cache_key="all_l1")
         process_l1 = [row[0] for row in result_l1.result_set] if result_l1.result_set else []
 
         query_l2 = "MATCH (p:ProcessL2) RETURN DISTINCT p.name as name ORDER BY name"
-        result_l2 = query_with_timeout(data_graph, query_l2, context="Get all ProcessL2")
+        result_l2 = query_with_timeout(data_graph, query_l2, context="Get all ProcessL2", use_cache=True, cache_key="all_l2")
         process_l2 = [row[0] for row in result_l2.result_set] if result_l2.result_set else []
 
         query_l3 = "MATCH (p:ProcessL3) RETURN DISTINCT p.name as name ORDER BY name"
-        result_l3 = query_with_timeout(data_graph, query_l3, context="Get all ProcessL3")
+        result_l3 = query_with_timeout(data_graph, query_l3, context="Get all ProcessL3", use_cache=True, cache_key="all_l3")
         process_l3 = [row[0] for row in result_l3.result_set] if result_l3.result_set else []
 
-        # Get personal data categories
         query_pdc = "MATCH (pdc:PersonalDataCategory) RETURN DISTINCT pdc.name as name ORDER BY name"
-        result_pdc = query_with_timeout(data_graph, query_pdc, context="Get all PersonalDataCategories")
+        result_pdc = query_with_timeout(data_graph, query_pdc, context="Get all PersonalDataCategories", use_cache=True, cache_key="all_pdc")
         personal_data_categories = [row[0] for row in result_pdc.result_set] if result_pdc.result_set else []
 
         return {
@@ -1530,7 +1728,8 @@ async def get_all_dropdown_values():
             'process_l1': process_l1,
             'process_l2': process_l2,
             'process_l3': process_l3,
-            'personal_data_categories': personal_data_categories
+            'personal_data_categories': personal_data_categories,
+            'valid_case_statuses': VALID_CASE_STATUSES
         }
 
     except Exception as e:
@@ -1540,7 +1739,7 @@ async def get_all_dropdown_values():
 
 @app.get("/api/test-rules-graph", tags=["Testing"])
 async def test_rules_graph():
-    """Test endpoint to verify RulesGraph is properly configured with deontic structure"""
+    """Test endpoint to verify RulesGraph is properly configured"""
     try:
         query = """
         MATCH (cg:CountryGroup) WITH count(cg) as groups
@@ -1556,6 +1755,10 @@ async def test_rules_graph():
 
         if result.result_set:
             groups, countries, rules, actions, permissions, prohibitions, duties = result.result_set[0]
+
+            # Add config-based prohibition count
+            config_prohibitions = len(PROHIBITION_CONFIG.get('prohibition_rules', {})) if PROHIBITION_CONFIG else 0
+
             return {
                 'success': True,
                 'rules_graph_stats': {
@@ -1565,34 +1768,45 @@ async def test_rules_graph():
                     'actions': actions,
                     'permissions': permissions,
                     'prohibitions': prohibitions,
-                    'duties': duties
+                    'duties': duties,
+                    'config_prohibitions': config_prohibitions
                 },
                 'message': 'Deontic RulesGraph is operational'
             }
         else:
-            raise HTTPException(
-                status_code=500,
-                detail='RulesGraph is empty. Run build_rules_graph_deontic.py first.'
-            )
+            raise HTTPException(status_code=500, detail='RulesGraph is empty. Run build_rules_graph_deontic.py first.')
 
     except Exception as e:
         logger.error(f"Error testing RulesGraph: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f'RulesGraph may not be built. Run build_rules_graph_deontic.py. Error: {str(e)}'
-        )
+        raise HTTPException(status_code=500, detail=f'RulesGraph may not be built. Run build_rules_graph_deontic.py. Error: {str(e)}')
+
+
+@app.get("/api/cache/clear", tags=["Admin"])
+async def clear_cache():
+    """Clear the query cache"""
+    global _query_cache, _cache_timestamps
+    _query_cache = {}
+    _cache_timestamps = {}
+    return {'success': True, 'message': 'Cache cleared'}
 
 
 if __name__ == '__main__':
     import uvicorn
 
     logger.info("=" * 70)
-    logger.info("DEONTIC COMPLIANCE API - FastAPI")
+    logger.info("DEONTIC COMPLIANCE API - FastAPI (Optimized)")
     logger.info("=" * 70)
-    logger.info("Using formal deontic logic: Actions, Permissions, Prohibitions, Duties")
+    logger.info("Features:")
+    logger.info("  - Case status filtering (Completed/Complete/Active/Published)")
+    logger.info("  - Country-specific rules take precedence over PIA/TIA/HRPR")
+    logger.info("  - Dynamic PIA/TIA/HRPR rules evaluation")
+    logger.info("  - Query caching for large graphs")
+    logger.info("  - Rules Overview endpoint for business users")
+    logger.info("")
     logger.info("Starting server on http://0.0.0.0:5001")
     logger.info("Swagger UI: http://localhost:5001/docs")
     logger.info("ReDoc: http://localhost:5001/redoc")
+    logger.info("Rules Overview: http://localhost:5001/rules")
     logger.info("=" * 70)
 
     uvicorn.run(app, host="0.0.0.0", port=5001, log_level="info")

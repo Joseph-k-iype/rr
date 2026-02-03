@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Compliance Rules Overview | HSBC</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --hsbc-red: #DB0011;
+            --hsbc-black: #000000;
+            --hsbc-dark-gray: #333333;
+            --hsbc-gray: #707070;
+            --hsbc-light-gray: #F7F7F7;
+            --hsbc-border: #D8D8D8;
+            --hsbc-white: #FFFFFF;
+            --hsbc-blue: #0077C8;
+            --success-green: #00A758;
+            --warning-orange: #FF9800;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+            background-color: var(--hsbc-white);
+            color: var(--hsbc-dark-gray);
+            line-height: 1.6;
+            font-weight: 300;
+        }
+
+        .header {
+            background-color: var(--hsbc-white);
+            color: var(--hsbc-black);
+            padding: 1.2rem 0;
+            border-bottom: 1px solid var(--hsbc-border);
+        }
+
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 3rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .logo-text {
+            font-size: 1.4rem;
+            font-weight: 400;
+            color: var(--hsbc-black);
+            letter-spacing: -0.5px;
+        }
+
+        .logo-subtitle {
+            font-size: 0.85rem;
+            color: var(--hsbc-gray);
+            margin-top: 0.1rem;
+            font-weight: 300;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+        }
+
+        .nav-link {
+            color: var(--hsbc-dark-gray);
+            text-decoration: none;
+            font-size: 0.9rem;
+            padding: 0.5rem 0;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .nav-link:hover {
+            color: var(--hsbc-red);
+            border-bottom-color: var(--hsbc-red);
+        }
+
+        .nav-link.active {
+            color: var(--hsbc-red);
+            border-bottom-color: var(--hsbc-red);
+            font-weight: 500;
+        }
+
+        .stats-bar {
+            background-color: var(--hsbc-light-gray);
+            padding: 2rem 3rem;
+            border-bottom: 1px solid var(--hsbc-border);
+        }
+
+        .stats-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 2rem;
+        }
+
+        .stat-card {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 300;
+            color: var(--hsbc-black);
+            display: block;
+            letter-spacing: -1px;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--hsbc-gray);
+            margin-top: 0.3rem;
+            font-weight: 300;
+            text-transform: uppercase;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem 3rem 4rem;
+        }
+
+        .page-title {
+            font-size: 1.8rem;
+            font-weight: 300;
+            color: var(--hsbc-black);
+            margin-bottom: 0.5rem;
+        }
+
+        .page-description {
+            font-size: 0.95rem;
+            color: var(--hsbc-gray);
+            margin-bottom: 2rem;
+        }
+
+        /* Accordion Styles */
+        .accordion-section {
+            margin-bottom: 2rem;
+        }
+
+        .accordion-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .accordion-title {
+            font-size: 1.3rem;
+            font-weight: 400;
+            color: var(--hsbc-black);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .badge-permission {
+            background-color: #e8f5e9;
+            color: var(--success-green);
+        }
+
+        .badge-prohibition {
+            background-color: #ffebee;
+            color: var(--hsbc-red);
+        }
+
+        .badge-country {
+            background-color: #fff3e0;
+            color: var(--warning-orange);
+        }
+
+        .accordion-item {
+            border: 1px solid var(--hsbc-border);
+            margin-bottom: 0.5rem;
+            background-color: var(--hsbc-white);
+        }
+
+        .accordion-button {
+            width: 100%;
+            padding: 1rem 1.5rem;
+            background: none;
+            border: none;
+            text-align: left;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background-color 0.2s;
+        }
+
+        .accordion-button:hover {
+            background-color: var(--hsbc-light-gray);
+        }
+
+        .accordion-button.active {
+            background-color: var(--hsbc-light-gray);
+            border-bottom: 1px solid var(--hsbc-border);
+        }
+
+        .accordion-button-content {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .rule-id {
+            font-weight: 500;
+            color: var(--hsbc-dark-gray);
+            min-width: 80px;
+        }
+
+        .rule-name {
+            font-weight: 400;
+            color: var(--hsbc-black);
+        }
+
+        .rule-type-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 0.5rem;
+        }
+
+        .type-permission {
+            background-color: var(--success-green);
+        }
+
+        .type-prohibition {
+            background-color: var(--hsbc-red);
+        }
+
+        .type-country {
+            background-color: var(--warning-orange);
+        }
+
+        .accordion-icon {
+            font-size: 1.2rem;
+            transition: transform 0.2s;
+        }
+
+        .accordion-button.active .accordion-icon {
+            transform: rotate(180deg);
+        }
+
+        .accordion-content {
+            display: none;
+            padding: 1.5rem;
+            background-color: var(--hsbc-light-gray);
+        }
+
+        .accordion-content.show {
+            display: block;
+        }
+
+        .rule-detail {
+            margin-bottom: 1rem;
+        }
+
+        .rule-detail:last-child {
+            margin-bottom: 0;
+        }
+
+        .rule-detail-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: var(--hsbc-gray);
+            margin-bottom: 0.25rem;
+            font-weight: 500;
+        }
+
+        .rule-detail-value {
+            font-size: 0.9rem;
+            color: var(--hsbc-dark-gray);
+        }
+
+        .rule-detail-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .tag-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .tag {
+            display: inline-block;
+            padding: 0.2rem 0.6rem;
+            background-color: var(--hsbc-white);
+            border: 1px solid var(--hsbc-border);
+            border-radius: 3px;
+            font-size: 0.8rem;
+            color: var(--hsbc-dark-gray);
+        }
+
+        .tag.required {
+            background-color: #fff3e0;
+            border-color: var(--warning-orange);
+            color: var(--warning-orange);
+        }
+
+        .priority-high {
+            color: var(--hsbc-red);
+            font-weight: 500;
+        }
+
+        .priority-medium {
+            color: var(--warning-orange);
+            font-weight: 500;
+        }
+
+        .priority-low {
+            color: var(--success-green);
+            font-weight: 500;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            color: var(--hsbc-gray);
+        }
+
+        .no-rules {
+            text-align: center;
+            padding: 2rem;
+            color: var(--hsbc-gray);
+            font-style: italic;
+        }
+
+        .expand-all-btn {
+            background-color: var(--hsbc-white);
+            border: 1px solid var(--hsbc-border);
+            padding: 0.5rem 1rem;
+            font-size: 0.85rem;
+            cursor: pointer;
+            margin-bottom: 1rem;
+            transition: all 0.2s;
+        }
+
+        .expand-all-btn:hover {
+            background-color: var(--hsbc-light-gray);
+        }
+
+        .search-box {
+            width: 100%;
+            max-width: 400px;
+            padding: 0.8rem 1rem;
+            border: 1px solid var(--hsbc-border);
+            font-size: 0.9rem;
+            margin-bottom: 2rem;
+        }
+
+        .search-box:focus {
+            outline: none;
+            border-color: var(--hsbc-red);
+        }
+
+        @media (max-width: 768px) {
+            .header-content {
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .nav-links {
+                justify-content: center;
+            }
+
+            .container {
+                padding: 1.5rem;
+            }
+
+            .rule-detail-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <div>
+                <div class="logo-text">HSBC</div>
+                <div class="logo-subtitle">Data Transfer Compliance</div>
+            </div>
+            <nav class="nav-links">
+                <a href="/" class="nav-link">Compliance Checker</a>
+                <a href="/rules" class="nav-link active">Rules Overview</a>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Stats Bar -->
+    <div class="stats-bar">
+        <div class="stats-container">
+            <div class="stat-card">
+                <span class="stat-value" id="stat-total">-</span>
+                <span class="stat-label">Total Rules</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value" id="stat-permissions">-</span>
+                <span class="stat-label">Permissions</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value" id="stat-prohibitions">-</span>
+                <span class="stat-label">Prohibitions</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-value" id="stat-country">-</span>
+                <span class="stat-label">Country-Specific</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <div class="container">
+        <h1 class="page-title">Compliance Rules Overview</h1>
+        <p class="page-description">
+            This page provides a read-only view of all compliance rules configured in the system.
+            Rules are organized by type: Permissions, Prohibitions, and Country-Specific rules.
+            Country-specific rules take precedence over PIA/TIA/HRPR assessments.
+        </p>
+
+        <!-- Search -->
+        <input type="text" id="search-box" class="search-box" placeholder="Search rules by name, country, or description...">
+
+        <!-- Loading -->
+        <div class="loading" id="loading">Loading rules...</div>
+
+        <!-- Rules Container -->
+        <div id="rules-container" style="display: none;">
+
+            <!-- Country-Specific Rules Section -->
+            <div class="accordion-section" id="country-section">
+                <div class="accordion-header">
+                    <h2 class="accordion-title">Country-Specific Rules</h2>
+                    <span class="badge badge-country" id="country-count">0 rules</span>
+                    <button class="expand-all-btn" onclick="toggleAllAccordions('country')">Expand All</button>
+                </div>
+                <p style="color: var(--hsbc-gray); font-size: 0.85rem; margin-bottom: 1rem;">
+                    These rules take precedence over all other rules including PIA/TIA/HRPR assessments.
+                </p>
+                <div id="country-rules-list"></div>
+            </div>
+
+            <!-- Prohibition Rules Section -->
+            <div class="accordion-section" id="prohibition-section">
+                <div class="accordion-header">
+                    <h2 class="accordion-title">Prohibition Rules</h2>
+                    <span class="badge badge-prohibition" id="prohibition-count">0 rules</span>
+                    <button class="expand-all-btn" onclick="toggleAllAccordions('prohibition')">Expand All</button>
+                </div>
+                <p style="color: var(--hsbc-gray); font-size: 0.85rem; margin-bottom: 1rem;">
+                    These rules prohibit specific data transfers. Some may allow exceptions through duties.
+                </p>
+                <div id="prohibition-rules-list"></div>
+            </div>
+
+            <!-- Permission Rules Section -->
+            <div class="accordion-section" id="permission-section">
+                <div class="accordion-header">
+                    <h2 class="accordion-title">Permission Rules</h2>
+                    <span class="badge badge-permission" id="permission-count">0 rules</span>
+                    <button class="expand-all-btn" onclick="toggleAllAccordions('permission')">Expand All</button>
+                </div>
+                <p style="color: var(--hsbc-gray); font-size: 0.85rem; margin-bottom: 1rem;">
+                    These rules allow data transfers when specific conditions are met.
+                </p>
+                <div id="permission-rules-list"></div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '';
+
+        // Load rules on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            loadRulesOverview();
+            setupSearch();
+        });
+
+        // Load rules overview
+        async function loadRulesOverview() {
+            try {
+                const response = await fetch(`${API_BASE}/api/rules-overview`);
+                const data = await response.json();
+
+                if (data.success) {
+                    // Update stats
+                    document.getElementById('stat-total').textContent = data.total_rules;
+                    document.getElementById('stat-permissions').textContent = data.permission_rules.length;
+                    document.getElementById('stat-prohibitions').textContent = data.prohibition_rules.length;
+                    document.getElementById('stat-country').textContent = data.country_specific_rules.length;
+
+                    // Update counts
+                    document.getElementById('country-count').textContent = `${data.country_specific_rules.length} rules`;
+                    document.getElementById('prohibition-count').textContent = `${data.prohibition_rules.filter(r => !r.is_country_specific).length} rules`;
+                    document.getElementById('permission-count').textContent = `${data.permission_rules.length} rules`;
+
+                    // Render rules
+                    renderRules('country-rules-list', data.country_specific_rules, 'country');
+                    renderRules('prohibition-rules-list', data.prohibition_rules.filter(r => !r.is_country_specific), 'prohibition');
+                    renderRules('permission-rules-list', data.permission_rules, 'permission');
+
+                    // Show container, hide loading
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('rules-container').style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Error loading rules:', error);
+                document.getElementById('loading').textContent = 'Error loading rules. Please try again.';
+            }
+        }
+
+        // Render rules to accordion
+        function renderRules(containerId, rules, type) {
+            const container = document.getElementById(containerId);
+
+            if (rules.length === 0) {
+                container.innerHTML = '<div class="no-rules">No rules in this category</div>';
+                return;
+            }
+
+            let html = '';
+            rules.forEach((rule, index) => {
+                const ruleId = `${type}-${index}`;
+                const priorityClass = rule.priority >= 100 ? 'priority-high' :
+                                     rule.priority >= 50 ? 'priority-medium' : 'priority-low';
+
+                html += `
+                    <div class="accordion-item" data-rule='${JSON.stringify(rule)}'>
+                        <button class="accordion-button" onclick="toggleAccordion('${ruleId}')">
+                            <div class="accordion-button-content">
+                                <span class="rule-type-indicator type-${type}"></span>
+                                <span class="rule-id">${rule.rule_id}</span>
+                                <span class="rule-name">${rule.name}</span>
+                            </div>
+                            <span class="accordion-icon">▼</span>
+                        </button>
+                        <div class="accordion-content" id="${ruleId}">
+                            <div class="rule-detail-grid">
+                                <div class="rule-detail">
+                                    <div class="rule-detail-label">Description</div>
+                                    <div class="rule-detail-value">${rule.description || 'No description available'}</div>
+                                </div>
+                                <div class="rule-detail">
+                                    <div class="rule-detail-label">Priority</div>
+                                    <div class="rule-detail-value ${priorityClass}">${rule.priority}${rule.is_country_specific ? ' (Country Override)' : ''}</div>
+                                </div>
+                            </div>
+                            <div class="rule-detail-grid" style="margin-top: 1rem;">
+                                <div class="rule-detail">
+                                    <div class="rule-detail-label">Origin Countries/Groups</div>
+                                    <div class="tag-list">
+                                        ${rule.origin_countries.length > 0 ?
+                                            rule.origin_countries.map(c => `<span class="tag">${c}</span>`).join('') :
+                                            '<span class="tag">Any</span>'
+                                        }
+                                    </div>
+                                </div>
+                                <div class="rule-detail">
+                                    <div class="rule-detail-label">Receiving Countries/Groups</div>
+                                    <div class="tag-list">
+                                        ${rule.receiving_countries.length > 0 ?
+                                            rule.receiving_countries.map(c => `<span class="tag">${c}</span>`).join('') :
+                                            '<span class="tag">Any</span>'
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="rule-detail-grid" style="margin-top: 1rem;">
+                                <div class="rule-detail">
+                                    <div class="rule-detail-label">Requirements</div>
+                                    <div class="tag-list">
+                                        ${rule.requires_pii ? '<span class="tag required">Requires PII</span>' : ''}
+                                        ${rule.requires_health_data ? '<span class="tag required">Requires Health Data</span>' : ''}
+                                        ${!rule.requires_pii && !rule.requires_health_data ? '<span class="tag">No special requirements</span>' : ''}
+                                    </div>
+                                </div>
+                                <div class="rule-detail">
+                                    <div class="rule-detail-label">Duties/Actions Required</div>
+                                    <div class="tag-list">
+                                        ${rule.duties.length > 0 ?
+                                            rule.duties.map(d => `<span class="tag">${d}</span>`).join('') :
+                                            '<span class="tag">None</span>'
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+        }
+
+        // Toggle single accordion
+        function toggleAccordion(id) {
+            const content = document.getElementById(id);
+            const button = content.previousElementSibling;
+
+            if (content.classList.contains('show')) {
+                content.classList.remove('show');
+                button.classList.remove('active');
+            } else {
+                content.classList.add('show');
+                button.classList.add('active');
+            }
+        }
+
+        // Toggle all accordions in a section
+        function toggleAllAccordions(type) {
+            const list = document.getElementById(`${type}-rules-list`);
+            const contents = list.querySelectorAll('.accordion-content');
+            const buttons = list.querySelectorAll('.accordion-button');
+
+            // Check if any is closed
+            const hasClosedItems = Array.from(contents).some(c => !c.classList.contains('show'));
+
+            if (hasClosedItems) {
+                // Expand all
+                contents.forEach(c => c.classList.add('show'));
+                buttons.forEach(b => b.classList.add('active'));
+            } else {
+                // Collapse all
+                contents.forEach(c => c.classList.remove('show'));
+                buttons.forEach(b => b.classList.remove('active'));
+            }
+        }
+
+        // Setup search functionality
+        function setupSearch() {
+            const searchBox = document.getElementById('search-box');
+            searchBox.addEventListener('input', (e) => {
+                const query = e.target.value.toLowerCase();
+                filterRules(query);
+            });
+        }
+
+        // Filter rules based on search query
+        function filterRules(query) {
+            const allItems = document.querySelectorAll('.accordion-item');
+
+            allItems.forEach(item => {
+                const ruleData = JSON.parse(item.dataset.rule);
+                const searchText = [
+                    ruleData.rule_id,
+                    ruleData.name,
+                    ruleData.description,
+                    ...ruleData.origin_countries,
+                    ...ruleData.receiving_countries,
+                    ...ruleData.duties
+                ].join(' ').toLowerCase();
+
+                if (query === '' || searchText.includes(query)) {
+                    item.style.display = 'block';
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+        }
+    </script>
+</body>
+
+</html>
