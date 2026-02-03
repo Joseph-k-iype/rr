@@ -83,7 +83,7 @@ sequenceDiagram
 graph LR
     Country[Country<br/>name: string] -->|BELONGS_TO| CG[CountryGroup<br/>name: string]
 
-    Rule[Rule<br/>rule_id: string<br/>priority: int<br/>description: string] -->|HAS_ACTION| Action[Action<br/>name: string]
+    Rule[Rule<br/>rule_id: string<br/>priority: int<br/>origin_match_type: string<br/>receiving_match_type: string<br/>odrl_type: string<br/>has_pii_required: bool] -->|HAS_ACTION| Action[Action<br/>name: string]
     Rule -->|HAS_PERMISSION| Perm[Permission<br/>name: string]
     Rule -->|HAS_PROHIBITION| Prohib[Prohibition<br/>name: string]
     Rule -->|TRIGGERED_BY_ORIGIN| CG

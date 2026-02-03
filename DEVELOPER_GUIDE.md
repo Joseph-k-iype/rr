@@ -312,6 +312,125 @@ A: Yes! España, Türkiye, 中国, 日本, etc. all supported
 
 ---
 
+---
+
+## Graph Queries Explained
+
+This section details the key Cypher queries used by the API to evaluate rules and search for precedents.
+
+### 1. Rule Evaluation Query (`query_triggered_rules_deontic`)
+
+This query determines which permissions or prohibitions apply to a given transfer.
+
+**Logic:**
+1. **Match Groups**: Identifies all country groups for the Origin and Receiving countries.
+2. **Match Rules**: Finds all potentially relevant rules.
+3. **Filter**: Checks if the rule applies based on:
+   - **Origin Match**: Does the rule's origin group match the transfer's origin?
+   - **Receiving Match**: Does the rule's receiving group match the transfer's destination?
+   - **Conditions**: Check `pii` and `health_data` requirements.
+4. **Collect**: Retrieves associated Actions, Permissions, Prohibitions, and Duties.
+
+```cypher
+MATCH (origin:Country {name: $origin_country})-[:BELONGS_TO]->(origin_group:CountryGroup)
+WITH collect(DISTINCT origin_group.name) as origin_groups
+
+MATCH (receiving:Country {name: $receiving_country})-[:BELONGS_TO]->(receiving_group:CountryGroup)
+WITH origin_groups, collect(DISTINCT receiving_group.name) as receiving_groups
+
+MATCH (r:Rule)
+OPTIONAL MATCH (r)-[:TRIGGERED_BY_ORIGIN]->(r_origin:CountryGroup)
+WITH r, origin_groups, receiving_groups, collect(DISTINCT r_origin.name) as rule_origin_groups
+
+OPTIONAL MATCH (r)-[:TRIGGERED_BY_RECEIVING]->(r_receiving:CountryGroup)
+WITH r, origin_groups, receiving_groups, rule_origin_groups,
+     collect(DISTINCT r_receiving.name) as rule_receiving_groups
+
+// Dynamic matching logic using CASE statement
+WITH r, origin_groups, receiving_groups, rule_origin_groups, rule_receiving_groups,
+     CASE
+         WHEN r.origin_match_type = 'ALL' THEN true
+         WHEN r.origin_match_type = 'ANY' THEN any(g IN origin_groups WHERE g IN rule_origin_groups)
+         ELSE false
+     END as origin_matches,
+     CASE
+         WHEN r.receiving_match_type = 'ALL' THEN true
+         WHEN r.receiving_match_type = 'ANY' THEN any(g IN receiving_groups WHERE g IN rule_receiving_groups)
+         WHEN r.receiving_match_type = 'NOT_IN' THEN NOT any(g IN receiving_groups WHERE g IN rule_receiving_groups)
+         ELSE false
+     END as receiving_matches
+
+WHERE origin_matches AND receiving_matches
+      AND (NOT r.has_pii_required OR $has_pii = true)
+      AND (NOT r.health_data_required OR $has_health_data = true)
+
+// Retrieve graph Deontic structure
+OPTIONAL MATCH (r)-[:HAS_ACTION]->(action:Action)
+OPTIONAL MATCH (r)-[:HAS_PERMISSION]->(perm:Permission)
+OPTIONAL MATCH (perm)-[:CAN_HAVE_DUTY]->(perm_duty:Duty)
+OPTIONAL MATCH (r)-[:HAS_PROHIBITION]->(prohib:Prohibition)
+OPTIONAL MATCH (prohib)-[:CAN_HAVE_DUTY]->(prohib_duty:Duty)
+
+RETURN r, action, perm, collect(perm_duty), prohib, collect(prohib_duty)
+ORDER BY r.priority
+```
+
+### 2. Strict Precedent Search (`search_data_graph_strict`)
+
+Matches the current transfer request against historical cases to find exact matches.
+
+**Logic:**
+- **Exact Match**: Origin, Receiving, Process Levels (L1-L3), and Purposes must ALL match.
+- **Valid Status**: Only searches `Completed`, `Complete`, `Active`, or `Published` cases.
+- **PII Check**: If PII is present, ensures the historical case also involved PII.
+
+```cypher
+MATCH (c:Case)-[:ORIGINATES_FROM]->(origin:Country)
+MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction)
+WHERE origin.name = $origin 
+  AND receiving.name = $receiving
+  AND c.case_status IN ['Completed', 'Complete', 'Active', 'Published']
+
+// Purpose Filtering
+WITH c
+MATCH (c)-[:HAS_PURPOSE]->(purpose:Purpose)
+WITH c, collect(DISTINCT purpose.name) as case_purposes
+WHERE ALL(p IN $purposes WHERE p IN case_purposes)
+
+// Process Filtering (Dynamic)
+MATCH (c)-[:HAS_PROCESS_L1]->(p1:ProcessL1 {name: $process_l1})
+// ... (matches L2 and L3 similarly)
+
+RETURN c
+```
+
+### 3. UI Case Search (`search_data_graph`)
+
+Used by the "Search Cases" page. Supports partial string matching and optional filters.
+
+**Logic:**
+- **Partial Match**: Uses `CONTAINS` for country names.
+- **Optional Filters**: Only applies filters (Purpose, Process) if they are selected in the UI.
+
+```cypher
+MATCH (c:Case)-[:ORIGINATES_FROM]->(origin:Country)
+MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction)
+WHERE toLower(origin.name) CONTAINS toLower($origin)
+  AND toLower(receiving.name) CONTAINS toLower($receiving)
+  AND c.case_status IN ['Completed', 'Complete', 'Active', 'Published']
+RETURN c
+```
+
+### 4. Metadata Queries
+
+These queries populate dropdowns and filter lists.
+
+- **Countries**: `MATCH (c:Country) RETURN DISTINCT c.name` (and `Jurisdiction` for receiving)
+- **Purposes**: `MATCH (p:Purpose) RETURN DISTINCT p.name`
+- **Processes**: `MATCH (p:ProcessL1) RETURN DISTINCT p.name`
+
+---
+
 ## Support
 
 - **Architecture**: See README.md
