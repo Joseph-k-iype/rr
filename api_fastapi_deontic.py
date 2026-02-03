@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 HEALTH_CONFIG_PATH = Path(__file__).parent / "health_data_config.json"
 HEALTH_CONFIG = {}
 if HEALTH_CONFIG_PATH.exists():
-    with open(HEALTH_CONFIG_PATH, 'r') as f:
+    with open(HEALTH_CONFIG_PATH, 'r', encoding='utf-8') as f:
         HEALTH_CONFIG = json.load(f)
         logger.info(f"✓ Loaded health data config: {len(HEALTH_CONFIG['detection_rules']['keywords'])} keywords, "
                    f"{len(HEALTH_CONFIG['detection_rules']['patterns'])} patterns")
