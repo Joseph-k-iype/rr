@@ -357,12 +357,17 @@ def query_triggered_rules_deontic(origin: str, receiving: str, has_pii: bool = N
     """
 
     try:
-        result = rules_graph.query(query, params={
-            'origin_country': origin,
-            'receiving_country': receiving,
-            'has_pii': has_pii if has_pii is not None else False,
-            'has_health_data': has_health_data if has_health_data is not None else False
-        })
+        result = query_with_timeout(
+            rules_graph,
+            query,
+            params={
+                'origin_country': origin,
+                'receiving_country': receiving,
+                'has_pii': has_pii if has_pii is not None else False,
+                'has_health_data': has_health_data if has_health_data is not None else False
+            },
+            context="Query triggered rules"
+        )
 
         triggered_rules = []
         consolidated_duties_map = {}
@@ -837,6 +842,7 @@ def search_data_graph_strict(origin: str, receiving: str, purposes: List[str] = 
 
     where_clause = " AND ".join(conditions) if conditions else "true"
 
+    # Optimized query: Use indexed properties in initial MATCH
     query = f"""
     MATCH (c:Case)-[:ORIGINATES_FROM]->(origin:Country)
     MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction)
@@ -853,7 +859,7 @@ def search_data_graph_strict(origin: str, receiving: str, purposes: List[str] = 
         """
         params['purposes'] = purposes
 
-    # STRICT process matching: if provided, must match exactly
+    # STRICT process matching: if provided, must match exactly (uses indexed ProcessL1/L2/L3.name)
     if process_l1:
         query += """
     WITH c, origin, receiving
@@ -875,8 +881,9 @@ def search_data_graph_strict(origin: str, receiving: str, purposes: List[str] = 
         """
         params['process_l3'] = process_l3
 
+    # Cap results early to prevent memory issues on large graphs
     query += """
-    WITH c, origin, receiving
+    WITH c, origin, receiving LIMIT 1000
     MATCH (c)-[:TRANSFERS_TO]->(recv:Jurisdiction)
     WITH c, origin, receiving, collect(DISTINCT recv.name) as receiving_countries
 
@@ -927,7 +934,12 @@ def search_data_graph_strict(origin: str, receiving: str, purposes: List[str] = 
     """
 
     try:
-        result = data_graph.query(query, params=params)
+        result = query_with_timeout(
+            data_graph,
+            query,
+            params=params,
+            context="STRICT precedent search"
+        )
 
         cases = []
         if result.result_set:
@@ -998,12 +1010,14 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
 
     where_clause = " AND ".join(conditions) if conditions else "true"
 
+    # Optimized query: Use indexed properties and early filtering
     query = f"""
     MATCH (c:Case)-[:ORIGINATES_FROM]->(origin:Country)
     MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction)
     WHERE {where_clause}
     """
 
+    # Filter by purpose using indexed Purpose.name
     if purposes and len(purposes) > 0:
         query += """
     WITH c, origin
@@ -1012,6 +1026,7 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
         """
         params['purposes'] = purposes
 
+    # Filter by process levels using indexed ProcessL1/L2/L3.name
     if process_l1:
         query += """
     WITH c, origin
@@ -1033,8 +1048,9 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
         """
         params['process_l3'] = process_l3
 
+    # Cap results early before expensive COLLECT operations
     query += """
-    WITH c, origin
+    WITH c, origin LIMIT 1000
     MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction)
     WITH c, origin, collect(DISTINCT receiving.name) as receiving_countries
 
@@ -1082,7 +1098,12 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
     """
 
     try:
-        result = data_graph.query(query, params=params)
+        result = query_with_timeout(
+            data_graph,
+            query,
+            params=params,
+            context="UI case search"
+        )
 
         cases = []
         if result.result_set:
@@ -1151,7 +1172,7 @@ async def get_purposes():
     """Get all available legal processing purposes from the graph"""
     try:
         query = "MATCH (p:Purpose) RETURN DISTINCT p.name as name ORDER BY name"
-        result = data_graph.query(query)
+        result = query_with_timeout(data_graph, query, context="Get purposes")
         purposes = [row[0] for row in result.result_set] if result.result_set else []
         return {'success': True, 'purposes': purposes}
     except Exception as e:
@@ -1164,15 +1185,15 @@ async def get_processes():
     """Get all available process levels (L1, L2, L3) from the graph"""
     try:
         query_l1 = "MATCH (p:ProcessL1) RETURN DISTINCT p.name as name ORDER BY name"
-        result_l1 = data_graph.query(query_l1)
+        result_l1 = query_with_timeout(data_graph, query_l1, context="Get ProcessL1")
         process_l1 = [row[0] for row in result_l1.result_set] if result_l1.result_set else []
 
         query_l2 = "MATCH (p:ProcessL2) RETURN DISTINCT p.name as name ORDER BY name"
-        result_l2 = data_graph.query(query_l2)
+        result_l2 = query_with_timeout(data_graph, query_l2, context="Get ProcessL2")
         process_l2 = [row[0] for row in result_l2.result_set] if result_l2.result_set else []
 
         query_l3 = "MATCH (p:ProcessL3) RETURN DISTINCT p.name as name ORDER BY name"
-        result_l3 = data_graph.query(query_l3)
+        result_l3 = query_with_timeout(data_graph, query_l3, context="Get ProcessL3")
         process_l3 = [row[0] for row in result_l3.result_set] if result_l3.result_set else []
 
         return {
@@ -1191,10 +1212,10 @@ async def get_countries():
     """Get all unique countries from the data graph"""
     try:
         query_origin = "MATCH (c:Country) RETURN DISTINCT c.name as name ORDER BY name"
-        result_origin = data_graph.query(query_origin)
+        result_origin = query_with_timeout(data_graph, query_origin, context="Get origin countries")
 
         query_receiving = "MATCH (j:Jurisdiction) RETURN DISTINCT j.name as name ORDER BY name"
-        result_receiving = data_graph.query(query_receiving)
+        result_receiving = query_with_timeout(data_graph, query_receiving, context="Get receiving countries")
 
         origin_countries = [row[0] for row in result_origin.result_set] if result_origin.result_set else []
         receiving_countries = [row[0] for row in result_receiving.result_set] if result_receiving.result_set else []
@@ -1425,15 +1446,15 @@ async def get_stats():
     """Get dashboard statistics"""
     try:
         query_cases = "MATCH (c:Case) RETURN count(c) as count"
-        result_cases = data_graph.query(query_cases)
+        result_cases = query_with_timeout(data_graph, query_cases, context="Count cases")
         total_cases = result_cases.result_set[0][0] if result_cases.result_set else 0
 
         query_countries = "MATCH (c:Country) RETURN count(c) as count"
-        result_countries = data_graph.query(query_countries)
+        result_countries = query_with_timeout(data_graph, query_countries, context="Count countries")
         total_countries = result_countries.result_set[0][0] if result_countries.result_set else 0
 
         query_jurisdictions = "MATCH (j:Jurisdiction) RETURN count(j) as count"
-        result_jurisdictions = data_graph.query(query_jurisdictions)
+        result_jurisdictions = query_with_timeout(data_graph, query_jurisdictions, context="Count jurisdictions")
         total_jurisdictions = result_jurisdictions.result_set[0][0] if result_jurisdictions.result_set else 0
 
         query_pii = """
@@ -1441,7 +1462,7 @@ async def get_stats():
         WHERE pdc.name <> 'N/A' AND pdc.name <> 'NA' AND pdc.name <> 'null'
         RETURN count(DISTINCT c) as count
         """
-        result_pii = data_graph.query(query_pii)
+        result_pii = query_with_timeout(data_graph, query_pii, context="Count cases with PII")
         cases_with_pii = result_pii.result_set[0][0] if result_pii.result_set else 0
 
         return {
@@ -1468,10 +1489,10 @@ async def get_all_dropdown_values():
     try:
         # Get countries
         query_origin = "MATCH (c:Country) RETURN DISTINCT c.name as name ORDER BY name"
-        result_origin = data_graph.query(query_origin)
+        result_origin = query_with_timeout(data_graph, query_origin, context="Get all origin countries")
 
         query_receiving = "MATCH (j:Jurisdiction) RETURN DISTINCT j.name as name ORDER BY name"
-        result_receiving = data_graph.query(query_receiving)
+        result_receiving = query_with_timeout(data_graph, query_receiving, context="Get all receiving countries")
 
         origin_countries = [row[0] for row in result_origin.result_set] if result_origin.result_set else []
         receiving_countries = [row[0] for row in result_receiving.result_set] if result_receiving.result_set else []
@@ -1479,25 +1500,25 @@ async def get_all_dropdown_values():
 
         # Get purposes
         query_purposes = "MATCH (p:Purpose) RETURN DISTINCT p.name as name ORDER BY name"
-        result_purposes = data_graph.query(query_purposes)
+        result_purposes = query_with_timeout(data_graph, query_purposes, context="Get all purposes")
         purposes = [row[0] for row in result_purposes.result_set] if result_purposes.result_set else []
 
         # Get processes
         query_l1 = "MATCH (p:ProcessL1) RETURN DISTINCT p.name as name ORDER BY name"
-        result_l1 = data_graph.query(query_l1)
+        result_l1 = query_with_timeout(data_graph, query_l1, context="Get all ProcessL1")
         process_l1 = [row[0] for row in result_l1.result_set] if result_l1.result_set else []
 
         query_l2 = "MATCH (p:ProcessL2) RETURN DISTINCT p.name as name ORDER BY name"
-        result_l2 = data_graph.query(query_l2)
+        result_l2 = query_with_timeout(data_graph, query_l2, context="Get all ProcessL2")
         process_l2 = [row[0] for row in result_l2.result_set] if result_l2.result_set else []
 
         query_l3 = "MATCH (p:ProcessL3) RETURN DISTINCT p.name as name ORDER BY name"
-        result_l3 = data_graph.query(query_l3)
+        result_l3 = query_with_timeout(data_graph, query_l3, context="Get all ProcessL3")
         process_l3 = [row[0] for row in result_l3.result_set] if result_l3.result_set else []
 
         # Get personal data categories
         query_pdc = "MATCH (pdc:PersonalDataCategory) RETURN DISTINCT pdc.name as name ORDER BY name"
-        result_pdc = data_graph.query(query_pdc)
+        result_pdc = query_with_timeout(data_graph, query_pdc, context="Get all PersonalDataCategories")
         personal_data_categories = [row[0] for row in result_pdc.result_set] if result_pdc.result_set else []
 
         return {
@@ -1531,7 +1552,7 @@ async def test_rules_graph():
         MATCH (d:Duty) WITH groups, countries, rules, actions, permissions, prohibitions, count(d) as duties
         RETURN groups, countries, rules, actions, permissions, prohibitions, duties
         """
-        result = rules_graph.query(query)
+        result = query_with_timeout(rules_graph, query, context="Test rules graph")
 
         if result.result_set:
             groups, countries, rules, actions, permissions, prohibitions, duties = result.result_set[0]
