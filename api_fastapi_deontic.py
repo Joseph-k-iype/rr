@@ -19,7 +19,56 @@ import json
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# Query Optimization for Large Graphs (31k+ nodes, 1M+ edges)
+# ============================================================================
+
+# Query timeout in milliseconds
+QUERY_TIMEOUT_MS = 30000  # 30 seconds
+
+def query_with_timeout(graph, query_str, params=None, timeout_ms=QUERY_TIMEOUT_MS, context=""):
+    """
+    Execute query with timeout to prevent hanging on large graphs.
+
+    For graphs with 31k+ nodes and 1M+ edges, queries can be slow.
+    This ensures queries don't hang indefinitely.
+
+    Args:
+        graph: FalkorDB graph instance
+        query_str: Cypher query string
+        params: Query parameters dict
+        timeout_ms: Timeout in milliseconds
+        context: Description for logging
+
+    Returns:
+        Query result
+
+    Raises:
+        HTTPException: If query times out or fails
+    """
+    try:
+        if context:
+            logger.debug(f"Query: {context} (timeout: {timeout_ms}ms)")
+
+        result = graph.query(query_str, params=params or {}, timeout=timeout_ms)
+        return result
+
+    except Exception as e:
+        error_msg = str(e).lower()
+        if 'timeout' in error_msg or 'timed out' in error_msg:
+            logger.error(f"⏱️  TIMEOUT after {timeout_ms}ms - {context}")
+            logger.error("Consider: 1) Running optimize_graph_indexes.py, 2) Narrowing search criteria")
+            raise HTTPException(
+                status_code=504,
+                detail=f"Query timeout: exceeded {timeout_ms/1000}s. Graph may be very large - try narrowing search criteria or contact admin to optimize indexes."
+            )
+        else:
+            logger.error(f"Query error ({context}): {e}")
+            raise HTTPException(status_code=500, detail=f"Database query error: {str(e)}")
+
+# ============================================================================
 # Load health data configuration
+# ============================================================================
 HEALTH_CONFIG_PATH = Path(__file__).parent / "health_data_config.json"
 HEALTH_CONFIG = {}
 if HEALTH_CONFIG_PATH.exists():
