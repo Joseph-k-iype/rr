@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Data Transfer Compliance Dashboard - FastAPI Backend with Deontic Logic
 Uses formal policy framework: Actions, Permissions, Prohibitions, Duties
@@ -547,10 +549,344 @@ def contains_health_data(personal_data: List[str], personal_data_categories: Lis
     return False
 
 
+def evaluate_assessment_compliance(required_assessments: List[str],
+                                   pia_status: str = None,
+                                   tia_status: str = None,
+                                   hrpr_status: str = None) -> Dict:
+    """
+    Evaluate if assessment requirements are met.
+    STRICT: Only "Completed" status = compliant. Anything else = NON-COMPLIANT.
+
+    Args:
+        required_assessments: List of required assessments like ["PIA", "TIA", "HRPR"]
+        pia_status: Status of PIA assessment
+        tia_status: Status of TIA assessment
+        hrpr_status: Status of HRPR assessment
+
+    Returns:
+        {
+            'compliant': bool,
+            'message': str,
+            'required': List[str],
+            'completed': List[str],
+            'missing': List[str]
+        }
+    """
+    if not required_assessments:
+        return {
+            'compliant': True,
+            'message': '✅ No assessments required',
+            'required': [],
+            'completed': [],
+            'missing': []
+        }
+
+    status_map = {
+        'PIA': pia_status,
+        'TIA': tia_status,
+        'HRPR': hrpr_status
+    }
+
+    completed = []
+    missing = []
+
+    for assessment in required_assessments:
+        status = status_map.get(assessment)
+        # STRICT: Only "Completed" is valid, everything else is non-compliant
+        if status and status.lower() == 'completed':
+            completed.append(assessment)
+        else:
+            missing.append(f"{assessment} (status: {status or 'Not Provided'})")
+
+    is_compliant = len(missing) == 0
+
+    if is_compliant:
+        message = f"✅ COMPLIANT: All {len(required_assessments)} required assessments are Completed"
+    else:
+        message = f"❌ NON-COMPLIANT: {len(missing)} assessment(s) not completed: {', '.join(missing)}"
+
+    return {
+        'compliant': is_compliant,
+        'message': message,
+        'required': required_assessments,
+        'completed': completed,
+        'missing': missing
+    }
+
+
+def validate_precedents(origin: str, receiving: str,
+                       purposes: List[str] = None,
+                       process_l1: str = None,
+                       process_l2: str = None,
+                       process_l3: str = None,
+                       has_pii: bool = None,
+                       required_assessments: List[str] = None) -> Dict:
+    """
+    Validate transfer against historical precedents with STRICT filter matching.
+
+    Business Rules:
+    1. ALL provided filters must match → find matching cases
+    2. NO matching cases → PROHIBITED (raise governance ticket)
+    3. At least ONE matching case with ALL assessments completed → ALLOWED
+    4. All matching cases have incomplete assessments → PROHIBITED
+
+    Returns:
+        {
+            'status': 'validated' | 'no_precedent' | 'non_compliant',
+            'message': str,
+            'matching_cases': int,
+            'compliant_cases': int,
+            'cases': List[Dict]
+        }
+    """
+    # Search with STRICT filter matching
+    matching_cases = search_data_graph_strict(
+        origin=origin,
+        receiving=receiving,
+        purposes=purposes,
+        process_l1=process_l1,
+        process_l2=process_l2,
+        process_l3=process_l3,
+        has_pii=has_pii
+    )
+
+    total_cases = len(matching_cases)
+
+    # Rule 1: No precedent found → PROHIBITED
+    if total_cases == 0:
+        # Check if any filters were provided
+        filters_provided = []
+        if purposes: filters_provided.append(f"purposes={purposes}")
+        if process_l1: filters_provided.append(f"process_l1={process_l1}")
+        if process_l2: filters_provided.append(f"process_l2={process_l2}")
+        if process_l3: filters_provided.append(f"process_l3={process_l3}")
+        if has_pii is not None: filters_provided.append(f"has_pii={has_pii}")
+
+        if filters_provided:
+            return {
+                'status': 'no_precedent',
+                'message': f'❌ PROHIBITED: No historical precedent found with matching filters ({", ".join(filters_provided)}). Please raise a governance ticket.',
+                'matching_cases': 0,
+                'compliant_cases': 0,
+                'cases': []
+            }
+        else:
+            # No filters provided, just country match
+            return {
+                'status': 'validated',
+                'message': f'✅ Country pair validated: {origin} → {receiving}',
+                'matching_cases': 0,
+                'compliant_cases': 0,
+                'cases': []
+            }
+
+    # Rule 2: Check if at least ONE case has all required assessments completed
+    if not required_assessments:
+        required_assessments = []
+
+    compliant_cases = []
+    for case in matching_cases:
+        compliance = evaluate_assessment_compliance(
+            required_assessments,
+            pia_status=case.get('pia_status'),
+            tia_status=case.get('tia_status'),
+            hrpr_status=case.get('hrpr_status')
+        )
+
+        if compliance['compliant']:
+            compliant_cases.append(case)
+
+    compliant_count = len(compliant_cases)
+
+    # Rule 3: At least ONE compliant case → ALLOWED
+    if compliant_count > 0:
+        return {
+            'status': 'validated',
+            'message': f'✅ ALLOWED: Found {total_cases} matching case(s), {compliant_count} have all required assessments completed.',
+            'matching_cases': total_cases,
+            'compliant_cases': compliant_count,
+            'cases': matching_cases[:5]  # Return first 5 for reference
+        }
+
+    # Rule 4: Cases found but NONE are compliant → PROHIBITED
+    return {
+        'status': 'non_compliant',
+        'message': f'❌ PROHIBITED: Found {total_cases} matching case(s) but NONE have all required assessments completed.',
+        'matching_cases': total_cases,
+        'compliant_cases': 0,
+        'cases': matching_cases[:5]
+    }
+
+
+def search_data_graph_strict(origin: str, receiving: str, purposes: List[str] = None,
+                             process_l1: str = None, process_l2: str = None, process_l3: str = None,
+                             has_pii: bool = None) -> List[Dict]:
+    """
+    STRICT precedent search: ALL provided filters must match exactly.
+    If a filter is provided but doesn't match → case is excluded.
+    Used for precedent-based compliance validation.
+    """
+    logger.info(f"STRICT precedent search: {origin} → {receiving}, purposes={purposes}, processes={process_l1}/{process_l2}/{process_l3}, pii={has_pii}")
+
+    conditions = []
+    params = {}
+
+    # Exact country match (required)
+    if origin:
+        conditions.append("origin.name = $origin")
+        params['origin'] = origin
+
+    if receiving:
+        conditions.append("receiving.name = $receiving")
+        params['receiving'] = receiving
+
+    where_clause = " AND ".join(conditions) if conditions else "true"
+
+    query = f"""
+    MATCH (c:Case)-[:ORIGINATES_FROM]->(origin:Country)
+    MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction)
+    WHERE {where_clause}
+    """
+
+    # STRICT purpose matching: if purposes provided, ALL must match
+    if purposes and len(purposes) > 0:
+        query += """
+    WITH c, origin, receiving
+    MATCH (c)-[:HAS_PURPOSE]->(purpose:Purpose)
+    WITH c, origin, receiving, collect(DISTINCT purpose.name) as case_purposes
+    WHERE ALL(p IN $purposes WHERE p IN case_purposes)
+        """
+        params['purposes'] = purposes
+
+    # STRICT process matching: if provided, must match exactly
+    if process_l1:
+        query += """
+    WITH c, origin, receiving
+    MATCH (c)-[:HAS_PROCESS_L1]->(p1:ProcessL1 {name: $process_l1})
+        """
+        params['process_l1'] = process_l1
+
+    if process_l2:
+        query += """
+    WITH c, origin, receiving
+    MATCH (c)-[:HAS_PROCESS_L2]->(p2:ProcessL2 {name: $process_l2})
+        """
+        params['process_l2'] = process_l2
+
+    if process_l3:
+        query += """
+    WITH c, origin, receiving
+    MATCH (c)-[:HAS_PROCESS_L3]->(p3:ProcessL3 {name: $process_l3})
+        """
+        params['process_l3'] = process_l3
+
+    query += """
+    WITH c, origin, receiving
+    MATCH (c)-[:TRANSFERS_TO]->(recv:Jurisdiction)
+    WITH c, origin, receiving, collect(DISTINCT recv.name) as receiving_countries
+
+    OPTIONAL MATCH (c)-[:HAS_PURPOSE]->(purpose:Purpose)
+    WITH c, origin, receiving, receiving_countries, collect(DISTINCT purpose.name) as purposes
+
+    OPTIONAL MATCH (c)-[:HAS_PROCESS_L1]->(p1:ProcessL1)
+    OPTIONAL MATCH (c)-[:HAS_PROCESS_L2]->(p2:ProcessL2)
+    OPTIONAL MATCH (c)-[:HAS_PROCESS_L3]->(p3:ProcessL3)
+    WITH c, origin, receiving, receiving_countries, purposes, p1.name as process_l1, p2.name as process_l2, p3.name as process_l3
+
+    OPTIONAL MATCH (c)-[:HAS_PERSONAL_DATA]->(pd:PersonalData)
+    WITH c, origin, receiving, receiving_countries, purposes, process_l1, process_l2, process_l3, collect(DISTINCT pd.name) as personal_data_items
+
+    OPTIONAL MATCH (c)-[:HAS_PERSONAL_DATA_CATEGORY]->(pdc:PersonalDataCategory)
+    WITH c, origin, receiving, receiving_countries, purposes, process_l1, process_l2, process_l3, personal_data_items, collect(DISTINCT pdc.name) as pdc_items
+
+    OPTIONAL MATCH (c)-[:HAS_CATEGORY]->(cat:Category)
+    WITH c, origin, receiving, receiving_countries, purposes, process_l1, process_l2, process_l3, personal_data_items, pdc_items, collect(DISTINCT cat.name) as categories
+    """
+
+    # STRICT PII matching if specified
+    if has_pii is True:
+        query += "WHERE size(personal_data_items) > 0\n"
+    elif has_pii is False:
+        query += "WHERE size(personal_data_items) = 0\n"
+
+    query += """
+    RETURN COALESCE(c.case_id, c.case_ref_id, 'UNKNOWN') as case_id,
+           c.eim_id as eim_id,
+           c.business_app_id as business_app_id,
+           c.app_id as app_id,
+           origin.name as origin_country,
+           receiving_countries,
+           purposes,
+           process_l1,
+           process_l2,
+           process_l3,
+           COALESCE(c.pia_module, c.pia_status, 'N/A') as pia_status,
+           COALESCE(c.tia_module, c.tia_status, 'N/A') as tia_status,
+           COALESCE(c.hrpr_module, c.hrpr_status, 'N/A') as hrpr_status,
+           personal_data_items,
+           pdc_items,
+           categories,
+           c.case_status as case_status
+    ORDER BY case_id
+    LIMIT 1000
+    """
+
+    try:
+        result = data_graph.query(query, params=params)
+
+        cases = []
+        if result.result_set:
+            for row in result.result_set:
+                purposes_list = row[6] if len(row) > 6 and row[6] else []
+                process_l1 = row[7] if len(row) > 7 else None
+                process_l2 = row[8] if len(row) > 8 else None
+                process_l3 = row[9] if len(row) > 9 else None
+                personal_data_items = row[13] if len(row) > 13 and row[13] else []
+                pdc_items = row[14] if len(row) > 14 and row[14] else []
+                categories = row[15] if len(row) > 15 and row[15] else []
+
+                purposes_list = [p for p in purposes_list if p] if purposes_list else []
+                personal_data_items = [pd for pd in personal_data_items if pd] if personal_data_items else []
+                pdc_items = [pdc for pdc in pdc_items if pdc] if pdc_items else []
+                categories = [cat for cat in categories if cat] if categories else []
+
+                has_health = contains_health_data(personal_data_items, pdc_items)
+
+                case_data = {
+                    'case_id': row[0],
+                    'eim_id': row[1],
+                    'business_app_id': row[2],
+                    'app_id': row[3] if len(row) > 3 else None,
+                    'origin_country': row[4],
+                    'receiving_countries': row[5] if isinstance(row[5], list) else [row[5]] if row[5] else [],
+                    'purposes': purposes_list,
+                    'process_l1': process_l1,
+                    'process_l2': process_l2,
+                    'process_l3': process_l3,
+                    'pia_status': row[10],
+                    'tia_status': row[11],
+                    'hrpr_status': row[12],
+                    'personal_data': personal_data_items,
+                    'personal_data_categories': pdc_items,
+                    'categories': categories,
+                    'case_status': row[16] if len(row) > 16 else 'Unknown',
+                    'has_pii': len(personal_data_items) > 0,
+                    'has_health_data': has_health
+                }
+                cases.append(case_data)
+
+        logger.info(f"STRICT search found {len(cases)} exact-match cases")
+        return cases
+
+    except Exception as e:
+        logger.error(f"Error in strict precedent search: {e}", exc_info=True)
+        return []
+
+
 def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
                       process_l1: str = None, process_l2: str = None, process_l3: str = None,
                       has_pii: str = None) -> List[Dict]:
-    """Query DataTransferGraph for matching cases"""
+    """Query DataTransferGraph for matching cases (partial match for UI search)"""
     logger.info(f"Searching DataTransferGraph: {origin} → {receiving}, purposes={purposes}, processes={process_l1}/{process_l2}/{process_l3}")
 
     conditions = []
@@ -630,7 +966,7 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
         query += "WHERE size(personal_data_items) = 0\n"
 
     query += """
-    RETURN c.case_id as case_id,
+    RETURN COALESCE(c.case_id, c.case_ref_id, 'UNKNOWN') as case_id,
            c.eim_id as eim_id,
            c.business_app_id as business_app_id,
            origin.name as origin_country,
@@ -639,13 +975,13 @@ def search_data_graph(origin: str, receiving: str, purposes: List[str] = None,
            process_l1,
            process_l2,
            process_l3,
-           c.pia_module as pia_module,
-           c.tia_module as tia_module,
-           c.hrpr_module as hrpr_module,
+           COALESCE(c.pia_module, c.pia_status, 'N/A') as pia_module,
+           COALESCE(c.tia_module, c.tia_status, 'N/A') as tia_module,
+           COALESCE(c.hrpr_module, c.hrpr_status, 'N/A') as hrpr_module,
            personal_data_items,
            pdc_items,
            categories
-    ORDER BY c.case_id
+    ORDER BY case_id
     LIMIT 1000
     """
 
@@ -780,32 +1116,19 @@ async def get_countries():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/evaluate-rules", response_model=RulesEvaluationResponse, tags=["Compliance"])
+@app.post("/api/evaluate-rules", tags=["Compliance"])
 async def evaluate_rules(request: RulesEvaluationRequest):
     """
-    Evaluate which compliance rules are triggered using deontic logic structure
+    Evaluate compliance rules with precedent validation and assessment compliance.
 
-    All parameters are optional for flexible, dynamic evaluation:
-    - origin_country, receiving_country: Required for most evaluations
-    - pii: Whether transfer contains PII
-    - purpose_of_processing: Purpose(s) of data processing
-    - process_l1, process_l2, process_l3: Process hierarchy levels
-    - other_metadata: Additional data attributes (system auto-detects health data)
+    Decision Logic (Priority Order):
+    1. Rule-Level Prohibitions → PROHIBITED (absolute)
+    2. No Precedent Found → PROHIBITED (raise governance ticket)
+    3. Assessment Non-Compliance → PROHIBITED
+    4. At Least One Compliant Precedent → ALLOWED
 
-    Returns rules with their actions, permissions/prohibitions, and associated duties.
-    Prohibitions indicate blocked transfers.
-
-    Example:
-        {
-            "origin_country": "United States",
-            "receiving_country": "China",
-            "pii": true,
-            "other_metadata": {
-                "patient_records": "medical history",
-                "diagnosis_codes": "ICD-10 codes"
-            }
-        }
-        -> System automatically detects health data and triggers RULE_11
+    Returns complete evaluation including transfer status, triggered rules,
+    precedent validation, and assessment compliance.
     """
     try:
         # Validate required fields
@@ -833,21 +1156,110 @@ async def evaluate_rules(request: RulesEvaluationRequest):
         # Use pii flag from request, or None if not provided
         has_pii = request.pii
 
-        logger.info(f"Evaluating rules: {request.origin_country} → {request.receiving_country}, "
+        logger.info(f"Evaluating: {request.origin_country} → {request.receiving_country}, "
                    f"PII={has_pii}, Health={has_health_data_detected}, "
-                   f"Purpose={request.purpose_of_processing}, "
-                   f"Process={request.process_l1}/{request.process_l2}/{request.process_l3}")
+                   f"Purposes={request.purpose_of_processing}, "
+                   f"Processes={request.process_l1}/{request.process_l2}/{request.process_l3}")
 
-        result = query_triggered_rules_deontic(
+        # Step 1: Query triggered rules
+        rules_result = query_triggered_rules_deontic(
             request.origin_country.strip(),
             request.receiving_country.strip(),
             has_pii,
             has_health_data_detected
         )
 
+        # Step 2: Check for rule-level prohibitions (highest priority)
+        if rules_result['has_prohibitions']:
+            prohibited_rules = [r for r in rules_result['triggered_rules'] if r.get('is_blocked')]
+            prohibition_reasons = [r['prohibition']['name'] for r in prohibited_rules if r.get('prohibition')]
+
+            return {
+                'success': True,
+                'transfer_status': 'PROHIBITED',
+                'transfer_blocked': True,
+                'blocked_reason': f"Rule-level prohibition: {', '.join(prohibition_reasons)}",
+                'triggered_rules': rules_result['triggered_rules'],
+                'total_rules_triggered': rules_result['total_rules_triggered'],
+                'has_prohibitions': True,
+                'consolidated_duties': rules_result['consolidated_duties'],
+                'precedent_validation': {
+                    'status': 'skipped',
+                    'message': 'Skipped due to rule-level prohibition',
+                    'matching_cases': 0,
+                    'compliant_cases': 0
+                },
+                'assessment_compliance': {
+                    'compliant': False,
+                    'message': 'Blocked by prohibition rule'
+                }
+            }
+
+        # Step 3: Extract required assessments from permission rules
+        required_assessments = set()
+        for rule in rules_result['triggered_rules']:
+            if rule.get('permission') and rule['permission'].get('duties'):
+                for duty in rule['permission']['duties']:
+                    if duty.get('module'):
+                        # Extract assessment type from module name
+                        if 'pia' in duty['module'].lower():
+                            required_assessments.add('PIA')
+                        elif 'tia' in duty['module'].lower():
+                            required_assessments.add('TIA')
+                        elif 'hrpr' in duty['module'].lower():
+                            required_assessments.add('HRPR')
+
+        required_assessments = list(required_assessments)
+        logger.info(f"Required assessments from rules: {required_assessments}")
+
+        # Step 4: Validate against historical precedents with STRICT filter matching
+        precedent_validation = validate_precedents(
+            origin=request.origin_country.strip(),
+            receiving=request.receiving_country.strip(),
+            purposes=request.purpose_of_processing,
+            process_l1=request.process_l1,
+            process_l2=request.process_l2,
+            process_l3=request.process_l3,
+            has_pii=has_pii,
+            required_assessments=required_assessments
+        )
+
+        # Step 5: Determine final transfer status based on precedent validation
+        transfer_blocked = False
+        transfer_status = 'ALLOWED'
+        blocked_reason = None
+
+        if precedent_validation['status'] == 'no_precedent':
+            transfer_blocked = True
+            transfer_status = 'PROHIBITED'
+            blocked_reason = precedent_validation['message']
+        elif precedent_validation['status'] == 'non_compliant':
+            transfer_blocked = True
+            transfer_status = 'PROHIBITED'
+            blocked_reason = precedent_validation['message']
+        elif precedent_validation['status'] == 'validated':
+            transfer_blocked = False
+            transfer_status = 'ALLOWED'
+
+        # Step 6: Assessment compliance check (using request-provided statuses if available)
+        # This is informational - the precedent validation already checked historical compliance
+        assessment_compliance = {
+            'compliant': not transfer_blocked,
+            'message': precedent_validation['message'] if transfer_blocked else '✅ Transfer validated by precedents',
+            'required': required_assessments
+        }
+
         return {
             'success': True,
-            **result
+            'transfer_status': transfer_status,
+            'transfer_blocked': transfer_blocked,
+            'blocked_reason': blocked_reason,
+            'triggered_rules': rules_result['triggered_rules'],
+            'total_rules_triggered': rules_result['total_rules_triggered'],
+            'has_prohibitions': False,
+            'consolidated_duties': rules_result['consolidated_duties'],
+            'precedent_validation': precedent_validation,
+            'assessment_compliance': assessment_compliance
         }
 
     except HTTPException:
@@ -949,6 +1361,58 @@ async def get_stats():
 
     except Exception as e:
         logger.error(f"Error fetching stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/all-dropdown-values", tags=["Metadata"])
+async def get_all_dropdown_values():
+    """
+    Get all dropdown values (countries, purposes, processes) in a single call
+    Used by the frontend dashboard to populate all dropdowns efficiently
+    """
+    try:
+        # Get countries
+        query_origin = "MATCH (c:Country) RETURN DISTINCT c.name as name ORDER BY name"
+        result_origin = data_graph.query(query_origin)
+
+        query_receiving = "MATCH (j:Jurisdiction) RETURN DISTINCT j.name as name ORDER BY name"
+        result_receiving = data_graph.query(query_receiving)
+
+        origin_countries = [row[0] for row in result_origin.result_set] if result_origin.result_set else []
+        receiving_countries = [row[0] for row in result_receiving.result_set] if result_receiving.result_set else []
+        all_countries = sorted(list(set(origin_countries + receiving_countries)))
+
+        # Get purposes
+        query_purposes = "MATCH (p:Purpose) RETURN DISTINCT p.name as name ORDER BY name"
+        result_purposes = data_graph.query(query_purposes)
+        purposes = [row[0] for row in result_purposes.result_set] if result_purposes.result_set else []
+
+        # Get processes
+        query_l1 = "MATCH (p:ProcessL1) RETURN DISTINCT p.name as name ORDER BY name"
+        result_l1 = data_graph.query(query_l1)
+        process_l1 = [row[0] for row in result_l1.result_set] if result_l1.result_set else []
+
+        query_l2 = "MATCH (p:ProcessL2) RETURN DISTINCT p.name as name ORDER BY name"
+        result_l2 = data_graph.query(query_l2)
+        process_l2 = [row[0] for row in result_l2.result_set] if result_l2.result_set else []
+
+        query_l3 = "MATCH (p:ProcessL3) RETURN DISTINCT p.name as name ORDER BY name"
+        result_l3 = data_graph.query(query_l3)
+        process_l3 = [row[0] for row in result_l3.result_set] if result_l3.result_set else []
+
+        return {
+            'success': True,
+            'countries': all_countries,
+            'origin_countries': origin_countries,
+            'receiving_countries': receiving_countries,
+            'purposes': purposes,
+            'process_l1': process_l1,
+            'process_l2': process_l2,
+            'process_l3': process_l3
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching all dropdown values: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

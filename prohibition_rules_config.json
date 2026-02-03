@@ -1,0 +1,96 @@
+{
+  "_comment": "Configuration file for prohibition rules - Add new country combinations here",
+  "_instructions": "Developers can add new prohibition rules by adding entries to this file. No code changes needed!",
+
+  "prohibition_rules": {
+    "US_PII_TO_RESTRICTED": {
+      "enabled": true,
+      "description": "Prohibits transfer of PII from US to restricted countries",
+      "rule_id": "RULE_9",
+      "priority": 2,
+      "origin_countries": [
+        "United States",
+        "United States of America",
+        "USA"
+      ],
+      "receiving_countries": [
+        "China",
+        "Hong Kong",
+        "Macao",
+        "Macau",
+        "Cuba",
+        "Iran",
+        "North Korea",
+        "Russia",
+        "Venezuela"
+      ],
+      "bidirectional": false,
+      "requires_pii": true,
+      "requires_health_data": false,
+      "prohibition_name": "US PII to Restricted Countries",
+      "prohibition_description": "Prohibition on transferring PII from US to China, Hong Kong, Macao, Cuba, Iran, North Korea, Russia, Venezuela",
+      "action_name": "Transfer PII",
+      "duties": [
+        "Obtain US Legal Approval"
+      ],
+      "odrl_type": "Prohibition",
+      "odrl_action": "transfer",
+      "odrl_target": "PII"
+    },
+
+    "US_DATA_TO_CHINA_CLOUD": {
+      "enabled": true,
+      "description": "Prohibits storing/processing US data in China cloud storage",
+      "rule_id": "RULE_10",
+      "priority": 1,
+      "origin_countries": [
+        "United States",
+        "United States of America",
+        "USA"
+      ],
+      "receiving_countries": [
+        "China",
+        "Hong Kong",
+        "Macao",
+        "Macau"
+      ],
+      "bidirectional": false,
+      "requires_pii": false,
+      "requires_health_data": false,
+      "prohibition_name": "US Data to China Cloud",
+      "prohibition_description": "Data owned, created, developed, or maintained in US cannot be stored or processed in China cloud storage",
+      "action_name": "Store in Cloud",
+      "duties": [],
+      "odrl_type": "Prohibition",
+      "odrl_action": "store",
+      "odrl_target": "Data"
+    },
+
+    "US_HEALTH_DATA": {
+      "enabled": true,
+      "description": "Prohibits transfer of health data from US without approval",
+      "rule_id": "RULE_11",
+      "priority": 3,
+      "origin_countries": [
+        "United States",
+        "United States of America",
+        "USA"
+      ],
+      "receiving_countries": [
+        "ANY"
+      ],
+      "bidirectional": false,
+      "requires_pii": false,
+      "requires_health_data": true,
+      "prohibition_name": "US Health Data Transfer",
+      "prohibition_description": "Prohibition on transferring health-related data from US without approval",
+      "action_name": "Transfer Health Data",
+      "duties": [
+        "Obtain US Legal Exception"
+      ],
+      "odrl_type": "Prohibition",
+      "odrl_action": "transfer",
+      "odrl_target": "HealthData"
+    }
+  }
+}

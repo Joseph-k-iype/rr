@@ -455,9 +455,7 @@
         // Initialize dashboard
         document.addEventListener('DOMContentLoaded', () => {
             loadStats();
-            loadCountries();
-            loadPurposes();  // NEW
-            loadProcesses();  // NEW
+            loadAllDropdowns();  // Load all dropdowns dynamically from graph
             setupEventListeners();
         });
 
@@ -478,108 +476,92 @@
             }
         }
 
-        // Load countries
-        async function loadCountries() {
+        // Load all dropdown values dynamically from graph
+        async function loadAllDropdowns() {
             try {
-                const response = await fetch(`${API_BASE}/api/countries`);
+                console.log('Loading all dropdown values from:', `${API_BASE}/api/all-dropdown-values`);
+                const response = await fetch(`${API_BASE}/api/all-dropdown-values`);
                 const data = await response.json();
+                console.log('All dropdown values response:', data);
 
                 if (data.success) {
-                    const originList = document.getElementById('origin-countries-list');
-                    const receivingList = document.getElementById('receiving-countries-list');
+                    // Populate countries (for datalist autocomplete)
+                    if (data.countries) {
+                        const originList = document.getElementById('origin-countries-list');
+                        const receivingList = document.getElementById('receiving-countries-list');
 
-                    data.countries.forEach(country => {
-                        const option1 = document.createElement('option');
-                        option1.value = country;
-                        originList.appendChild(option1);
+                        data.countries.forEach(country => {
+                            const option1 = document.createElement('option');
+                            option1.value = country;
+                            originList.appendChild(option1);
 
-                        const option2 = document.createElement('option');
-                        option2.value = country;
-                        receivingList.appendChild(option2);
-                    });
-                }
-            } catch (error) {
-                console.error('Error loading countries:', error);
-            }
-        }
+                            const option2 = document.createElement('option');
+                            option2.value = country;
+                            receivingList.appendChild(option2);
+                        });
+                        console.log('✅ Populated', data.countries.length, 'countries');
+                    }
 
-        // NEW: Load purposes
-        async function loadPurposes() {
-            try {
-                console.log('Loading purposes from:', `${API_BASE}/api/purposes`);
-                const response = await fetch(`${API_BASE}/api/purposes`);
-                const data = await response.json();
-                console.log('Purposes response:', data);
+                    // Populate purposes (multi-select)
+                    if (data.purposes) {
+                        const purposesSelect = document.getElementById('purposes');
+                        data.purposes.forEach(purpose => {
+                            const option = document.createElement('option');
+                            option.value = purpose;
+                            option.textContent = purpose;
+                            purposesSelect.appendChild(option);
+                        });
 
-                if (data.success && data.purposes) {
-                    const purposesSelect = document.getElementById('purposes');
-                    console.log('Populating', data.purposes.length, 'purposes');
+                        // Initialize Select2 for multi-select
+                        $('#purposes').select2({
+                            placeholder: 'Select purposes...',
+                            allowClear: true
+                        });
+                        console.log('✅ Populated', data.purposes.length, 'purposes');
+                    }
 
-                    data.purposes.forEach(purpose => {
-                        const option = document.createElement('option');
-                        option.value = purpose;
-                        option.textContent = purpose;
-                        purposesSelect.appendChild(option);
-                    });
-
-                    // Initialize Select2 for multi-select
-                    $('#purposes').select2({
-                        placeholder: 'Select purposes...',
-                        allowClear: true
-                    });
-                    console.log('Select2 initialized for purposes');
-                } else {
-                    console.error('Invalid purposes response:', data);
-                }
-            } catch (error) {
-                console.error('Error loading purposes:', error);
-            }
-        }
-
-        // NEW: Load processes
-        async function loadProcesses() {
-            try {
-                console.log('Loading processes from:', `${API_BASE}/api/processes`);
-                const response = await fetch(`${API_BASE}/api/processes`);
-                const data = await response.json();
-                console.log('Processes response:', data);
-
-                if (data.success) {
                     // Populate Process L1
-                    const l1Select = document.getElementById('process-l1');
-                    console.log('Populating', data.process_l1.length, 'L1 processes');
-                    data.process_l1.forEach(item => {
-                        const option = document.createElement('option');
-                        option.value = item;
-                        option.textContent = item;
-                        l1Select.appendChild(option);
-                    });
+                    if (data.process_l1) {
+                        const l1Select = document.getElementById('process-l1');
+                        data.process_l1.forEach(item => {
+                            const option = document.createElement('option');
+                            option.value = item;
+                            option.textContent = item;
+                            l1Select.appendChild(option);
+                        });
+                        console.log('✅ Populated', data.process_l1.length, 'Process L1');
+                    }
 
                     // Populate Process L2
-                    const l2Select = document.getElementById('process-l2');
-                    console.log('Populating', data.process_l2.length, 'L2 processes');
-                    data.process_l2.forEach(item => {
-                        const option = document.createElement('option');
-                        option.value = item;
-                        option.textContent = item;
-                        l2Select.appendChild(option);
-                    });
+                    if (data.process_l2) {
+                        const l2Select = document.getElementById('process-l2');
+                        data.process_l2.forEach(item => {
+                            const option = document.createElement('option');
+                            option.value = item;
+                            option.textContent = item;
+                            l2Select.appendChild(option);
+                        });
+                        console.log('✅ Populated', data.process_l2.length, 'Process L2');
+                    }
 
                     // Populate Process L3
-                    const l3Select = document.getElementById('process-l3');
-                    console.log('Populating', data.process_l3.length, 'L3 processes');
-                    data.process_l3.forEach(item => {
-                        const option = document.createElement('option');
-                        option.value = item;
-                        option.textContent = item;
-                        l3Select.appendChild(option);
-                    });
-                    console.log('All process dropdowns populated');
+                    if (data.process_l3) {
+                        const l3Select = document.getElementById('process-l3');
+                        data.process_l3.forEach(item => {
+                            const option = document.createElement('option');
+                            option.value = item;
+                            option.textContent = item;
+                            l3Select.appendChild(option);
+                        });
+                        console.log('✅ Populated', data.process_l3.length, 'Process L3');
+                    }
+
+                    console.log('✅ All dropdowns loaded successfully');
                 } else {
-                    console.error('Invalid processes response:', data);
+                    console.error('❌ Invalid dropdown values response:', data);
                 }
             } catch (error) {
-                console.error('Error loading processes:', error);
+                console.error('Error loading dropdown values:', error);
             }
         }
 
@@ -765,7 +747,7 @@
                 console.log('Health data overall:', healthDataDetected);
 
                 // Display triggered rules
-                displayTriggeredRules(rulesData.triggered_rules || []);
+                displayTriggeredRules(rulesData.triggered_rules || [], rulesData);
 
                 // Display cases
                 if (searchData.success) {
@@ -783,8 +765,9 @@
         }
 
         // Display triggered rules with deontic structure
-        function displayTriggeredRules(rules) {
+        function displayTriggeredRules(rules, fullData) {
             console.log('displayTriggeredRules called with:', rules);
+            console.log('Full data:', fullData);
 
             const rulesSection = document.getElementById('rules-section');
             const rulesCount = document.getElementById('rules-count');
@@ -795,18 +778,59 @@
             // Check for prohibitions (blocked rules)
             const prohibitedRules = rules.filter(r => r.prohibition || r.is_blocked);
 
-            // Show warning if any rules have prohibitions
-            if (prohibitedRules.length > 0) {
-                const alertHtml = `
+            // Check overall transfer status from API response
+            let alertHtml = '';
+
+            // Priority 1: Check if transfer is blocked at the API level (combines all validation layers)
+            if (fullData && fullData.transfer_blocked) {
+                const status = fullData.transfer_status || 'PROHIBITED';
+                const reason = fullData.approval_reason || 'Transfer is blocked';
+                alertHtml = `
+                    <div class="alert alert-warning show" style="margin-bottom: 1rem;">
+                        <strong>❌ TRANSFER ${status}:</strong> ${reason}
+                    </div>
+                `;
+            }
+            // Priority 2: Check for rule-level prohibitions
+            else if (prohibitedRules.length > 0) {
+                alertHtml = `
                     <div class="alert alert-warning show" style="margin-bottom: 1rem;">
                         <strong>⚠️ TRANSFER PROHIBITED:</strong> ${prohibitedRules.length} rule(s) prohibit this transfer.
                         See required action below.
                     </div>
                 `;
-                rulesContainer.innerHTML = alertHtml;
-            } else {
-                rulesContainer.innerHTML = '';
             }
+            // Priority 3: Check precedent validation status
+            else if (fullData && fullData.precedent_validation) {
+                const precedent = fullData.precedent_validation;
+                if (precedent.status === 'no_precedent') {
+                    alertHtml = `
+                        <div class="alert alert-info show" style="margin-bottom: 1rem;">
+                            <strong>🆕 NO PRECEDENT:</strong> No historical cases found for this transfer pattern. This is a NEW transfer requiring approval.
+                        </div>
+                    `;
+                } else if (precedent.status === 'precedent_violation') {
+                    alertHtml = `
+                        <div class="alert alert-warning show" style="margin-bottom: 1rem;">
+                            <strong>⚠️ PRECEDENT VIOLATION:</strong> Found ${precedent.matching_cases} historical case(s), but NONE complied with requirements.
+                        </div>
+                    `;
+                } else if (precedent.status === 'partially_validated') {
+                    alertHtml = `
+                        <div class="alert alert-info show" style="margin-bottom: 1rem;">
+                            <strong>⚠️ PARTIAL VALIDATION:</strong> Only ${precedent.compliant_cases}/${precedent.matching_cases} historical cases complied with requirements.
+                        </div>
+                    `;
+                } else if (precedent.status === 'validated') {
+                    alertHtml = `
+                        <div class="alert alert-success show" style="margin-bottom: 1rem;">
+                            <strong>✅ VALIDATED:</strong> Found ${precedent.matching_cases} historical case(s), all complied with requirements.
+                        </div>
+                    `;
+                }
+            }
+
+            rulesContainer.innerHTML = alertHtml;
 
             if (rules.length === 0) {
                 rulesContainer.innerHTML += '<p>No compliance rules triggered for this transfer.</p>';
@@ -825,6 +849,7 @@
                     // Determine type and status
                     const hasProhibition = rule.prohibition || rule.is_blocked;
                     const hasPermission = rule.permission;
+                    const transferBlocked = fullData && fullData.transfer_blocked;
 
                     let type = '-';
                     let status = 'UNKNOWN';
@@ -846,8 +871,16 @@
                         }
                     } else if (hasPermission) {
                         type = 'Permission';
-                        status = 'ALLOWED';
-                        statusBadge = '<span class="status-badge status-allowed">ALLOWED</span>';
+
+                        // If overall transfer is blocked, show PROHIBITED even for permission rules
+                        if (transferBlocked) {
+                            status = 'PROHIBITED';
+                            statusBadge = '<span class="status-badge status-blocked">PROHIBITED</span>';
+                            rowClass = 'rule-blocked';
+                        } else {
+                            status = 'ALLOWED';
+                            statusBadge = '<span class="status-badge status-allowed">ALLOWED</span>';
+                        }
 
                         // Get duties from permission
                         if (rule.permission && rule.permission.duties && rule.permission.duties.length > 0) {
@@ -922,14 +955,14 @@
                         : 'No';
 
                     html += '<tr>';
-                    html += `<td><strong>${c.case_id}</strong></td>`;
+                    html += `<td><strong>${c.case_ref_id || c.case_id}</strong></td>`;
                     html += `<td>${c.origin_country}</td>`;
-                    html += `<td>${c.receiving_countries.join(', ')}</td>`;
+                    html += `<td>${c.receiving_countries ? c.receiving_countries.join(', ') : c.receiving_country || '-'}</td>`;
                     html += `<td title="${c.purposes ? c.purposes.join(', ') : ''}">${purposesStr}</td>`;
                     html += `<td title="${processStr}">${processStr}</td>`;
-                    html += `<td>${c.pia_module || 'N/A'}</td>`;
-                    html += `<td>${c.tia_module || 'N/A'}</td>`;
-                    html += `<td>${c.hrpr_module || 'N/A'}</td>`;
+                    html += `<td>${c.pia_status || c.pia_module || 'N/A'}</td>`;
+                    html += `<td>${c.tia_status || c.tia_module || 'N/A'}</td>`;
+                    html += `<td>${c.hrpr_status || c.hrpr_module || 'N/A'}</td>`;
                     html += `<td>${c.has_pii ? 'Yes' : 'No'}</td>`;
                     html += `<td>${healthIndicator}</td>`;
                     html += '</tr>';

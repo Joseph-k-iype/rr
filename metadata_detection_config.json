@@ -1,0 +1,52 @@
+{
+  "_comment": "Configuration for metadata-based detection rules",
+  "_instructions": "Developers can add new metadata detection categories here (e.g., financial data, biometric data)",
+
+  "detection_categories": {
+    "health_data": {
+      "enabled": true,
+      "description": "Detects health and medical related data",
+      "detection_type": "keyword_and_pattern",
+      "keywords": [
+        "health", "medical", "patient", "diagnosis", "treatment", "prescription",
+        "clinical", "hospital", "doctor", "physician", "nurse", "disease",
+        "illness", "medication", "drug", "pharmacy", "healthcare", "wellness",
+        "fitness", "biometric", "genetic", "genome", "dna", "vaccine",
+        "vaccination", "immunization", "surgery", "surgical", "operation",
+        "therapy", "therapist", "pharmaceutical", "radiology", "lab", "laboratory"
+      ],
+      "patterns": [
+        "icd-?\\d+",
+        "cpt-?\\d+",
+        "diagnosis code",
+        "medical record",
+        "patient id[:\\s-]?\\d+"
+      ],
+      "case_sensitive": false,
+      "word_boundaries": true,
+      "normalize_underscores": true,
+      "normalize_hyphens": true
+    },
+
+    "financial_data": {
+      "enabled": false,
+      "_comment": "Example: Enable this to detect financial/payment data",
+      "description": "Detects financial and payment card information",
+      "detection_type": "keyword_and_pattern",
+      "keywords": [
+        "credit card", "debit card", "bank account", "routing number",
+        "swift", "iban", "account number", "card number", "cvv", "cvc",
+        "expiration", "billing", "payment", "transaction", "financial"
+      ],
+      "patterns": [
+        "\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}",
+        "cvv[:\\s]?\\d{3,4}",
+        "account[:\\s#]?\\d{8,}"
+      ],
+      "case_sensitive": false,
+      "word_boundaries": true,
+      "normalize_underscores": true,
+      "normalize_hyphens": true
+    }
+  }
+}

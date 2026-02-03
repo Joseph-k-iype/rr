@@ -1,401 +1,479 @@
 # Data Transfer Compliance System
 
-**Version:** 3.0.0
-**Status:** ✅ Production Ready
-**Last Updated:** 2026-02-02
+A **graph-driven, self-serviceable, and scalable** compliance engine for evaluating cross-border data transfers using formal deontic logic (Permissions, Prohibitions, Duties) with FalkorDB.
+
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![FalkorDB](https://img.shields.io/badge/database-FalkorDB-red.svg)](https://www.falkordb.com/)
+[![FastAPI](https://img.shields.io/badge/API-FastAPI-009688.svg)](https://fastapi.tiangolo.com/)
 
 ---
 
-## 📚 Documentation Index
+## 🎯 Overview
 
-| Document | Description | Audience |
-|----------|-------------|----------|
-| **[ARCHITECTURE.md](ARCHITECTURE.md)** | Complete system architecture with Mermaid diagrams, graph schemas, and logic flows | Technical/Architects |
-| **[FIXES_SUMMARY.md](FIXES_SUMMARY.md)** | All logical errors fixed, ODRL alignment, test results | Technical/QA |
-| **[API_REDESIGN_SUMMARY.md](API_REDESIGN_SUMMARY.md)** | User-friendly API redesign, parameter structure, examples | Developers/Integrators |
-| **[HEALTH_DETECTION_SOLUTION.md](HEALTH_DETECTION_SOLUTION.md)** | Health data detection implementation, 244 keywords, configuration | Technical/Compliance |
-| **[QUICK_START.md](QUICK_START.md)** | Getting started guide, quick tests, common scenarios | All Users |
-| **[health_data_config.json](health_data_config.json)** | Comprehensive health data detection configuration | Configuration |
+This system evaluates data transfer compliance by:
+- ✅ **Graph-based rules**: All logic stored in FalkorDB as nodes and relationships
+- ✅ **Configuration-driven**: Add new rules via JSON without code changes
+- ✅ **Precedent-based validation**: Checks historical cases for compliance patterns
+- ✅ **Strict assessment compliance**: Only "Completed" status = compliant
+- ✅ **Dynamic filtering**: Matches based on country, purpose, process, metadata
+- ✅ **Self-serviceable**: Developers add rules independently
 
 ---
 
-## 🎯 Quick Overview
+## 📐 Architecture
 
-### What is This System?
+### System Components
 
-A **graph-based compliance engine** that evaluates data transfer regulations using:
-- **Deontic Logic** (Permissions, Prohibitions, Duties)
-- **ODRL** (Open Digital Rights Language) compliance
-- **Graph Database** (FalkorDB) for flexible rule storage
-- **Automatic Health Data Detection** (244 keywords)
-- **Priority-Based Rule Evaluation** (deterministic results)
+```mermaid
+graph TB
+    Client[Web Client / API Consumer]
+    API[FastAPI Backend]
+    RulesGraph[(RulesGraph<br/>FalkorDB)]
+    DataGraph[(DataTransferGraph<br/>FalkorDB)]
+    Config[JSON Configurations]
 
-### Use Cases
+    Client -->|HTTP POST| API
+    API -->|Query Rules| RulesGraph
+    API -->|Search Precedents| DataGraph
+    API -->|Load Config| Config
 
-1. **Compliance Checking**: Evaluate if a data transfer complies with regulations
-2. **Rule Discovery**: Find which rules apply to specific transfers
-3. **Duty Identification**: Determine required obligations (PIA, TIA, legal approval)
-4. **Health Data Detection**: Automatically identify health-related transfers
-5. **Historical Search**: Find similar past transfer cases
+    Config -.->|prohibition_rules_config.json| API
+    Config -.->|metadata_detection_config.json| API
+    Config -.->|health_data_config.json| API
+```
+
+### Data Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant API
+    participant RulesGraph
+    participant DataGraph
+    participant Config
+
+    User->>API: POST /api/evaluate-rules
+    Note over User,API: {origin: "US", receiving: "China", pii: true}
+
+    API->>Config: Load prohibition rules
+    Config-->>API: Return rule config
+
+    API->>RulesGraph: Query triggered rules
+    Note over RulesGraph: Match by country groups<br/>Priority ordering
+    RulesGraph-->>API: Triggered rules + duties
+
+    API->>DataGraph: Search precedent cases
+    Note over DataGraph: Strict filter matching<br/>ALL filters must match
+    DataGraph-->>API: Matching historical cases
+
+    API->>API: Evaluate compliance
+    Note over API: Check assessments<br/>Validate precedents<br/>Apply prohibitions
+
+    API-->>User: Decision: ALLOWED / PROHIBITED
+    Note over User,API: {status, reason, rules, precedents}
+```
+
+---
+
+## 🏗️ Graph Structure
+
+### RulesGraph Schema
+
+```mermaid
+graph LR
+    Country[Country<br/>name: string] -->|BELONGS_TO| CG[CountryGroup<br/>name: string]
+
+    Rule[Rule<br/>rule_id: string<br/>priority: int<br/>description: string] -->|HAS_ACTION| Action[Action<br/>name: string]
+    Rule -->|HAS_PERMISSION| Perm[Permission<br/>name: string]
+    Rule -->|HAS_PROHIBITION| Prohib[Prohibition<br/>name: string]
+    Rule -->|TRIGGERED_BY_ORIGIN| CG
+    Rule -->|TRIGGERED_BY_RECEIVING| CG
+
+    Perm -->|CAN_HAVE_DUTY| Duty[Duty<br/>name: string<br/>module: string<br/>value: string]
+    Prohib -->|CAN_HAVE_DUTY| Duty
+
+    style Rule fill:#ff9999
+    style Perm fill:#99ff99
+    style Prohib fill:#ffcc99
+    style Duty fill:#9999ff
+```
+
+### DataTransferGraph Schema
+
+```mermaid
+graph LR
+    Case[Case<br/>case_ref_id<br/>pia_status<br/>tia_status<br/>hrpr_status] -->|ORIGINATES_FROM| Origin[Country]
+    Case -->|TRANSFERS_TO| Dest[Jurisdiction]
+    Case -->|HAS_PURPOSE| Purpose[Purpose]
+    Case -->|HAS_PROCESS_L1| P1[ProcessL1]
+    Case -->|HAS_PROCESS_L2| P2[ProcessL2]
+    Case -->|HAS_PROCESS_L3| P3[ProcessL3]
+    Case -->|HAS_PERSONAL_DATA| PD[PersonalData]
+    Case -->|HAS_CATEGORY| Cat[Category]
+
+    style Case fill:#ffcc99
+```
+
+---
+
+## 📋 Business Rules
+
+### Permission Rules
+
+| Rule ID | Description | Origin | Receiving | Required Assessments |
+|---------|-------------|--------|-----------|----------------------|
+| RULE_1 | EU/EEA/UK/Crown/CH Internal | EU/EEA/UK/Crown/CH | EU/EEA/UK/Crown/CH | PIA = Completed |
+| RULE_2 | EU/EEA → Adequacy Countries | EU/EEA | Adequacy Countries | PIA = Completed |
+| RULE_3 | Crown → Adequacy + EU/EEA | Crown Dependencies | Adequacy + EU/EEA | PIA = Completed |
+| RULE_4 | UK → Adequacy + EU/EEA | United Kingdom | Adequacy + EU/EEA | PIA = Completed |
+| RULE_5 | Switzerland → Approved | Switzerland | Approved Jurisdictions | PIA = Completed |
+| RULE_6 | EU/EEA/Adequacy → Rest of World | EU/EEA/Adequacy | NOT in Adequacy/EU | PIA + TIA = Completed |
+| RULE_7 | BCR Countries → Any | BCR Countries | Any Country | PIA + HRPR = Completed |
+| RULE_8 | Any with PII | Any (with PII flag) | Any | PIA = Completed |
+
+### Prohibition Rules (Configuration-Driven)
+
+Loaded from `prohibition_rules_config.json`:
+
+| Rule ID | Description | Origin | Receiving | Condition |
+|---------|-------------|--------|-----------|-----------|
+| RULE_9 | US PII → Restricted Countries | US | China, Russia, Iran, etc. | PII = true |
+| RULE_10 | US → China Cloud Storage | US | China, Hong Kong, Macao | ANY data |
+| RULE_11 | US Health Data | US | ANY | Health data detected |
+
+**✨ Add new rules**: Edit `prohibition_rules_config.json` → Rebuild graph → Done!
 
 ---
 
 ## 🚀 Quick Start
 
 ### Prerequisites
+
 ```bash
-# Required
-- Python 3.8+
-- Redis (for FalkorDB)
-- FalkorDB module installed
+# Install Python 3.11+
+python --version
+
+# Install FalkorDB (via Docker)
+docker run -p 6379:6379 falkordb/falkordb:latest
 
 # Install dependencies
+pip install -r requirements_fastapi.txt
+```
+
+### Installation
+
+```bash
+# Clone repository
+cd "deterministic policy"
+
+# Install requirements
 pip install fastapi uvicorn falkordb pydantic
-```
 
-### 1. Build the Graph
-```bash
-cd "/Users/josephkiype/Desktop/development/code/deterministic policy"
+# Build the rules graph
 python build_rules_graph_deontic.py
+
+# Load sample data (optional)
+python create_sample_data.py
+
+# Start the API
+python api_fastapi_deontic.py
 ```
 
-### 2. Start the API
-```bash
-uvicorn api_fastapi_deontic:app --reload --port 8000
-```
+### Access
 
-### 3. Open Dashboard
-```
-http://localhost:8000
-```
-
-### 4. Run Tests
-```bash
-# Basic API tests
-python test_new_api.py
-
-# Health detection tests
-python test_health_detection.py
-```
+- **Swagger UI**: http://localhost:5001/docs
+- **ReDoc**: http://localhost:5001/redoc
+- **Dashboard**: http://localhost:5001/
 
 ---
 
-## 📊 System Statistics
+## 📡 API Endpoints
 
-### RulesGraph
-- **Countries**: 87
-- **Country Groups**: 14
-- **Rules**: 11 (3 prohibitions, 8 permissions)
-- **Actions**: 4
-- **Duties**: 5
-- **Keywords**: 244 health-related terms
+### POST /api/evaluate-rules
 
-### Rules Breakdown
+Evaluate compliance rules for a data transfer.
 
-| Priority | Rule ID | Type | Description |
-|----------|---------|------|-------------|
-| 1 | RULE_10 | 🔴 Prohibition | US Data to China Cloud |
-| 1 | RULE_1 | ✅ Permission | EU/EEA Internal Transfer |
-| 2 | RULE_9 | 🔴 Prohibition | US PII to Restricted Countries |
-| 3 | RULE_11 | 🔴 Prohibition | US Health Data Transfer |
-| 4 | RULE_2 | ✅ Permission | EU to Adequacy Countries |
-| 5 | RULE_3 | ✅ Permission | Crown Dependencies |
-| 6 | RULE_4 | ✅ Permission | UK to Adequacy |
-| 7 | RULE_5 | ✅ Permission | Switzerland Transfer |
-| 8 | RULE_6 | ✅ Permission | EU to Rest of World |
-| 9 | RULE_7 | ✅ Permission | BCR Countries |
-| 10 | RULE_8 | ✅ Permission | PII Transfer |
-
----
-
-## 🏗️ Architecture at a Glance
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Web Dashboard (UI)                      │
-│  • Search Form  • Metadata Builder  • Results Display      │
-└───────────────────────────┬─────────────────────────────────┘
-                            │ HTTP POST
-┌───────────────────────────▼─────────────────────────────────┐
-│                    FastAPI Server (API)                      │
-│  • /api/evaluate-rules  • /api/search-cases  • /docs       │
-└───────────┬─────────────────────┬───────────────────────────┘
-            │                     │
-            │                     │
-┌───────────▼───────────┐  ┌──────▼──────────────────────────┐
-│   Health Detector     │  │   Rules Evaluation Engine       │
-│  • 244 keywords       │  │  • Match type logic             │
-│  • Pattern matching   │  │  • Priority sorting             │
-│  • Word boundaries    │  │  • Deontic operators            │
-└───────────┬───────────┘  └──────┬──────────────────────────┘
-            │                     │
-            │                     │
-┌───────────▼─────────────────────▼───────────────────────────┐
-│              FalkorDB (Graph Database)                       │
-│                                                              │
-│  ┌──────────────────┐         ┌──────────────────────────┐ │
-│  │   RulesGraph     │         │  DataTransferGraph       │ │
-│  │  • 11 Rules      │         │  • Historical Cases      │ │
-│  │  • 87 Countries  │         │  • Personal Data         │ │
-│  │  • 14 Groups     │         │  • Purposes              │ │
-│  └──────────────────┘         └──────────────────────────┘ │
-└──────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 🎯 Key Features
-
-### 1. **Automatic Health Data Detection**
+**Request:**
 ```json
 {
-  "other_metadata": {
-    "patient_id": "unique identifier",
-    "diagnosis_codes": "ICD-10 codes"
+  "origin_country": "United Kingdom",
+  "receiving_country": "India",
+  "pii": true,
+  "purpose_of_processing": ["Marketing", "Analytics"],
+  "process_l1": "Sales",
+  "pia_status": "Completed",
+  "hrpr_status": "Completed"
+}
+```
+
+**Response:**
+```json
+{
+  "transfer_status": "ALLOWED",
+  "transfer_blocked": false,
+  "triggered_rules": [
+    {
+      "rule_id": "RULE_7",
+      "description": "BCR Countries to any jurisdiction",
+      "permission": {
+        "name": "BCR Countries Transfer",
+        "duties": [
+          {"name": "Complete PIA Module", "value": "Completed"},
+          {"name": "Complete HRPR Module", "value": "Completed"}
+        ]
+      }
+    }
+  ],
+  "precedent_validation": {
+    "status": "validated",
+    "matching_cases": 2,
+    "compliant_cases": 1,
+    "message": "✅ ALLOWED: Found 2 matching case(s), 1 have all required assessments completed."
+  },
+  "assessment_compliance": {
+    "compliant": true,
+    "message": "✅ COMPLIANT: All 2 required assessments are Completed"
   }
 }
 ```
-→ System automatically detects health data and triggers RULE_11
 
-### 2. **Priority-Based Evaluation**
-Rules execute in priority order (1 = highest):
-- Priority 1: Absolute prohibitions (RULE_10)
-- Priority 2-3: Conditional prohibitions (RULE_9, RULE_11)
-- Priority 4-10: Permissions
+### POST /api/search-cases
 
-### 3. **ODRL Compliance**
-Every rule includes ODRL metadata:
-- `odrl_type`: Permission or Prohibition
-- `odrl_action`: transfer, store, process
-- `odrl_target`: Data, PII, HealthData
+Search historical precedent cases.
 
-### 4. **Comprehensive Testing**
-- ✅ 23/24 tests passing (95.8%)
-- Health detection verified
-- Priority ordering confirmed
-- False positive prevention validated
+**Request:**
+```json
+{
+  "origin_country": "Germany",
+  "receiving_country": "France",
+  "purpose_of_processing": ["Marketing"]
+}
+```
+
+### GET /api/countries
+
+Get list of all countries.
+
+### GET /api/purposes
+
+Get list of all processing purposes.
+
+### GET /api/processes
+
+Get list of all process levels (L1, L2, L3).
 
 ---
 
-## 📋 API Examples
+## 🔧 Configuration
 
-### Example 1: Basic Transfer Evaluation
+### Adding Prohibition Rules
+
+Edit `prohibition_rules_config.json`:
+
+```json
+{
+  "prohibition_rules": {
+    "MY_NEW_RULE": {
+      "enabled": true,
+      "rule_id": "RULE_CUSTOM_1",
+      "priority": 5,
+      "origin_countries": ["Germany", "France"],
+      "receiving_countries": ["Russia"],
+      "bidirectional": false,
+      "requires_pii": false,
+      "prohibition_name": "EU to Russia Block",
+      "duties": []
+    }
+  }
+}
+```
+
+Then rebuild: `python build_rules_graph_deontic.py`
+
+### Adding Metadata Detection
+
+Edit `metadata_detection_config.json`:
+
+```json
+{
+  "detection_categories": {
+    "financial_data": {
+      "enabled": true,
+      "keywords": ["credit card", "bank account", ...],
+      "patterns": ["\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}"]
+    }
+  }
+}
+```
+
+Then restart: `python api_fastapi_deontic.py`
+
+---
+
+## 🧪 Decision Logic
+
+### Priority Order
+
+```mermaid
+graph TD
+    Start[Evaluate Transfer Request] --> CheckProhibition{Rule-Level<br/>Prohibition?}
+
+    CheckProhibition -->|Yes| Prohibited1[PROHIBITED<br/>By prohibition rule]
+    CheckProhibition -->|No| CheckPrecedent{Historical<br/>Precedent<br/>Found?}
+
+    CheckPrecedent -->|No| Prohibited2[PROHIBITED<br/>No precedent<br/>Raise governance ticket]
+    CheckPrecedent -->|Yes| CheckAssessment{Assessments<br/>Completed?}
+
+    CheckAssessment -->|No| Prohibited3[PROHIBITED<br/>Assessment non-compliance]
+    CheckAssessment -->|Yes| CheckCompliance{At least ONE<br/>compliant case?}
+
+    CheckCompliance -->|No| Prohibited4[PROHIBITED<br/>Precedent violation]
+    CheckCompliance -->|Yes| Allowed[ALLOWED<br/>✅ Transfer validated]
+
+    style Prohibited1 fill:#ffcccc
+    style Prohibited2 fill:#ffcccc
+    style Prohibited3 fill:#ffcccc
+    style Prohibited4 fill:#ffcccc
+    style Allowed fill:#ccffcc
+```
+
+### Key Rules
+
+1. **Rule-Level Prohibitions** (Highest Priority)
+   - Absolute blocks from configuration
+   - Example: US → China PII transfer
+
+2. **No Precedent = PROHIBITED**
+   - If filters provided and NO historical cases match → PROHIBITED
+   - Message: "Raise governance ticket"
+
+3. **Strict Assessment Compliance**
+   - Only `"Completed"` status = compliant
+   - `"In Progress"`, `"N/A"`, `null` → NON-COMPLIANT → PROHIBITED
+
+4. **At Least One Compliant Case → ALLOWED**
+   - If ≥1 historical case matches ALL filters AND has completed assessments → ALLOWED
+   - Even if other cases are non-compliant
+
+---
+
+## 📊 Example Scenarios
+
+### Scenario 1: Matching Precedent → ALLOWED
+
 ```bash
-curl -X POST http://localhost:8000/api/evaluate-rules \
+curl -X POST http://localhost:5001/api/evaluate-rules \
   -H "Content-Type: application/json" \
   -d '{
-    "origin_country": "Ireland",
-    "receiving_country": "Poland",
+    "origin_country": "Germany",
+    "receiving_country": "France",
+    "purpose_of_processing": ["Marketing"],
+    "pia_status": "Completed"
+  }'
+```
+
+**Result**: ALLOWED (found matching case with PIA completed)
+
+### Scenario 2: No Precedent → PROHIBITED
+
+```bash
+curl -X POST http://localhost:5001/api/evaluate-rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "origin_country": "Germany",
+    "receiving_country": "France",
+    "purpose_of_processing": ["Office Support"],
+    "pia_status": "Completed"
+  }'
+```
+
+**Result**: PROHIBITED ("Office Support" purpose doesn't match any historical case → raise governance ticket)
+
+### Scenario 3: Prohibition Rule → PROHIBITED
+
+```bash
+curl -X POST http://localhost:5001/api/evaluate-rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "origin_country": "United States",
+    "receiving_country": "China",
     "pii": true
   }'
 ```
 
-**Response:**
-```json
-{
-  "success": true,
-  "triggered_rules": [
-    {
-      "rule_id": "RULE_1",
-      "description": "EU/EEA internal transfer",
-      "is_blocked": false,
-      "permission": {
-        "name": "EU/EEA Internal Transfer",
-        "duties": [
-          {"name": "Complete PIA Module (CM)"}
-        ]
-      }
-    }
-  ],
-  "has_prohibitions": false
-}
-```
+**Result**: PROHIBITED (US → China PII blocked by RULE_9)
 
-### Example 2: Health Data Transfer (Auto-Detection)
-```bash
-curl -X POST http://localhost:8000/api/evaluate-rules \
-  -H "Content-Type: application/json" \
-  -d '{
-    "origin_country": "United States",
-    "receiving_country": "India",
-    "pii": true,
-    "other_metadata": {
-      "patient_id": "unique identifier",
-      "diagnosis_codes": "ICD-10 codes"
-    }
-  }'
-```
+---
 
-**Response:**
-```json
-{
-  "success": true,
-  "triggered_rules": [
-    {
-      "rule_id": "RULE_11",
-      "description": "US Health Data Transfer",
-      "is_blocked": true,
-      "prohibition": {
-        "name": "US Health Data Transfer",
-        "duties": [
-          {"name": "Obtain US Legal Exception"}
-        ]
-      }
-    }
-  ],
-  "has_prohibitions": true
-}
+##  File Structure
+
+```
+deterministic policy/
+├── api_fastapi_deontic.py          # FastAPI backend with deontic logic
+├── build_rules_graph_deontic.py    # Graph builder (loads config)
+├── create_sample_data.py           # Sample data generator
+├── prohibition_rules_config.json   # Prohibition rules (editable!)
+├── metadata_detection_config.json  # Metadata detection rules
+├── health_data_config.json         # Health data keywords/patterns
+├── sample_data.json                # Sample historical cases
+├── templates/
+│   └── dashboard.html              # Web UI dashboard
+├── DEVELOPER_GUIDE.md              # Comprehensive developer guide
+└── README.md                       # This file
 ```
 
 ---
 
-## 🔍 Graph Schema Overview
+## 🔒 Encoding Safety
 
-### RulesGraph Structure
-
-```
-Rule
-├── HAS_ACTION → Action
-├── HAS_PERMISSION → Permission → CAN_HAVE_DUTY → Duty
-├── HAS_PROHIBITION → Prohibition → CAN_HAVE_DUTY → Duty
-├── TRIGGERED_BY_ORIGIN → CountryGroup
-└── TRIGGERED_BY_RECEIVING → CountryGroup
-
-Country → BELONGS_TO → CountryGroup
-```
-
-### DataTransferGraph Structure
-
-```
-Case
-├── ORIGINATES_FROM → Country
-├── TRANSFERS_TO → Jurisdiction
-├── HAS_PURPOSE → Purpose
-├── HAS_PROCESS_L1 → ProcessL1
-├── HAS_PROCESS_L2 → ProcessL2
-├── HAS_PROCESS_L3 → ProcessL3
-├── HAS_PERSONAL_DATA → PersonalData
-├── HAS_PERSONAL_DATA_CATEGORY → PersonalDataCategory
-└── HAS_CATEGORY → Category
-```
-
-**See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed Mermaid diagrams**
+All files use UTF-8 encoding:
+- `# -*- coding: utf-8 -*-` in Python files
+- `encoding='utf-8'` in all file operations
+- `ensure_ascii=False` in JSON operations
+- Supports Unicode country names (España, Türkiye, 中国, 日本, etc.)
 
 ---
 
-## 🛠️ Configuration
+## 📚 Documentation
 
-### Health Data Keywords
-Stored in `health_data_config.json`:
-- **244 keywords**: patient, medical, diagnosis, prescription, etc.
-- **27 patterns**: ICD codes, CPT codes, medical record patterns
-- **16 categories**: Patient Demographics, Clinical Data, etc.
-
-### Rule Configuration
-Rules defined in `build_rules_graph_deontic.py`:
-- Geographic scope (origin/receiving countries)
-- Match type logic (ANY, ALL, NOT_IN)
-- Priority ordering
-- Data type filters (PII, health data)
-- ODRL metadata
+- **README.md** (this file) - Architecture, rules, quick start
+- **DEVELOPER_GUIDE.md** - Detailed guide for adding rules and configurations
 
 ---
 
-## 🧪 Testing
+## 🤝 Contributing
 
-### Test Suites
+### Adding a New Prohibition Rule
 
-1. **Basic API Tests** (`test_new_api.py`)
-   - 4 test scenarios
-   - Validates basic functionality
-   - Tests ODRL metadata
+1. Edit `prohibition_rules_config.json`
+2. Run `python build_rules_graph_deontic.py`
+3. Restart API
+4. Test via Swagger UI
 
-2. **Health Detection Tests** (`test_health_detection.py`)
-   - 24 comprehensive test cases
-   - Various health keywords
-   - Edge cases and false positives
-   - 95.8% pass rate
+### Adding Metadata Detection
 
-### Run All Tests
-```bash
-# Install test server
-uvicorn api_fastapi_deontic:app --reload --port 8000 &
+1. Edit `metadata_detection_config.json`
+2. Restart API (no rebuild needed!)
+3. Test via API
 
-# Run basic tests
-python test_new_api.py
-
-# Run health detection tests
-python test_health_detection.py
-
-# Stop server
-pkill -f uvicorn
-```
+See `DEVELOPER_GUIDE.md` for detailed instructions.
 
 ---
 
-## 🚨 Common Issues & Solutions
+## 📝 License
 
-### Issue 1: Health data not detected
-**Problem:** `patient_id` not matching `patient`
-**Solution:** Fixed with underscore normalization (v3.0)
-**Verify:** `python test_health_detection.py`
-
-### Issue 2: Wrong rule priority
-**Problem:** Multiple rules with same priority
-**Solution:** US rules adjusted to priorities 1, 2, 3
-**Verify:** Check logs for rule order
-
-### Issue 3: RULE_11 not triggering
-**Problem:** Missing health metadata
-**Solution:** Provide `other_metadata` with health terms
-**Verify:** See [HEALTH_DETECTION_SOLUTION.md](HEALTH_DETECTION_SOLUTION.md)
+MIT License
 
 ---
 
-## 📈 Roadmap
+## 🙏 Acknowledgments
 
-### Completed ✅
-- [x] Deontic logic implementation
-- [x] ODRL compliance
-- [x] Health data auto-detection (244 keywords)
-- [x] Priority-based evaluation
-- [x] User-friendly API
-- [x] Comprehensive documentation
-- [x] Test suites (95.8% pass rate)
-
-### Future Enhancements
-- [ ] Temporal constraints (valid_from, valid_until)
-- [ ] Assignee/Assigner tracking
-- [ ] Asset nodes (formalize data types)
-- [ ] Audit logging
-- [ ] Rule versioning
-- [ ] Multi-language support
+Built with:
+- [FalkorDB](https://www.falkordb.com/) - Graph database
+- [FastAPI](https://fastapi.tiangolo.com/) - Modern Python web framework
+- [Pydantic](https://pydantic-docs.helpmanual.io/) - Data validation
+- [ODRL](https://www.w3.org/TR/odrl-model/) - Open Digital Rights Language specification
 
 ---
 
-## 📝 Change Log
-
-### Version 3.0.0 (2026-02-02)
-- ✅ Implemented comprehensive health data detection (244 keywords)
-- ✅ Fixed underscore/hyphen handling in keyword matching
-- ✅ Added ODRL metadata to all rules
-- ✅ Improved rule priority ordering
-- ✅ Created extensive documentation with Mermaid diagrams
-- ✅ Added comprehensive test suites (95.8% pass rate)
-- ✅ User-friendly API redesign
-- ✅ Dynamic metadata builder in UI
-
-### Version 2.0.0 (Previous)
-- Deontic logic implementation
-- RulesGraph and DataTransferGraph
-- Basic health detection
-
-### Version 1.0.0 (Initial)
-- Basic rule evaluation
-- Country group matching
-
----
-
-**System Status: 🟢 Production Ready**
-
-For detailed technical information, see [ARCHITECTURE.md](ARCHITECTURE.md)
+**Questions?** See `DEVELOPER_GUIDE.md` or check the Swagger UI at `http://localhost:5001/docs`

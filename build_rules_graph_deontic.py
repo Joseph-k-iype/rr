@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Build Rules Graph with Deontic Logic Structure in FalkorDB
 Uses formal policy framework: Rules → Actions, Permissions, Prohibitions → Duties
@@ -36,6 +37,26 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def load_prohibition_rules_config():
+    """Load prohibition rules configuration from JSON file"""
+    config_path = Path(__file__).parent / "prohibition_rules_config.json"
+
+    if not config_path.exists():
+        logger.warning(f"⚠️  prohibition_rules_config.json not found at {config_path}")
+        return {'prohibition_rules': {}}
+
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+            enabled_count = sum(1 for rule in config.get('prohibition_rules', {}).values() if rule.get('enabled'))
+            logger.info(f"✓ Loaded {enabled_count} enabled prohibition rules from config")
+            return config
+    except Exception as e:
+        logger.error(f"Error loading prohibition rules config: {e}")
+        return {'prohibition_rules': {}}
+
+
 def build_rules_graph_deontic():
     """Build the Rules Graph with deontic logic structure"""
 
@@ -43,6 +64,9 @@ def build_rules_graph_deontic():
     graph = db.select_graph('RulesGraph')
 
     logger.info("Building Rules Graph with Deontic Logic...")
+
+    # Load prohibition rules config FIRST (before creating any nodes)
+    prohibition_config = load_prohibition_rules_config()
 
     # Clear existing data
     logger.info("Clearing existing Rules Graph...")
@@ -104,13 +128,8 @@ def build_rules_graph_deontic():
         'BCR_COUNTRIES': [],  # Will be computed from EU_EEA + additional BCR countries
         'CROWN_DEPENDENCIES_ONLY': ['Jersey', 'Isle of Man', 'Guernsey'],
         'UK_ONLY': ['United Kingdom'],
-        'US': ['United States', 'United States of America', 'USA'],
-        'US_RESTRICTED_COUNTRIES': [
-            'China', 'Hong Kong', 'Macao', 'Macau',
-            'Cuba', 'Iran', 'North Korea', 'Russia', 'Venezuela'
-        ],
-        'CHINA_CLOUD': ['China', 'Hong Kong', 'Macao', 'Macau'],
         'EU_EEA_ADEQUACY_UK': []  # Will be computed
+        # Note: US, US_RESTRICTED_COUNTRIES, CHINA_CLOUD now created dynamically from prohibition_rules_config.json
     }
 
     # Computed groups
@@ -147,6 +166,28 @@ def build_rules_graph_deontic():
         country_groups['EU_EEA_FULL'] +  # All EU/EEA member states
         bcr_additional_countries  # Additional BCR-approved countries
     ))
+
+    # Add dynamic country groups from prohibition rules config
+    logger.info("Adding dynamic country groups from prohibition rules config...")
+    for config_key, rule_config in prohibition_config.get('prohibition_rules', {}).items():
+        if not rule_config.get('enabled', False):
+            continue
+
+        # Create unique group names for origin and receiving countries
+        origin_group_name = f"ORIGIN_{config_key}"
+        receiving_group_name = f"RECEIVING_{config_key}"
+
+        # Add origin countries to a group
+        origin_countries = rule_config.get('origin_countries', [])
+        if origin_countries:
+            country_groups[origin_group_name] = origin_countries
+            logger.info(f"  Added origin group '{origin_group_name}' with {len(origin_countries)} countries")
+
+        # Add receiving countries to a group (skip if ["ANY"])
+        receiving_countries = rule_config.get('receiving_countries', [])
+        if receiving_countries and receiving_countries != ["ANY"]:
+            country_groups[receiving_group_name] = receiving_countries
+            logger.info(f"  Added receiving group '{receiving_group_name}' with {len(receiving_countries)} countries")
 
     # Create CountryGroup nodes
     for group_name in country_groups.keys():
@@ -324,23 +365,25 @@ def build_rules_graph_deontic():
     # 5. Create Prohibitions
     logger.info("Creating prohibitions...")
 
-    prohibitions = [
-        {
-            'name': 'US PII to Restricted Countries',
-            'description': 'Prohibition on transferring PII from US to China, Hong Kong, Macao, Cuba, Iran, North Korea, Russia, Venezuela',
-            'duties': ['Obtain US Legal Approval']  # Duty to get exception
-        },
-        {
-            'name': 'US Data to China Cloud',
-            'description': 'Prohibition on storing/processing US data in China cloud storage',
-            'duties': []  # No exceptions - absolute prohibition
-        },
-        {
-            'name': 'US Health Data Transfer',
-            'description': 'Prohibition on transferring health data from US without approval',
-            'duties': ['Obtain US Legal Exception']  # Duty to get exception
-        }
-    ]
+    # Note: Static prohibitions removed - now loaded from prohibition_rules_config.json
+    prohibitions = []
+
+    # Add dynamic prohibitions from config
+    logger.info("Creating prohibitions from config...")
+    for config_key, rule_config in prohibition_config.get('prohibition_rules', {}).items():
+        if not rule_config.get('enabled', False):
+            continue
+
+        prohibition_name = rule_config.get('prohibition_name', config_key)
+        prohibition_description = rule_config.get('prohibition_description', '')
+        duties_list = rule_config.get('duties', [])
+
+        prohibitions.append({
+            'name': prohibition_name,
+            'description': prohibition_description,
+            'duties': duties_list
+        })
+        logger.info(f"  Added prohibition: {prohibition_name}")
 
     for prohib in prohibitions:
         # Create prohibition node
@@ -504,59 +547,90 @@ def build_rules_graph_deontic():
             'odrl_type': 'Permission',
             'odrl_action': 'transfer',
             'odrl_target': 'PII'
-        },
-        # NEW US BLOCKING RULES
-        # Priority adjusted: 1=absolute prohibition, 2=conditional prohibition, 3=restricted transfer
-        {
-            'rule_id': 'RULE_9',
-            'description': 'US transfers of PII to restricted countries are PROHIBITED',
-            'priority': 2,  # Conditional prohibition (can get approval)
-            'origin_groups': ['US'],
-            'receiving_groups': ['US_RESTRICTED_COUNTRIES'],
-            'origin_match_type': 'ANY',
-            'receiving_match_type': 'ANY',
-            'has_pii_required': True,
-            'action': 'Transfer PII',
-            'permission': None,
-            'prohibition': 'US PII to Restricted Countries',
-            'odrl_type': 'Prohibition',
-            'odrl_action': 'transfer',
-            'odrl_target': 'PII'
-        },
-        {
-            'rule_id': 'RULE_10',
-            'description': 'Data owned, created, developed, or maintained in US cannot be stored or processed in China cloud storage',
-            'priority': 1,  # Absolute prohibition (no exceptions)
-            'origin_groups': ['US'],
-            'receiving_groups': ['CHINA_CLOUD'],
-            'origin_match_type': 'ANY',
-            'receiving_match_type': 'ANY',
-            'has_pii_required': False,
-            'action': 'Store in Cloud',
-            'permission': None,
-            'prohibition': 'US Data to China Cloud',
-            'odrl_type': 'Prohibition',
-            'odrl_action': 'store',
-            'odrl_target': 'Data'
-        },
-        {
-            'rule_id': 'RULE_11',
-            'description': 'Transfer of health-related data from US is PROHIBITED without approval',
-            'priority': 3,  # Restricted transfer (requires exception)
-            'origin_groups': ['US'],
-            'receiving_groups': [],  # Empty list with match_type='ALL' means "any destination"
-            'origin_match_type': 'ANY',
-            'receiving_match_type': 'ALL',
-            'has_pii_required': False,
-            'health_data_required': True,
-            'action': 'Transfer Health Data',
-            'permission': None,
-            'prohibition': 'US Health Data Transfer',
-            'odrl_type': 'Prohibition',
-            'odrl_action': 'transfer',
-            'odrl_target': 'HealthData'
         }
+        # Note: US blocking rules (RULE_9, RULE_10, RULE_11) now loaded from prohibition_rules_config.json
     ]
+
+    # Add dynamic rules from prohibition_rules_config.json
+    logger.info("Adding dynamic prohibition rules from config...")
+    for config_key, rule_config in prohibition_config.get('prohibition_rules', {}).items():
+        if not rule_config.get('enabled', False):
+            logger.info(f"  Skipping disabled rule: {config_key}")
+            continue
+
+        rule_id = rule_config.get('rule_id', f'RULE_CONFIG_{config_key}')
+        priority = rule_config.get('priority', 100)
+        origin_countries = rule_config.get('origin_countries', [])
+        receiving_countries = rule_config.get('receiving_countries', [])
+        bidirectional = rule_config.get('bidirectional', False)
+        requires_pii = rule_config.get('requires_pii', False)
+        requires_health_data = rule_config.get('requires_health_data', False)
+        prohibition_name = rule_config.get('prohibition_name', config_key)
+        action_name = rule_config.get('action_name', 'Transfer Data')
+        odrl_type = rule_config.get('odrl_type', 'Prohibition')
+        odrl_action = rule_config.get('odrl_action', 'transfer')
+        odrl_target = rule_config.get('odrl_target', 'Data')
+
+        # Determine groups and match types
+        origin_group_name = f"ORIGIN_{config_key}"
+        receiving_group_name = f"RECEIVING_{config_key}"
+
+        # Handle receiving_countries = ["ANY"]
+        if receiving_countries == ["ANY"]:
+            receiving_groups_list = []
+            receiving_match_type = 'ALL'
+        else:
+            receiving_groups_list = [receiving_group_name]
+            receiving_match_type = 'ANY'
+
+        # Create the rule
+        dynamic_rule = {
+            'rule_id': rule_id,
+            'description': rule_config.get('prohibition_description', f'Configuration-based rule: {config_key}'),
+            'priority': priority,
+            'origin_groups': [origin_group_name] if origin_countries else [],
+            'receiving_groups': receiving_groups_list,
+            'origin_match_type': 'ANY',
+            'receiving_match_type': receiving_match_type,
+            'has_pii_required': requires_pii,
+            'health_data_required': requires_health_data,
+            'action': action_name,
+            'permission': None,
+            'prohibition': prohibition_name,
+            'odrl_type': odrl_type,
+            'odrl_action': odrl_action,
+            'odrl_target': odrl_target
+        }
+
+        rules.append(dynamic_rule)
+        logger.info(f"  Added dynamic rule {rule_id}: {prohibition_name} (priority {priority})")
+
+        # Create bidirectional rule if requested
+        if bidirectional and receiving_countries != ["ANY"]:
+            reverse_rule_id = f"{rule_id}_REVERSE"
+            reverse_origin_group = receiving_group_name
+            reverse_receiving_group = origin_group_name
+
+            reverse_rule = {
+                'rule_id': reverse_rule_id,
+                'description': f"Reverse: {dynamic_rule['description']}",
+                'priority': priority,
+                'origin_groups': [reverse_origin_group],
+                'receiving_groups': [reverse_receiving_group],
+                'origin_match_type': 'ANY',
+                'receiving_match_type': 'ANY',
+                'has_pii_required': requires_pii,
+                'health_data_required': requires_health_data,
+                'action': action_name,
+                'permission': None,
+                'prohibition': prohibition_name,
+                'odrl_type': odrl_type,
+                'odrl_action': odrl_action,
+                'odrl_target': odrl_target
+            }
+
+            rules.append(reverse_rule)
+            logger.info(f"  Added bidirectional reverse rule {reverse_rule_id}")
 
     # Load health data configuration for RULE_11
     health_config_path = Path(__file__).parent / "health_data_config.json"
