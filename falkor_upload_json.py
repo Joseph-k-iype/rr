@@ -48,11 +48,38 @@ logger = logging.getLogger(__name__)
 
 
 def parse_pipe_separated(value: str) -> list:
-    """Parse pipe-separated string into list, filtering empty values"""
+    """
+    Parse pipe-separated OR comma-separated string into list of unique values
+
+    - Splits by pipe (|) OR comma (,) OR both
+    - Strips whitespace
+    - Filters empty values
+    - Removes duplicates while preserving order
+
+    Examples:
+        "China|China|India" -> ["China", "India"]
+        "Germany,France,Spain" -> ["Germany", "France", "Spain"]
+        "UK|USA,Canada" -> ["UK", "USA", "Canada"]
+    """
     if not value:
         return []
-    items = [item.strip() for item in value.split('|') if item.strip()]
-    return items
+
+    # Replace pipes with commas for unified splitting
+    # This allows mixed separators: "A|B,C" -> "A,B,C"
+    normalized = value.replace('|', ',')
+
+    # Split, strip, and filter empty
+    items = [item.strip() for item in normalized.split(',') if item.strip()]
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique_items = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            unique_items.append(item)
+
+    return unique_items
 
 
 def parse_process_hierarchy(process_string: str) -> list:
@@ -190,9 +217,18 @@ def load_json_to_graph(json_file: str, clear_graph: bool = False):
                 'hrpr_status': case.get('hrprStatus', case.get('hrpr_status', 'N/A'))
             })
 
-            # Create origin country relationship
-            origin_country = case.get('originatingCountry', case.get('origin_country'))
-            if origin_country:
+            # Create origin country relationship(s)
+            # Handle both single country and pipe-separated (defensive)
+            origin_str = case.get('originatingCountry', case.get('origin_country', ''))
+            if isinstance(origin_str, str):
+                origin_countries = parse_pipe_separated(origin_str)
+            elif isinstance(origin_str, list):
+                origin_countries = origin_str
+            else:
+                origin_countries = []
+
+            # Create relationship for each unique origin country
+            for origin in origin_countries:
                 origin_query = """
                 MATCH (c:Case {case_ref_id: $case_ref_id})
                 MERGE (origin:Country {name: $origin_country})
@@ -200,7 +236,7 @@ def load_json_to_graph(json_file: str, clear_graph: bool = False):
                 """
                 graph.query(origin_query, params={
                     'case_ref_id': case_ref_id,
-                    'origin_country': origin_country.strip()
+                    'origin_country': origin.strip()
                 })
 
             # Create receiving jurisdictions (pipe-separated)

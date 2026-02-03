@@ -1,0 +1,41 @@
+[
+    {
+        "caseRefId": "TEST_DEDUP_001",
+        "caseStatus": "Completed",
+        "appId": "APP_TEST_001",
+        "originatingCountry": "United States|China|China|India",
+        "receivingCountry": "Germany|France|United Kingdom|France|Germany",
+        "tiaStatus": "Completed",
+        "piaStatus": "N/A",
+        "hrprStatus": "WITHDRAWN",
+        "purposeOfProcessing": "Office Support|Customer Service|Office Support|Marketing",
+        "processess": "Channels - Mobile - Apps|Channels - Mail/eMail - Support|Channels - Mobile - Apps",
+        "personalDataCategory": "PII|Financial Data|PII|Health Data|Financial Data"
+    },
+    {
+        "caseRefId": "TEST_DEDUP_002",
+        "caseStatus": "Active",
+        "appId": "APP_TEST_002",
+        "originatingCountry": "Germany",
+        "receivingCountry": "France|France|France",
+        "tiaStatus": "Completed",
+        "piaStatus": "Completed",
+        "hrprStatus": "N/A",
+        "purposeOfProcessing": "Analytics|Analytics|Marketing|Analytics",
+        "processess": "Finance - Accounting - Payroll|Finance - Accounting - Payroll",
+        "personalDataCategory": "Contact Information|Contact Information|PII"
+    },
+    {
+        "caseRefId": "TEST_DEDUP_003",
+        "caseStatus": "Pending",
+        "appId": "APP_TEST_003",
+        "originatingCountry": "United Kingdom",
+        "receivingCountry": "United States|Canada|United States|Mexico|Canada",
+        "tiaStatus": "In Progress",
+        "piaStatus": "Not Started",
+        "hrprStatus": "N/A",
+        "purposeOfProcessing": "Sales|Marketing|Sales|Customer Support|Marketing|Sales",
+        "processess": "Sales - B2B - Account Management|HR - Recruitment - |Sales - B2B - Account Management",
+        "personalDataCategory": "Customer Data|PII|Customer Data|Marketing Data|PII"
+    }
+]
