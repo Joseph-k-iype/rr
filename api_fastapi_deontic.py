@@ -1400,6 +1400,11 @@ async def get_all_dropdown_values():
         result_l3 = data_graph.query(query_l3)
         process_l3 = [row[0] for row in result_l3.result_set] if result_l3.result_set else []
 
+        # Get personal data categories
+        query_pdc = "MATCH (pdc:PersonalDataCategory) RETURN DISTINCT pdc.name as name ORDER BY name"
+        result_pdc = data_graph.query(query_pdc)
+        personal_data_categories = [row[0] for row in result_pdc.result_set] if result_pdc.result_set else []
+
         return {
             'success': True,
             'countries': all_countries,
@@ -1408,7 +1413,8 @@ async def get_all_dropdown_values():
             'purposes': purposes,
             'process_l1': process_l1,
             'process_l2': process_l2,
-            'process_l3': process_l3
+            'process_l3': process_l3,
+            'personal_data_categories': personal_data_categories
         }
 
     except Exception as e:
