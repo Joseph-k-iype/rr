@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Compliance Engine - Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: white;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 {
+            font-size: 1.5rem;
+        }
+        .nav-links a {
+            color: white;
+            text-decoration: none;
+            margin-left: 1rem;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+        .nav-links a:hover {
+            background: rgba(255,255,255,0.1);
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        .stat-card {
+            background: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .stat-card h3 {
+            color: #666;
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+        }
+        .stat-card .value {
+            font-size: 2rem;
+            font-weight: 600;
+            color: #1a1a2e;
+        }
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+        }
+        .full-width {
+            grid-column: 1 / -1;
+        }
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .card h2 {
+            margin-bottom: 1rem;
+            color: #1a1a2e;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 0.5rem;
+        }
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+        .form-group select, .form-group input, .form-group textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+        .form-group select:focus, .form-group input:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: #1a1a2e;
+        }
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .checkbox-group input[type="checkbox"] {
+            width: auto;
+        }
+        .btn {
+            background: #1a1a2e;
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background 0.2s;
+        }
+        .btn:hover {
+            background: #2a2a4e;
+        }
+        .btn-secondary {
+            background: #666;
+        }
+        .btn-sm {
+            padding: 0.4rem 0.8rem;
+            font-size: 0.85rem;
+        }
+        .btn-success { background: #22c55e; }
+        .btn-danger { background: #ef4444; }
+        .result-box {
+            background: #f9f9f9;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-top: 1rem;
+        }
+        .result-status {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+        .status-allowed { color: #22c55e; }
+        .status-prohibited { color: #ef4444; }
+        .status-review { color: #f59e0b; }
+        .rules-list { margin-top: 1rem; }
+        .rule-item {
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            padding: 1rem;
+            margin-bottom: 0.5rem;
+        }
+        .rule-item h4 {
+            color: #1a1a2e;
+            margin-bottom: 0.5rem;
+        }
+        .rule-item p {
+            color: #666;
+            font-size: 0.875rem;
+        }
+        .tag {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            margin-right: 0.5rem;
+        }
+        .tag-permission { background: #dcfce7; color: #166534; }
+        .tag-prohibition { background: #fee2e2; color: #991b1b; }
+        .tag-info { background: #dbeafe; color: #1e40af; }
+        .tag-warning { background: #fef3c7; color: #92400e; }
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 2rem;
+        }
+        .loading.active { display: block; }
+
+        /* Evidence styles */
+        .evidence-card {
+            background: #f0fff0;
+            border: 1px solid #bbf7d0;
+            border-left: 4px solid #22c55e;
+            border-radius: 4px;
+            padding: 1rem;
+            margin-bottom: 0.75rem;
+        }
+        .evidence-card.no-match {
+            background: #fff5f5;
+            border-color: #fecaca;
+            border-left-color: #ef4444;
+        }
+        .match-score-bar {
+            height: 8px;
+            background: #e5e7eb;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 0.5rem 0;
+        }
+        .match-score-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+        .score-high { background: #22c55e; }
+        .score-medium { background: #f59e0b; }
+        .score-low { background: #ef4444; }
+        .field-match-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+            margin-top: 0.5rem;
+        }
+        .field-match-item {
+            padding: 0.4rem;
+            border-radius: 4px;
+            background: #f9fafb;
+        }
+        .field-match-item.exact { border-left: 3px solid #22c55e; }
+        .field-match-item.partial { border-left: 3px solid #f59e0b; }
+        .field-match-item.none { border-left: 3px solid #e5e7eb; }
+        .expandable { cursor: pointer; }
+        .expandable-content {
+            display: none;
+            margin-top: 0.5rem;
+        }
+        .expandable-content.open { display: block; }
+
+        /* Evidence summary box */
+        .evidence-summary {
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            border: 1px solid #bae6fd;
+            border-radius: 8px;
+            padding: 1.25rem;
+            margin: 1rem 0;
+        }
+        .evidence-summary h4 {
+            color: #0369a1;
+            margin-bottom: 0.5rem;
+        }
+        .confidence-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        .confidence-high { background: #dcfce7; color: #166534; }
+        .confidence-medium { background: #fef3c7; color: #92400e; }
+        .confidence-low { background: #fee2e2; color: #991b1b; }
+
+        /* Agent audit trail styles */
+        .audit-trail {
+            margin-top: 1rem;
+            border-top: 2px solid #e0e0e0;
+            padding-top: 1rem;
+        }
+        .audit-entry {
+            display: flex;
+            gap: 0.75rem;
+            padding: 0.6rem 0;
+            border-bottom: 1px solid #f3f4f6;
+            font-size: 0.85rem;
+        }
+        .audit-icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            flex-shrink: 0;
+            color: white;
+        }
+        .audit-icon.completed { background: #22c55e; }
+        .audit-icon.failed { background: #ef4444; }
+        .audit-icon.pending { background: #f59e0b; }
+        .audit-icon.in_progress { background: #3b82f6; }
+        .audit-details { flex: 1; }
+        .audit-meta { color: #9ca3af; font-size: 0.75rem; }
+
+        /* Toggle switch for agentic mode */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 48px;
+            height: 24px;
+        }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #ccc;
+            transition: 0.3s;
+            border-radius: 24px;
+        }
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px; width: 18px;
+            left: 3px; bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+        .toggle-switch input:checked + .toggle-slider { background-color: #22c55e; }
+        .toggle-switch input:checked + .toggle-slider:before { transform: translateX(24px); }
+
+        @media (max-width: 768px) {
+            .main-content { grid-template-columns: 1fr; }
+            .field-match-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>Compliance Engine v{{ version }}</h1>
+        <nav class="nav-links">
+            <a href="/">Dashboard</a>
+            <a href="/rules">Rules Overview</a>
+            <a href="/docs">API Docs</a>
+        </nav>
+    </header>
+
+    <div class="container">
+        <!-- Stats Section -->
+        <div class="stats-grid" id="stats-grid">
+            <div class="stat-card">
+                <h3>Total Cases</h3>
+                <div class="value" id="stat-cases">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Countries</h3>
+                <div class="value" id="stat-countries">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>PIA Completed</h3>
+                <div class="value" id="stat-pia">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Active Rules</h3>
+                <div class="value" id="stat-rules">-</div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Evaluation Form -->
+            <div class="card">
+                <h2>Evaluate Data Transfer</h2>
+                <form id="evaluation-form">
+                    <div class="form-group">
+                        <label for="origin">Origin Country</label>
+                        <select id="origin" name="origin_country" required>
+                            <option value="">Select origin country...</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="receiving">Receiving Country</label>
+                        <select id="receiving" name="receiving_country" required>
+                            <option value="">Select receiving country...</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group checkbox-group">
+                        <input type="checkbox" id="pii" name="pii">
+                        <label for="pii">Contains PII (Personal Identifiable Information)</label>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="purposes">Purposes (optional)</label>
+                        <select id="purposes" name="purposes" multiple></select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="process_l1">Process L1 (optional)</label>
+                        <select id="process_l1" name="process_l1" multiple></select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="process_l2">Process L2 (optional)</label>
+                        <select id="process_l2" name="process_l2" multiple></select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="process_l3">Process L3 (optional)</label>
+                        <select id="process_l3" name="process_l3" multiple></select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="metadata">Metadata (JSON, optional)</label>
+                        <textarea id="metadata" name="metadata" rows="3" placeholder='{"data_type": "health_record"}'></textarea>
+                    </div>
+
+                    <button type="submit" class="btn">Evaluate Transfer</button>
+                </form>
+
+                <div class="loading" id="loading">Evaluating...</div>
+
+                <div class="result-box" id="result-box" style="display: none;">
+                    <div class="result-status" id="result-status"></div>
+                    <div id="result-message"></div>
+                    <div id="evidence-summary-container"></div>
+                    <div class="rules-list" id="triggered-rules"></div>
+                </div>
+            </div>
+
+            <!-- Right Column -->
+            <div class="card">
+                <h2>Quick Actions</h2>
+
+                <div style="margin-bottom: 1rem;">
+                    <h3 style="margin-bottom: 0.5rem;">Common Evaluations</h3>
+                    <button class="btn btn-secondary btn-sm" onclick="quickEval('United Kingdom', 'Germany', false)">
+                        UK &rarr; Germany (Non-PII)
+                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="quickEval('United States', 'China', true)">
+                        US &rarr; China (PII)
+                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="quickEval('France', 'India', true)">
+                        France &rarr; India (PII)
+                    </button>
+                </div>
+
+                <div style="margin-top: 2rem;">
+                    <h3 style="margin-bottom: 0.5rem;">AI Rule Generation</h3>
+                    <p style="color: #666; font-size: 0.875rem; margin-bottom: 0.75rem;">
+                        Generate rules from natural language descriptions
+                    </p>
+
+                    <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem;">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="agentic-mode">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span style="font-size: 0.875rem;">
+                            <strong>Agentic Mode</strong>
+                            <span style="color: #666;"> - Auto-create reference data</span>
+                        </span>
+                    </div>
+
+                    <textarea id="rule-text" rows="4" placeholder="Example: Personal health data from the United States should not be transferred to China"></textarea>
+                    <button class="btn" onclick="generateRule()" style="margin-top: 0.5rem;">
+                        Generate Rule
+                    </button>
+                    <div id="ai-result" style="margin-top: 1rem;"></div>
+                </div>
+            </div>
+
+            <!-- Full-width Results Area (Precedent Evidence) -->
+            <div class="card full-width" id="precedent-evidence-card" style="display: none;">
+                <h2>Historical Precedent Evidence</h2>
+                <div id="precedent-evidence-content"></div>
+            </div>
+
+            <!-- Agent Audit Trail -->
+            <div class="card full-width" id="agent-audit-card" style="display: none;">
+                <h2>Agent Audit Trail</h2>
+                <div id="agent-audit-content"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Load dropdown values
+        async function loadDropdowns() {
+            try {
+                const response = await fetch('/api/all-dropdown-values');
+                if (!response.ok) return;
+                const data = await response.json();
+
+                const selects = {
+                    origin: document.getElementById('origin'),
+                    receiving: document.getElementById('receiving'),
+                    purposes: document.getElementById('purposes'),
+                    process_l1: document.getElementById('process_l1'),
+                    process_l2: document.getElementById('process_l2'),
+                    process_l3: document.getElementById('process_l3'),
+                };
+
+                (data.countries || []).forEach(c => {
+                    if (c) {
+                        selects.origin.add(new Option(c, c));
+                        selects.receiving.add(new Option(c, c));
+                    }
+                });
+                (data.purposes || []).forEach(p => { if (p) selects.purposes.add(new Option(p, p)); });
+                const proc = data.processes || {};
+                (proc.l1 || []).forEach(p => { if (p) selects.process_l1.add(new Option(p, p)); });
+                (proc.l2 || []).forEach(p => { if (p) selects.process_l2.add(new Option(p, p)); });
+                (proc.l3 || []).forEach(p => { if (p) selects.process_l3.add(new Option(p, p)); });
+            } catch (error) {
+                console.error('Error loading dropdowns:', error);
+            }
+        }
+
+        // Load stats
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/stats');
+                if (!response.ok) throw new Error('Failed');
+                const data = await response.json();
+                document.getElementById('stat-cases').textContent = data.total_cases || 0;
+                document.getElementById('stat-countries').textContent = data.total_countries || 0;
+                document.getElementById('stat-pia').textContent = data.pia_completed_count || 0;
+                document.getElementById('stat-rules').textContent = data.rules_count || 0;
+            } catch (error) {
+                ['stat-cases','stat-countries','stat-pia','stat-rules'].forEach(id =>
+                    document.getElementById(id).textContent = '0'
+                );
+            }
+        }
+
+        // Evaluate transfer
+        document.getElementById('evaluation-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const data = {
+                origin_country: formData.get('origin_country'),
+                receiving_country: formData.get('receiving_country'),
+                pii: formData.get('pii') === 'on',
+                purposes: Array.from(document.getElementById('purposes').selectedOptions).map(o => o.value),
+                process_l1: Array.from(document.getElementById('process_l1').selectedOptions).map(o => o.value),
+                process_l2: Array.from(document.getElementById('process_l2').selectedOptions).map(o => o.value),
+                process_l3: Array.from(document.getElementById('process_l3').selectedOptions).map(o => o.value)
+            };
+            const metadataStr = document.getElementById('metadata').value;
+            if (metadataStr) {
+                try { data.metadata = JSON.parse(metadataStr); }
+                catch (e) { alert('Invalid JSON in metadata field'); return; }
+            }
+
+            document.getElementById('loading').classList.add('active');
+            document.getElementById('result-box').style.display = 'none';
+            document.getElementById('precedent-evidence-card').style.display = 'none';
+
+            try {
+                const response = await fetch('/api/evaluate-rules', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                const result = await response.json();
+                displayResult(result);
+            } catch (error) {
+                alert('Error evaluating transfer: ' + error.message);
+            } finally {
+                document.getElementById('loading').classList.remove('active');
+            }
+        });
+
+        // Render match score bar
+        function renderMatchScore(score) {
+            const pct = Math.round(score * 100);
+            const cls = pct >= 80 ? 'score-high' : (pct >= 50 ? 'score-medium' : 'score-low');
+            return `
+                <div style="display:flex;align-items:center;gap:0.5rem;">
+                    <div class="match-score-bar" style="flex:1;">
+                        <div class="match-score-fill ${cls}" style="width:${pct}%"></div>
+                    </div>
+                    <span style="font-weight:600;font-size:0.85rem;">${pct}%</span>
+                </div>
+            `;
+        }
+
+        // Render field matches
+        function renderFieldMatches(fieldMatches) {
+            if (!fieldMatches || fieldMatches.length === 0) return '';
+            return `
+                <div class="field-match-grid">
+                    ${fieldMatches.map(fm => `
+                        <div class="field-match-item ${fm.match_type}">
+                            <strong>${fm.field_name.replace(/_/g, ' ')}</strong>
+                            <div style="font-size:0.75rem;color:#666;">
+                                ${fm.match_percentage}% match
+                                ${fm.query_values.length ? `<br>Query: ${fm.query_values.slice(0,3).join(', ')}${fm.query_values.length > 3 ? '...' : ''}` : ''}
+                                ${fm.case_values.length ? `<br>Case: ${fm.case_values.slice(0,3).join(', ')}${fm.case_values.length > 3 ? '...' : ''}` : ''}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        // Display evaluation result
+        function displayResult(result) {
+            const resultBox = document.getElementById('result-box');
+            const statusEl = document.getElementById('result-status');
+            const messageEl = document.getElementById('result-message');
+            const rulesEl = document.getElementById('triggered-rules');
+            const evidenceSummaryEl = document.getElementById('evidence-summary-container');
+
+            resultBox.style.display = 'block';
+            statusEl.textContent = result.transfer_status;
+            statusEl.className = 'result-status';
+            if (result.transfer_status === 'ALLOWED') statusEl.classList.add('status-allowed');
+            else if (result.transfer_status === 'PROHIBITED') statusEl.classList.add('status-prohibited');
+            else statusEl.classList.add('status-review');
+
+            messageEl.innerHTML = `<p>${result.message}</p>`;
+            evidenceSummaryEl.innerHTML = '';
+            rulesEl.innerHTML = '';
+
+            // Evidence Summary
+            if (result.evidence_summary) {
+                const es = result.evidence_summary;
+                const confClass = es.confidence_level === 'high' ? 'confidence-high' :
+                    (es.confidence_level === 'medium' ? 'confidence-medium' : 'confidence-low');
+                evidenceSummaryEl.innerHTML = `
+                    <div class="evidence-summary">
+                        <h4>Evidence Summary
+                            <span class="confidence-badge ${confClass}">${es.confidence_level.toUpperCase()} CONFIDENCE</span>
+                        </h4>
+                        <p style="margin-bottom:0.5rem;">${es.evidence_narrative}</p>
+                        <div style="display:flex;gap:1.5rem;flex-wrap:wrap;font-size:0.85rem;">
+                            <div><strong>Cases Searched:</strong> ${es.total_cases_searched}</div>
+                            <div><strong>Compliant:</strong> ${es.compliant_cases_found}</div>
+                            ${es.strongest_match_case_id ? `<div><strong>Best Match:</strong> ${es.strongest_match_case_id} (${Math.round(es.strongest_match_score*100)}%)</div>` : ''}
+                        </div>
+                        ${es.common_purposes && es.common_purposes.length > 0 ? `
+                            <div style="margin-top:0.5rem;font-size:0.85rem;">
+                                <strong>Common Purposes:</strong> ${es.common_purposes.join(', ')}
+                            </div>
+                        ` : ''}
+                        ${Object.keys(es.assessment_coverage || {}).length > 0 ? `
+                            <div style="margin-top:0.5rem;font-size:0.85rem;">
+                                <strong>Assessment Coverage:</strong>
+                                ${Object.entries(es.assessment_coverage).map(([k,v]) => `${k}: ${v}`).join(' | ')}
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }
+
+            // Detected attributes
+            if (result.detected_attributes && result.detected_attributes.length > 0) {
+                rulesEl.innerHTML += `
+                    <h4>Detected Data Attributes:</h4>
+                    <div style="background:#fff3cd;padding:0.75rem;border-radius:4px;margin-bottom:1rem;">
+                        ${result.detected_attributes.map(attr => `
+                            <div style="margin-bottom:0.5rem;">
+                                <strong>${attr.attribute_name}</strong>
+                                <span class="tag tag-warning">${attr.detection_method}</span>
+                                <br><small>Matched: ${attr.matched_terms.join(', ')}</small>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+
+            // Triggered rules
+            if (result.triggered_rules && result.triggered_rules.length > 0) {
+                rulesEl.innerHTML += '<h4>Triggered Rules:</h4>';
+                result.triggered_rules.forEach(rule => {
+                    const tagClass = rule.outcome === 'prohibition' ? 'tag-prohibition' : 'tag-permission';
+                    rulesEl.innerHTML += `
+                        <div class="rule-item">
+                            <h4>${rule.rule_name}</h4>
+                            <span class="tag ${tagClass}">${rule.outcome.toUpperCase()}</span>
+                            <span class="tag tag-info">${rule.rule_type}</span>
+                            <span class="tag">Priority: ${rule.priority}</span>
+                            <p>${rule.description || ''}</p>
+                        </div>
+                    `;
+                });
+            }
+
+            // Precedent cases with detailed evidence
+            const evidenceCard = document.getElementById('precedent-evidence-card');
+            const evidenceContent = document.getElementById('precedent-evidence-content');
+
+            if (result.precedent_validation && result.precedent_validation.matching_cases &&
+                result.precedent_validation.matching_cases.length > 0) {
+
+                evidenceCard.style.display = 'block';
+                const pv = result.precedent_validation;
+
+                let html = `
+                    <p style="color:#666;font-size:0.9rem;margin-bottom:1rem;">
+                        ${pv.message}
+                    </p>
+                `;
+
+                pv.matching_cases.forEach((c, idx) => {
+                    html += `
+                        <div class="evidence-card">
+                            <div style="display:flex;justify-content:space-between;align-items:start;">
+                                <div>
+                                    <h4 style="margin-bottom:0.25rem;">Case: ${c.case_ref_id || c.case_id}</h4>
+                                    <span class="tag tag-permission">COMPLIANT</span>
+                                    <span class="tag tag-info">${c.case_status}</span>
+                                    ${c.legal_basis ? `<span class="tag">${c.legal_basis}</span>` : ''}
+                                </div>
+                                <div style="text-align:right;min-width:120px;">
+                                    <div style="font-size:0.8rem;color:#666;">Match Score</div>
+                                    ${renderMatchScore(c.match_score)}
+                                </div>
+                            </div>
+
+                            ${c.relevance_explanation ? `
+                                <p style="margin-top:0.5rem;font-size:0.85rem;color:#4b5563;font-style:italic;">
+                                    ${c.relevance_explanation}
+                                </p>
+                            ` : ''}
+
+                            <div style="margin-top:0.75rem;font-size:0.875rem;">
+                                <strong>Route:</strong> ${c.origin_country} &rarr; ${c.receiving_country}<br>
+                                <strong>Assessments:</strong>
+                                <span class="tag ${c.pia_status === 'Completed' ? 'tag-permission' : 'tag-prohibition'}">PIA: ${c.pia_status || 'N/A'}</span>
+                                <span class="tag ${c.tia_status === 'Completed' ? 'tag-permission' : 'tag-prohibition'}">TIA: ${c.tia_status || 'N/A'}</span>
+                                <span class="tag ${c.hrpr_status === 'Completed' ? 'tag-permission' : 'tag-prohibition'}">HRPR: ${c.hrpr_status || 'N/A'}</span>
+                            </div>
+
+                            <div style="margin-top:0.5rem;font-size:0.85rem;">
+                                ${c.purposes && c.purposes.length ? `<div><strong>Purposes:</strong> ${c.purposes.join(', ')}</div>` : ''}
+                                ${c.process_l1 && c.process_l1.length ? `<div><strong>Process L1:</strong> ${c.process_l1.join(', ')}</div>` : ''}
+                                ${c.process_l2 && c.process_l2.length ? `<div><strong>Process L2:</strong> ${c.process_l2.join(', ')}</div>` : ''}
+                                ${c.process_l3 && c.process_l3.length ? `<div><strong>Process L3:</strong> ${c.process_l3.join(', ')}</div>` : ''}
+                                ${c.personal_data_names && c.personal_data_names.length ? `<div><strong>Personal Data:</strong> ${c.personal_data_names.join(', ')}</div>` : ''}
+                                ${c.data_categories && c.data_categories.length ? `<div><strong>Data Categories:</strong> ${c.data_categories.join(', ')}</div>` : ''}
+                                ${c.created_date ? `<div><strong>Created:</strong> ${c.created_date}</div>` : ''}
+                            </div>
+
+                            ${c.field_matches && c.field_matches.length ? `
+                                <div class="expandable" onclick="this.querySelector('.expandable-content').classList.toggle('open')">
+                                    <div style="margin-top:0.5rem;font-size:0.8rem;color:#3b82f6;">
+                                        &#9654; Field-by-field match analysis
+                                    </div>
+                                    <div class="expandable-content">
+                                        ${renderFieldMatches(c.field_matches)}
+                                    </div>
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                });
+
+                evidenceContent.innerHTML = html;
+            } else if (result.precedent_validation) {
+                evidenceCard.style.display = 'block';
+                evidenceContent.innerHTML = `
+                    <div class="evidence-card no-match">
+                        <h4>No Compliant Precedent Cases Found</h4>
+                        <p style="font-size:0.9rem;color:#666;">${result.precedent_validation.message}</p>
+                    </div>
+                `;
+            } else {
+                evidenceCard.style.display = 'none';
+            }
+
+            // Assessment compliance
+            if (result.assessment_compliance) {
+                const ac = result.assessment_compliance;
+                rulesEl.innerHTML += `
+                    <h4 style="margin-top:1rem;">Assessment Requirements:</h4>
+                    <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+                        ${ac.pia_required ? `<span class="tag ${ac.pia_compliant ? 'tag-permission' : 'tag-prohibition'}">PIA: ${ac.pia_compliant ? 'Compliant' : 'Required'}</span>` : ''}
+                        ${ac.tia_required ? `<span class="tag ${ac.tia_compliant ? 'tag-permission' : 'tag-prohibition'}">TIA: ${ac.tia_compliant ? 'Compliant' : 'Required'}</span>` : ''}
+                        ${ac.hrpr_required ? `<span class="tag ${ac.hrpr_compliant ? 'tag-permission' : 'tag-prohibition'}">HRPR: ${ac.hrpr_compliant ? 'Compliant' : 'Required'}</span>` : ''}
+                    </div>
+                    ${ac.missing_assessments && ac.missing_assessments.length > 0 ?
+                        `<p style="color:#ef4444;margin-top:0.5rem;">Missing: ${ac.missing_assessments.join(', ')}</p>` : ''}
+                `;
+            }
+
+            // Prohibition reasons
+            if (result.prohibition_reasons && result.prohibition_reasons.length > 0) {
+                rulesEl.innerHTML += `
+                    <h4 style="margin-top:1rem;color:#ef4444;">Prohibition Reasons:</h4>
+                    <ul style="color:#991b1b;">
+                        ${result.prohibition_reasons.map(r => `<li>${r}</li>`).join('')}
+                    </ul>
+                `;
+            }
+
+            // Required actions
+            if (result.required_actions && result.required_actions.length > 0) {
+                rulesEl.innerHTML += `
+                    <h4 style="margin-top:1rem;">Actions to Resolve:</h4>
+                    <ul style="color:#666;">
+                        ${result.required_actions.map(a => `<li>${a}</li>`).join('')}
+                    </ul>
+                `;
+            }
+        }
+
+        // Quick evaluation
+        function quickEval(origin, receiving, pii) {
+            document.getElementById('origin').value = origin;
+            document.getElementById('receiving').value = receiving;
+            document.getElementById('pii').checked = pii;
+            document.getElementById('evaluation-form').dispatchEvent(new Event('submit'));
+        }
+
+        // Render agent audit trail
+        function renderAgentAuditTrail(session) {
+            if (!session || !session.actions || session.actions.length === 0) return '';
+
+            const statusIcons = {
+                'completed': '&#10003;',
+                'failed': '&#10007;',
+                'pending_approval': '&#9888;',
+                'in_progress': '&#8635;',
+                'approved': '&#10003;',
+                'rejected': '&#10007;',
+                'started': '&#9654;',
+            };
+
+            let html = `
+                <div style="margin-bottom:0.75rem;">
+                    <span class="tag tag-info">Session: ${session.session_id}</span>
+                    <span class="tag">Correlation: ${session.correlation_id}</span>
+                    <span class="tag ${session.agentic_mode ? 'tag-permission' : ''}">
+                        ${session.agentic_mode ? 'Agentic Mode' : 'Standard Mode'}
+                    </span>
+                </div>
+                <div style="font-size:0.85rem;margin-bottom:0.5rem;">
+                    Actions: ${session.total_actions} |
+                    Success: ${session.successful_actions} |
+                    Failed: ${session.failed_actions} |
+                    Pending: ${session.pending_approvals}
+                </div>
+            `;
+
+            session.actions.forEach(action => {
+                const statusClass = action.status.replace('pending_approval', 'pending');
+                html += `
+                    <div class="audit-entry">
+                        <div class="audit-icon ${statusClass}">
+                            ${statusIcons[action.status] || '?'}
+                        </div>
+                        <div class="audit-details">
+                            <strong>${action.agent_name}</strong>: ${action.action_type.replace(/_/g, ' ')}
+                            <span class="tag" style="font-size:0.7rem;">${action.status}</span>
+                            ${action.requires_approval ? '<span class="tag tag-warning" style="font-size:0.7rem;">Needs Approval</span>' : ''}
+                            <div style="color:#666;font-size:0.8rem;">${action.output_summary || action.input_summary}</div>
+                            ${action.duration_ms > 0 ? `<span class="audit-meta">${action.duration_ms.toFixed(0)}ms</span>` : ''}
+                            ${action.error_message ? `<div style="color:#ef4444;font-size:0.8rem;">${action.error_message}</div>` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+
+            return html;
+        }
+
+        // Render reference data results
+        function renderReferenceData(refData) {
+            if (!refData || refData.length === 0) return '';
+            return `
+                <h4 style="margin-top:1rem;">Reference Data Created:</h4>
+                ${refData.map(rd => `
+                    <div class="rule-item" style="border-left:4px solid ${rd.created ? '#22c55e' : '#ef4444'};">
+                        <div style="display:flex;justify-content:space-between;">
+                            <div>
+                                <strong>${rd.data_type.replace(/_/g, ' ')}</strong>: ${rd.name}
+                                <span class="tag ${rd.approval_status === 'pending' ? 'tag-warning' : 'tag-permission'}">
+                                    ${rd.approval_status}
+                                </span>
+                            </div>
+                        </div>
+                        ${rd.details.python_code ? `
+                            <pre style="font-size:0.8rem;background:#f3f4f6;padding:0.5rem;border-radius:4px;margin-top:0.5rem;overflow-x:auto;max-height:120px;">${rd.details.python_code}</pre>
+                        ` : ''}
+                        ${rd.details.keywords_count ? `<div style="font-size:0.85rem;color:#666;">Keywords: ${rd.details.keywords_count}, Patterns: ${rd.details.patterns_count || 0}</div>` : ''}
+                        ${rd.details.countries ? `<div style="font-size:0.85rem;color:#666;">Countries: ${rd.details.countries.slice(0,5).join(', ')}${rd.details.countries.length > 5 ? '...' : ''}</div>` : ''}
+                    </div>
+                `).join('')}
+            `;
+        }
+
+        // Generate rule with AI
+        async function generateRule() {
+            const ruleText = document.getElementById('rule-text').value;
+            if (!ruleText) { alert('Please enter a rule description'); return; }
+
+            const agenticMode = document.getElementById('agentic-mode').checked;
+            const resultDiv = document.getElementById('ai-result');
+            const auditCard = document.getElementById('agent-audit-card');
+            const auditContent = document.getElementById('agent-audit-content');
+
+            resultDiv.innerHTML = '<div style="text-align:center;padding:1rem;">Generating' + (agenticMode ? ' (Agentic Mode)' : '') + '...</div>';
+            auditCard.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/ai/generate-rule', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        rule_text: ruleText,
+                        rule_country: 'United States',
+                        test_in_temp_graph: false,
+                        agentic_mode: agenticMode,
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    resultDiv.innerHTML = `
+                        <div style="background:#dcfce7;padding:1rem;border-radius:4px;">
+                            <strong>Rule Generated Successfully!</strong>
+                            ${result.agentic_mode ? '<span class="tag tag-permission">Agentic Mode</span>' : ''}
+                            <p>Rule ID: ${result.rule_id} | Type: ${result.rule_type}</p>
+                            <pre style="overflow:auto;max-height:200px;background:#f0f0f0;padding:0.5rem;margin-top:0.5rem;font-size:0.8rem;">${JSON.stringify(result.generated_dictionary, null, 2)}</pre>
+                            ${result.attribute_config ? `
+                                <div style="margin-top:0.5rem;">
+                                    <strong>Attribute Config:</strong>
+                                    Keywords: ${result.attribute_config.keywords.length},
+                                    Patterns: ${result.attribute_config.patterns.length}
+                                </div>
+                            ` : ''}
+                            ${renderReferenceData(result.reference_data_created)}
+                        </div>
+                    `;
+
+                    // Show agent audit trail
+                    if (result.agent_session) {
+                        auditCard.style.display = 'block';
+                        auditContent.innerHTML = renderAgentAuditTrail(result.agent_session);
+                    }
+                } else {
+                    resultDiv.innerHTML = `
+                        <div style="background:#fee2e2;padding:1rem;border-radius:4px;">
+                            <strong>Generation Failed</strong>
+                            <p>${result.message}</p>
+                            ${result.validation_errors && result.validation_errors.length > 0 ? `
+                                <ul style="font-size:0.85rem;margin-top:0.5rem;">
+                                    ${result.validation_errors.map(e => `<li>${e}</li>`).join('')}
+                                </ul>
+                            ` : ''}
+                        </div>
+                    `;
+
+                    // Show audit trail even on failure
+                    if (result.agent_session) {
+                        auditCard.style.display = 'block';
+                        auditContent.innerHTML = renderAgentAuditTrail(result.agent_session);
+                    }
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div style="background:#fee2e2;padding:1rem;border-radius:4px;">
+                        <strong>Error</strong><p>${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Initialize
+        loadDropdowns();
+        loadStats();
+    </script>
+</body>
+</html>
