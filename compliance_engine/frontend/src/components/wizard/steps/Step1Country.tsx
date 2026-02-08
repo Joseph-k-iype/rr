@@ -33,6 +33,7 @@ export function Step1Country() {
           {dropdowns?.countries.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
         <p className="text-xs text-gray-500 mt-1">Hold Ctrl/Cmd to select multiple</p>
+        <p className="text-xs text-gray-400 mt-0.5">(Optional — required only for transfer-type rules)</p>
       </div>
     </div>
   );

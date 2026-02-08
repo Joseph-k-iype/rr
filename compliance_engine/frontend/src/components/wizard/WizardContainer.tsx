@@ -35,8 +35,12 @@ export function WizardContainer() {
 
   const canGoNext = useCallback(() => {
     switch (store.currentStep) {
-      case 1: return !!store.originCountry && store.receivingCountries.length > 0;
-      case 2: return !!store.scenarioType;
+      case 1: return !!store.originCountry;
+      case 2: return !!store.scenarioType && (
+        store.scenarioType !== 'transfer' || store.receivingCountries.length > 0
+      ) && (
+        store.scenarioType !== 'attribute' || store.dataCategories.length > 0
+      );
       case 3: return store.ruleText.length > 10;
       case 4: return !!store.analysisResult;
       case 5: return true;
@@ -51,14 +55,15 @@ export function WizardContainer() {
 
   const handleNext = async () => {
     const step = store.currentStep;
+    let sessionId = store.sessionId;
 
-    if (step === 1 && !store.sessionId) {
-      // Start session
+    if (step === 1 && !sessionId) {
       const { session_id } = await startWizardSession();
       store.setSessionId(session_id);
+      sessionId = session_id;
     }
 
-    if (step <= 3 && store.sessionId) {
+    if (step <= 3 && sessionId) {
       store.setProcessing(true);
       try {
         const stepData: Record<number, Record<string, unknown>> = {
@@ -67,15 +72,13 @@ export function WizardContainer() {
           3: { rule_text: store.ruleText },
         };
 
-        const result = await submitWizardStep(store.sessionId, { step, data: stepData[step] || {} });
+        const result = await submitWizardStep(sessionId, { step, data: stepData[step] || {} });
 
         if (step === 3) {
-          // AI processing happens - fetch full session to populate store
           if (result.status === 'failed') {
             store.setError(result.error_message || 'AI processing failed');
           } else {
-            // Fetch the session state to get AI results
-            const session = await getWizardSession(store.sessionId);
+            const session = await getWizardSession(sessionId);
             if (session.analysis_result) {
               store.setAnalysisResult(session.analysis_result);
             }
@@ -96,10 +99,10 @@ export function WizardContainer() {
       store.setProcessing(false);
     }
 
-    if (step === 8 && store.sessionId && !store.sandboxGraphName) {
+    if (step === 8 && sessionId && !store.sandboxGraphName) {
       store.setProcessing(true);
       try {
-        const result = await loadSandbox(store.sessionId);
+        const result = await loadSandbox(sessionId);
         store.setSandboxGraphName(result.sandbox_graph);
       } catch (err) {
         store.setError(err instanceof Error ? err.message : 'Sandbox load failed');
@@ -108,10 +111,10 @@ export function WizardContainer() {
       return;
     }
 
-    if (step === 10 && store.sessionId) {
+    if (step === 10 && sessionId) {
       store.setProcessing(true);
       try {
-        await approveWizard(store.sessionId);
+        await approveWizard(sessionId);
         store.setApproved(true);
       } catch (err) {
         store.setError(err instanceof Error ? err.message : 'Approval failed');

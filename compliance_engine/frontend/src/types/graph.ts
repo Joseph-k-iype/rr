@@ -12,6 +12,8 @@ export interface GraphNode {
     has_pii_required?: boolean;
     permission_name?: string;
     prohibition_name?: string;
+    expanded?: boolean;
+    onExpand?: () => void;
   };
   position: { x: number; y: number };
 }
