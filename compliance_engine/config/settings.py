@@ -48,7 +48,7 @@ class AIServiceSettings(BaseSettings):
         default="https://gapi-api.com/v1/api/v1/chat/completions",
         validation_alias="AI_LLM_API_URL"
     )
-    llm_model: str = Field(default="gpt-4.1", validation_alias="AI_LLM_MODEL")
+    llm_model: str = Field(default="o3-mini", validation_alias="AI_LLM_MODEL")
     llm_use_case_id: str = Field(default="compliance-engine", validation_alias="AI_USE_CASE_ID")
 
     # Token settings
@@ -63,6 +63,12 @@ class AIServiceSettings(BaseSettings):
     enable_auto_reference_data: bool = Field(default=True, validation_alias="ENABLE_AUTO_REFERENCE_DATA")
     agent_audit_retention_days: int = Field(default=90, validation_alias="AGENT_AUDIT_RETENTION_DAYS")
     require_approval_for_writes: bool = Field(default=True, validation_alias="REQUIRE_APPROVAL_FOR_WRITES")
+
+    # Auth headers for Phase 2 API calls
+    auth_token_type: str = Field(default="SESSION_TOKEN", validation_alias="AI_AUTH_TOKEN_TYPE")
+    auth_header_name: str = Field(default="X-HSBC-E2E-Trust-Token", validation_alias="AI_AUTH_HEADER_NAME")
+    correlation_id_header: str = Field(default="x-correlation-id", validation_alias="AI_CORRELATION_ID_HEADER")
+    session_id_header: str = Field(default="x-usersession-id", validation_alias="AI_SESSION_ID_HEADER")
 
 
 class APISettings(BaseSettings):
@@ -102,6 +108,20 @@ class CacheSettings(BaseSettings):
     enable_cache: bool = Field(default=True, validation_alias="ENABLE_CACHE")
     cache_ttl_seconds: int = Field(default=300, validation_alias="CACHE_TTL")
     max_cache_size: int = Field(default=1000, validation_alias="MAX_CACHE_SIZE")
+
+
+class SSESettings(BaseSettings):
+    """Server-Sent Events Configuration"""
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
+
+    heartbeat_interval_seconds: int = Field(default=15, validation_alias="SSE_HEARTBEAT_INTERVAL")
+    max_connections_per_session: int = Field(default=5, validation_alias="SSE_MAX_CONNECTIONS")
+    event_queue_size: int = Field(default=100, validation_alias="SSE_QUEUE_SIZE")
+    connection_timeout_seconds: int = Field(default=300, validation_alias="SSE_CONNECTION_TIMEOUT")
 
 
 class PathSettings(BaseSettings):
@@ -152,7 +172,7 @@ class Settings(BaseSettings):
     )
 
     app_name: str = Field(default="Compliance Engine", validation_alias="APP_NAME")
-    app_version: str = Field(default="5.0.0", validation_alias="APP_VERSION")
+    app_version: str = Field(default="6.0.0", validation_alias="APP_VERSION")
     environment: str = Field(default="development", validation_alias="ENVIRONMENT")
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
 
@@ -161,6 +181,7 @@ class Settings(BaseSettings):
     ai: AIServiceSettings = Field(default_factory=AIServiceSettings)
     api: APISettings = Field(default_factory=APISettings)
     cache: CacheSettings = Field(default_factory=CacheSettings)
+    sse: SSESettings = Field(default_factory=SSESettings)
     paths: PathSettings = Field(default_factory=PathSettings)
 
 

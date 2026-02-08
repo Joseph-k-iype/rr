@@ -3,7 +3,7 @@
 Rule Generator CLI
 ==================
 Interactive command-line tool for developers to generate rules using AI.
-Provides a fully agentic workflow with developer sign-off before committing to the graph.
+Uses the new LangGraph rule ingestion workflow with multi-agent system.
 
 Usage:
     python -m cli.rule_generator_cli
@@ -21,8 +21,7 @@ from datetime import datetime
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agents.rule_generator import get_rule_generator, GeneratedRule
-from agents.graph_workflow import generate_rule_with_langgraph, RuleGenerationResult
+from agents.workflows.rule_ingestion_workflow import run_rule_ingestion, RuleIngestionResult
 from services.database import get_db_service
 from utils.graph_builder import RulesGraphBuilder
 from config.settings import settings
@@ -97,17 +96,17 @@ def confirm(prompt: str, default: bool = False) -> bool:
     return response in ('y', 'yes')
 
 
-def display_generated_rule(result: RuleGenerationResult):
+def display_generated_rule(result: RuleIngestionResult):
     """Display the generated rule in a formatted way"""
     print_section("Generated Rule Definition")
 
     if result.rule_definition:
-        print(f"{Colors.CYAN}Rule ID:{Colors.END} {result.rule_id}")
-        print(f"{Colors.CYAN}Rule Type:{Colors.END} {result.rule_type}")
+        rule_def = result.rule_definition
+        print(f"{Colors.CYAN}Rule ID:{Colors.END} {rule_def.get('rule_id', 'N/A')}")
+        print(f"{Colors.CYAN}Rule Type:{Colors.END} {rule_def.get('rule_type', 'N/A')}")
         print(f"{Colors.CYAN}Iterations Used:{Colors.END} {result.iterations}")
         print()
 
-        rule_def = result.rule_definition
         print(f"  {Colors.BOLD}Name:{Colors.END} {rule_def.get('name', 'N/A')}")
         print(f"  {Colors.BOLD}Description:{Colors.END} {rule_def.get('description', 'N/A')}")
         print(f"  {Colors.BOLD}Priority:{Colors.END} {rule_def.get('priority', 'N/A')}")
@@ -142,16 +141,13 @@ def display_generated_rule(result: RuleGenerationResult):
             print(f"  {queries['rule_insert'][:200]}..." if len(queries.get('rule_insert', '')) > 200 else f"  {queries.get('rule_insert', 'N/A')}")
             print()
 
-    if result.reasoning:
+    if result.analysis_result:
         print_section("AI Reasoning")
-        analyzer_reasoning = result.reasoning.get('analyzer', {})
-        if analyzer_reasoning:
-            print(f"{Colors.CYAN}Chain of Thought Analysis:{Colors.END}")
-            for step, analysis in analyzer_reasoning.items():
-                print(f"  {Colors.BOLD}{step}:{Colors.END} {analysis[:100]}..." if len(str(analysis)) > 100 else f"  {Colors.BOLD}{step}:{Colors.END} {analysis}")
+        for step, analysis in result.analysis_result.items():
+            print(f"  {Colors.BOLD}{step}:{Colors.END} {str(analysis)[:100]}..." if len(str(analysis)) > 100 else f"  {Colors.BOLD}{step}:{Colors.END} {analysis}")
 
 
-def display_python_code(result: RuleGenerationResult):
+def display_python_code(result: RuleIngestionResult):
     """Display the Python code to add this rule manually"""
     if not result.rule_definition:
         return
@@ -215,17 +211,16 @@ def display_python_code(result: RuleGenerationResult):
     print(f"{Colors.YELLOW}{code}{Colors.END}")
 
 
-def save_to_file(result: RuleGenerationResult, filename: str):
+def save_to_file(result: RuleIngestionResult, filename: str):
     """Save the generated rule to a JSON file"""
     output = {
         "generated_at": datetime.now().isoformat(),
         "success": result.success,
-        "rule_id": result.rule_id,
-        "rule_type": result.rule_type,
         "rule_definition": result.rule_definition,
         "cypher_queries": result.cypher_queries,
+        "dictionary_result": result.dictionary_result,
         "validation_result": result.validation_result,
-        "reasoning": result.reasoning,
+        "analysis_result": result.analysis_result,
         "iterations": result.iterations,
     }
 
@@ -235,7 +230,7 @@ def save_to_file(result: RuleGenerationResult, filename: str):
     print_success(f"Rule saved to {filename}")
 
 
-def upload_to_graph(result: RuleGenerationResult) -> bool:
+def upload_to_graph(result: RuleIngestionResult) -> bool:
     """Upload the generated rule to the RulesGraph"""
     try:
         db = get_db_service()
@@ -250,7 +245,8 @@ def upload_to_graph(result: RuleGenerationResult) -> bool:
             success = builder.add_attribute_rule(rule_def)
 
         if success:
-            print_success(f"Rule {result.rule_id} uploaded to RulesGraph")
+            rule_id = rule_def.get('rule_id', 'unknown')
+            print_success(f"Rule {rule_id} uploaded to RulesGraph")
             return True
         else:
             print_error("Failed to upload rule to graph")
@@ -283,11 +279,16 @@ def interactive_mode():
             continue
 
         # Get additional context
-        rule_country = get_user_input("Primary country context", "United States")
-        rule_type_hint = get_user_input("Rule type hint (transfer/attribute)", "transfer")
+        origin_country = get_user_input("Origin country", "United States")
+        scenario_type = get_user_input("Scenario type (transfer/attribute)", "transfer")
+        receiving_input = get_user_input("Receiving countries (comma-separated)", "")
+        receiving_countries = [c.strip() for c in receiving_input.split(",") if c.strip()] if receiving_input else []
 
-        if rule_type_hint not in ('transfer', 'attribute'):
-            rule_type_hint = None
+        data_categories_input = get_user_input("Data categories (comma-separated, or empty)", "")
+        data_categories = [c.strip() for c in data_categories_input.split(",") if c.strip()] if data_categories_input else None
+
+        if scenario_type not in ('transfer', 'attribute'):
+            scenario_type = "transfer"
 
         # Generate the rule
         print()
@@ -295,19 +296,17 @@ def interactive_mode():
         print_info("This may take a moment as the LangGraph workflow runs...")
         print()
 
-        result = generate_rule_with_langgraph(
+        result = run_rule_ingestion(
+            origin_country=origin_country,
+            scenario_type=scenario_type,
+            receiving_countries=receiving_countries,
             rule_text=rule_text,
-            rule_country=rule_country,
-            rule_type_hint=rule_type_hint,
-            max_iterations=3
+            data_categories=data_categories,
+            max_iterations=3,
         )
 
         if not result.success:
-            print_error(f"Rule generation failed: {result.message}")
-            if result.errors:
-                print_error("Errors:")
-                for error in result.errors:
-                    print(f"  - {error}")
+            print_error(f"Rule generation failed: {result.error_message}")
             continue
 
         # Display the generated rule
@@ -325,7 +324,8 @@ def interactive_mode():
 
         # Option 2: Save to file
         if confirm("Save rule to JSON file?"):
-            filename = get_user_input("Filename", f"generated_rule_{result.rule_id}.json")
+            rule_id = result.rule_definition.get('rule_id', 'unknown') if result.rule_definition else 'unknown'
+            filename = get_user_input("Filename", f"generated_rule_{rule_id}.json")
             save_to_file(result, filename)
 
         # Option 3: Upload to graph (requires explicit approval)
@@ -340,25 +340,23 @@ def interactive_mode():
             print_info("Rule not uploaded - you can add it manually using the Python code above")
 
 
-def single_rule_mode(rule_text: str, rule_country: str = "United States",
-                     rule_type_hint: Optional[str] = None, auto_approve: bool = False):
+def single_rule_mode(rule_text: str, origin_country: str = "United States",
+                     scenario_type: str = "transfer", auto_approve: bool = False):
     """Generate a single rule from command line arguments"""
     print_banner()
     print_info(f"Generating rule from: {rule_text[:50]}...")
     print()
 
-    result = generate_rule_with_langgraph(
+    result = run_rule_ingestion(
+        origin_country=origin_country,
+        scenario_type=scenario_type,
+        receiving_countries=[],
         rule_text=rule_text,
-        rule_country=rule_country,
-        rule_type_hint=rule_type_hint,
-        max_iterations=3
+        max_iterations=3,
     )
 
     if not result.success:
-        print_error(f"Rule generation failed: {result.message}")
-        if result.errors:
-            for error in result.errors:
-                print(f"  - {error}")
+        print_error(f"Rule generation failed: {result.error_message}")
         sys.exit(1)
 
     display_generated_rule(result)
@@ -419,7 +417,8 @@ Examples:
         '--type', '-t',
         type=str,
         choices=['transfer', 'attribute'],
-        help='Rule type hint'
+        default='transfer',
+        help='Scenario type (default: transfer)'
     )
 
     parser.add_argument(
@@ -441,9 +440,9 @@ Examples:
     elif args.rule:
         single_rule_mode(
             rule_text=args.rule,
-            rule_country=args.country,
-            rule_type_hint=args.type,
-            auto_approve=args.auto_approve
+            origin_country=args.country,
+            scenario_type=args.type,
+            auto_approve=args.auto_approve,
         )
     else:
         # Default to interactive mode

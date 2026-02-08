@@ -1,298 +1,252 @@
 """
-Tests for Agent Audit Trail
-============================
-Comprehensive tests for the enterprise-grade agent audit trail service.
+Tests for Agent Audit Event Store
+====================================
+Tests for the event-sourced audit trail used by the agent workflow.
 """
 
 import pytest
+import json
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from services.agent_audit import (
-    AgentAuditTrail,
-    AgentActionType,
-    AgentActionStatus,
-    AgentAuditEntry,
-    AgentSession,
-)
+from agents.audit.event_store import EventStore, get_event_store
+from agents.audit.event_types import AuditEventType, AuditEvent
 
 
-class TestAgentAuditTrail:
-    """Tests for the AgentAuditTrail service"""
+class TestAuditEventType:
+    """Tests for AuditEventType enum"""
+
+    def test_event_types_exist(self):
+        """Test that all expected event types exist"""
+        assert AuditEventType.WORKFLOW_STARTED
+        assert AuditEventType.WORKFLOW_COMPLETED
+        assert AuditEventType.WORKFLOW_FAILED
+        assert AuditEventType.AGENT_INVOKED
+        assert AuditEventType.AGENT_FAILED
+        assert AuditEventType.RULE_ANALYZED
+        assert AuditEventType.CYPHER_GENERATED
+        assert AuditEventType.VALIDATION_PASSED
+        assert AuditEventType.VALIDATION_FAILED
+
+
+class TestAuditEvent:
+    """Tests for AuditEvent model"""
+
+    def test_create_event(self):
+        """Test creating an audit event"""
+        event = AuditEvent(
+            session_id="sess-001",
+            event_type=AuditEventType.AGENT_INVOKED,
+            agent_name="rule_analyzer",
+        )
+        assert event.session_id == "sess-001"
+        assert event.event_type == AuditEventType.AGENT_INVOKED
+        assert event.agent_name == "rule_analyzer"
+        assert event.timestamp is not None
+
+    def test_event_with_data(self):
+        """Test event with data payload"""
+        event = AuditEvent(
+            session_id="sess-001",
+            event_type=AuditEventType.RULE_ANALYZED,
+            agent_name="rule_analyzer",
+            data={"rule_id": "RULE_TEST_001"},
+            duration_ms=250.0,
+        )
+        assert event.data["rule_id"] == "RULE_TEST_001"
+        assert event.duration_ms == 250.0
+
+    def test_event_with_error(self):
+        """Test event with error"""
+        event = AuditEvent(
+            session_id="sess-001",
+            event_type=AuditEventType.AGENT_FAILED,
+            agent_name="cypher_generator",
+            error="Failed to parse LLM response",
+        )
+        assert event.error == "Failed to parse LLM response"
+
+    def test_event_model_dump(self):
+        """Test serializing event to dict"""
+        event = AuditEvent(
+            session_id="sess-001",
+            event_type=AuditEventType.AGENT_INVOKED,
+            agent_name="validator",
+        )
+        dumped = event.model_dump()
+        assert "session_id" in dumped
+        assert "event_type" in dumped
+        assert "timestamp" in dumped
+
+
+class TestEventStore:
+    """Tests for the EventStore service"""
 
     @pytest.fixture
-    def audit(self):
-        """Create a fresh audit trail for each test"""
-        return AgentAuditTrail(max_sessions=100, retention_days=30)
+    def store(self):
+        """Create a fresh event store for each test"""
+        return EventStore()
 
-    def test_start_session(self, audit):
-        """Test starting a new audit session"""
-        session = audit.start_session(
-            session_type="rule_generation",
-            initiator="api",
-            agentic_mode=True,
-            metadata={"test": True},
+    def test_append_event(self, store):
+        """Test appending a single event"""
+        store.append(
+            session_id="sess-001",
+            event_type=AuditEventType.WORKFLOW_STARTED,
         )
-        assert session.session_id
-        assert session.correlation_id.startswith("COR-")
-        assert session.session_type == "rule_generation"
-        assert session.agentic_mode is True
-        assert session.status == "active"
+        events = store.get_events("sess-001")
+        assert len(events) == 1
+        assert events[0].event_type == AuditEventType.WORKFLOW_STARTED
 
-    def test_log_action(self, audit):
-        """Test logging an action within a session"""
-        session = audit.start_session("test")
-        entry = audit.log_action(
-            session_id=session.session_id,
-            action_type=AgentActionType.RULE_ANALYSIS,
-            agent_name="TestAgent",
-            status=AgentActionStatus.STARTED,
-            input_summary="Testing rule analysis",
-        )
-        assert entry.entry_id
-        assert entry.correlation_id == session.correlation_id
-        assert entry.action_type == AgentActionType.RULE_ANALYSIS
-        assert entry.agent_name == "TestAgent"
+    def test_append_multiple_events(self, store):
+        """Test appending multiple events to the same session"""
+        store.append("sess-001", AuditEventType.WORKFLOW_STARTED)
+        store.append("sess-001", AuditEventType.AGENT_INVOKED, agent_name="analyzer")
+        store.append("sess-001", AuditEventType.RULE_ANALYZED, agent_name="analyzer", duration_ms=500)
+        store.append("sess-001", AuditEventType.AGENT_INVOKED, agent_name="cypher_gen")
+        store.append("sess-001", AuditEventType.CYPHER_GENERATED, agent_name="cypher_gen")
+        store.append("sess-001", AuditEventType.WORKFLOW_COMPLETED)
 
-    def test_complete_action(self, audit):
-        """Test completing a started action with duration tracking"""
-        session = audit.start_session("test")
-        entry = audit.log_action(
-            session_id=session.session_id,
-            action_type=AgentActionType.RULE_ANALYSIS,
-            agent_name="TestAgent",
-        )
+        events = store.get_events("sess-001")
+        assert len(events) == 6
 
-        time.sleep(0.01)  # Small delay for duration tracking
+    def test_events_are_ordered(self, store):
+        """Test that events maintain insertion order"""
+        store.append("sess-001", AuditEventType.WORKFLOW_STARTED)
+        store.append("sess-001", AuditEventType.AGENT_INVOKED, agent_name="a")
+        store.append("sess-001", AuditEventType.AGENT_INVOKED, agent_name="b")
 
-        audit.complete_action(
-            entry_id=entry.entry_id,
-            status=AgentActionStatus.COMPLETED,
-            output_summary="Analysis complete",
-        )
+        events = store.get_events("sess-001")
+        assert events[0].event_type == AuditEventType.WORKFLOW_STARTED
+        assert events[1].agent_name == "a"
+        assert events[2].agent_name == "b"
 
-        session_data = audit.get_session(session.session_id)
-        completed_entry = session_data["entries"][0]
-        assert completed_entry["status"] == AgentActionStatus.COMPLETED
-        assert completed_entry["duration_ms"] > 0
-        assert completed_entry["output_summary"] == "Analysis complete"
+    def test_get_events_empty_session(self, store):
+        """Test retrieving events for a nonexistent session"""
+        events = store.get_events("nonexistent")
+        assert len(events) == 0
 
-    def test_complete_session(self, audit):
-        """Test completing a session"""
-        session = audit.start_session("test")
-        audit.log_action(
-            session_id=session.session_id,
-            action_type=AgentActionType.RULE_ANALYSIS,
-            agent_name="TestAgent",
-            status=AgentActionStatus.COMPLETED,
-        )
+    def test_session_summary(self, store):
+        """Test getting a session summary"""
+        store.append("sess-001", AuditEventType.WORKFLOW_STARTED)
+        store.append("sess-001", AuditEventType.AGENT_INVOKED, agent_name="analyzer")
+        store.append("sess-001", AuditEventType.RULE_ANALYZED, agent_name="analyzer")
 
-        audit.complete_session(
-            session.session_id,
-            summary="Test completed",
-            status="completed",
-        )
+        summary = store.get_session_summary("sess-001")
+        assert summary["session_id"] == "sess-001"
+        assert summary["total_events"] == 3
 
-        session_data = audit.get_session(session.session_id)
-        assert session_data["status"] == "completed"
-        assert session_data["summary"] == "Test completed"
-        assert session_data["completed_at"] is not None
+    def test_session_summary_empty(self, store):
+        """Test summary for nonexistent session"""
+        summary = store.get_session_summary("nonexistent")
+        assert summary["total_events"] == 0
 
-    def test_approval_workflow(self, audit):
-        """Test approve/reject workflow for pending actions"""
-        session = audit.start_session("test", agentic_mode=True)
-        entry = audit.log_action(
-            session_id=session.session_id,
-            action_type=AgentActionType.COUNTRY_GROUP_CREATION,
-            agent_name="CountryGroupAgent",
-            status=AgentActionStatus.PENDING_APPROVAL,
-            requires_approval=True,
-        )
+    def test_list_sessions(self, store):
+        """Test listing all sessions"""
+        store.append("sess-001", AuditEventType.WORKFLOW_STARTED)
+        store.append("sess-002", AuditEventType.WORKFLOW_STARTED)
+        store.append("sess-003", AuditEventType.WORKFLOW_STARTED)
+        store.append("sess-001", AuditEventType.WORKFLOW_COMPLETED)
 
-        # Verify pending approvals
-        pending = audit.get_pending_approvals()
-        assert len(pending) == 1
-        assert pending[0]["entry_id"] == entry.entry_id
+        sessions = store.list_sessions()
+        assert len(sessions) == 3
 
-        # Approve the action
-        result = audit.approve_action(entry.entry_id, approved_by="admin")
-        assert result is True
+    def test_list_sessions_with_limit(self, store):
+        """Test listing sessions with limit"""
+        for i in range(10):
+            store.append(f"sess-{i:03d}", AuditEventType.WORKFLOW_STARTED)
 
-        # Verify approved
-        session_data = audit.get_session(session.session_id)
-        approved_entry = session_data["entries"][0]
-        assert approved_entry["status"] == AgentActionStatus.APPROVED
-        assert approved_entry["approved_by"] == "admin"
+        sessions = store.list_sessions(limit=5)
+        assert len(sessions) == 5
 
-        # Verify no more pending
-        pending = audit.get_pending_approvals()
-        assert len(pending) == 0
+    def test_export_session(self, store):
+        """Test exporting session as JSON string"""
+        store.append("sess-001", AuditEventType.AGENT_INVOKED, agent_name="test")
+        store.append("sess-001", AuditEventType.RULE_ANALYZED, agent_name="test")
 
-    def test_reject_action(self, audit):
-        """Test rejecting an action"""
-        session = audit.start_session("test")
-        entry = audit.log_action(
-            session_id=session.session_id,
-            action_type=AgentActionType.ATTRIBUTE_CONFIG_CREATION,
-            agent_name="AttributeConfigAgent",
-            status=AgentActionStatus.PENDING_APPROVAL,
-            requires_approval=True,
-        )
-
-        result = audit.reject_action(
-            entry.entry_id,
-            rejected_by="reviewer",
-            reason="Incorrect keywords",
-        )
-        assert result is True
-
-        session_data = audit.get_session(session.session_id)
-        rejected_entry = session_data["entries"][0]
-        assert rejected_entry["status"] == AgentActionStatus.REJECTED
-        assert rejected_entry["error_message"] == "Incorrect keywords"
-
-    def test_get_recent_sessions(self, audit):
-        """Test retrieving recent sessions with filtering"""
-        audit.start_session("rule_generation", agentic_mode=True)
-        audit.start_session("evaluation")
-        audit.start_session("rule_generation")
-
-        # All sessions
-        all_sessions = audit.get_recent_sessions(limit=10)
-        assert len(all_sessions) == 3
-
-        # Filter by type
-        rule_sessions = audit.get_recent_sessions(
-            limit=10, session_type="rule_generation"
-        )
-        assert len(rule_sessions) == 2
-
-    def test_stats(self, audit):
-        """Test audit trail statistics"""
-        session = audit.start_session("test", agentic_mode=True)
-        audit.log_action(
-            session_id=session.session_id,
-            action_type=AgentActionType.RULE_ANALYSIS,
-            agent_name="TestAgent",
-            status=AgentActionStatus.COMPLETED,
-        )
-        audit.log_action(
-            session_id=session.session_id,
-            action_type=AgentActionType.VALIDATION,
-            agent_name="TestAgent",
-            status=AgentActionStatus.FAILED,
-        )
-
-        stats = audit.get_stats()
-        assert stats["total_sessions"] == 1
-        assert stats["total_actions"] == 2
-        assert stats["agentic_sessions"] == 1
-
-    def test_session_eviction(self, audit):
-        """Test that old sessions are evicted when at capacity"""
-        small_audit = AgentAuditTrail(max_sessions=3)
-        ids = []
-        for i in range(5):
-            session = small_audit.start_session(f"test_{i}")
-            ids.append(session.session_id)
-
-        # Only 3 should remain
-        all_sessions = small_audit.get_recent_sessions(limit=10)
-        assert len(all_sessions) == 3
-
-        # First 2 should be evicted
-        assert small_audit.get_session(ids[0]) is None
-        assert small_audit.get_session(ids[1]) is None
-        assert small_audit.get_session(ids[4]) is not None
-
-    def test_export_session(self, audit):
-        """Test exporting a session as JSON"""
-        session = audit.start_session("test")
-        audit.log_action(
-            session_id=session.session_id,
-            action_type=AgentActionType.RULE_ANALYSIS,
-            agent_name="TestAgent",
-            status=AgentActionStatus.COMPLETED,
-        )
-
-        export = audit.export_session(session.session_id)
-        assert export is not None
-        import json
+        export = store.export_session("sess-001")
         parsed = json.loads(export)
-        assert parsed["session_id"] == session.session_id
-        assert len(parsed["entries"]) == 1
+        assert len(parsed) == 2
 
-    def test_nonexistent_session(self, audit):
-        """Test querying a nonexistent session"""
-        result = audit.get_session("nonexistent")
-        assert result is None
+    def test_export_empty_session(self, store):
+        """Test exporting nonexistent session returns empty array"""
+        export = store.export_session("nonexistent")
+        assert export == "[]"
 
-    def test_multiple_actions_tracking(self, audit):
-        """Test tracking multiple actions in a session"""
-        session = audit.start_session("rule_generation", agentic_mode=True)
-
-        # Log multiple actions
-        audit.log_action(
-            session_id=session.session_id,
-            action_type=AgentActionType.RULE_ANALYSIS,
-            agent_name="RuleAnalyzer",
-            status=AgentActionStatus.COMPLETED,
-        )
-        audit.log_action(
-            session_id=session.session_id,
-            action_type=AgentActionType.REFERENCE_DATA_DETECTION,
-            agent_name="ReferenceDataDetector",
-            status=AgentActionStatus.COMPLETED,
-        )
-        audit.log_action(
-            session_id=session.session_id,
-            action_type=AgentActionType.COUNTRY_GROUP_CREATION,
-            agent_name="CountryGroupAgent",
-            status=AgentActionStatus.PENDING_APPROVAL,
-            requires_approval=True,
-        )
-        audit.log_action(
-            session_id=session.session_id,
-            action_type=AgentActionType.ATTRIBUTE_CONFIG_CREATION,
-            agent_name="AttributeConfigAgent",
-            status=AgentActionStatus.PENDING_APPROVAL,
-            requires_approval=True,
+    def test_event_data_preserved(self, store):
+        """Test that event data payloads are preserved"""
+        store.append(
+            session_id="sess-001",
+            event_type=AuditEventType.VALIDATION_PASSED,
+            agent_name="validator",
+            data={"confidence": 0.95, "rule_id": "RULE_TEST"},
+            duration_ms=300.0,
         )
 
-        session_data = audit.get_session(session.session_id)
-        assert session_data["total_actions"] == 4
-        assert session_data["pending_approvals"] == 2
+        events = store.get_events("sess-001")
+        assert events[0].data["confidence"] == 0.95
+        assert events[0].data["rule_id"] == "RULE_TEST"
+        assert events[0].duration_ms == 300.0
 
-    def test_thread_safety(self, audit):
-        """Test that the audit trail is thread-safe"""
+    def test_event_error_preserved(self, store):
+        """Test that error messages are preserved"""
+        store.append(
+            session_id="sess-001",
+            event_type=AuditEventType.AGENT_FAILED,
+            agent_name="cypher_gen",
+            error="JSON parse error: unexpected token",
+        )
+
+        events = store.get_events("sess-001")
+        assert "JSON parse error" in events[0].error
+
+    def test_multiple_sessions_isolated(self, store):
+        """Test that events from different sessions don't mix"""
+        store.append("sess-001", AuditEventType.WORKFLOW_STARTED)
+        store.append("sess-002", AuditEventType.WORKFLOW_STARTED)
+        store.append("sess-001", AuditEventType.AGENT_INVOKED, agent_name="a")
+        store.append("sess-002", AuditEventType.AGENT_INVOKED, agent_name="b")
+
+        events_1 = store.get_events("sess-001")
+        events_2 = store.get_events("sess-002")
+
+        assert len(events_1) == 2
+        assert len(events_2) == 2
+        assert events_1[1].agent_name == "a"
+        assert events_2[1].agent_name == "b"
+
+    def test_get_event_store_singleton(self):
+        """Test that get_event_store returns the same instance"""
+        store1 = get_event_store()
+        store2 = get_event_store()
+        assert store1 is store2
+
+    def test_thread_safety(self, store):
+        """Test that the event store is thread-safe"""
         import threading
 
-        session = audit.start_session("concurrent_test")
         errors = []
 
-        def log_action(i):
+        def append_event(i):
             try:
-                audit.log_action(
-                    session_id=session.session_id,
-                    action_type=AgentActionType.RULE_ANALYSIS,
-                    agent_name=f"Thread_{i}",
-                    status=AgentActionStatus.COMPLETED,
+                store.append(
+                    session_id="concurrent-test",
+                    event_type=AuditEventType.AGENT_INVOKED,
+                    agent_name=f"thread_{i}",
                 )
             except Exception as e:
                 errors.append(str(e))
 
-        threads = [threading.Thread(target=log_action, args=(i,)) for i in range(10)]
+        threads = [threading.Thread(target=append_event, args=(i,)) for i in range(20)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
 
         assert len(errors) == 0
-        session_data = audit.get_session(session.session_id)
-        assert session_data["total_actions"] == 10
+        events = store.get_events("concurrent-test")
+        assert len(events) == 20
 
 
 if __name__ == "__main__":

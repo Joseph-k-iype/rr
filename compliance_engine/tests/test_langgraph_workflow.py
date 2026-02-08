@@ -1,23 +1,25 @@
 """
-Tests for LangGraph Rule Generation Workflow
+Tests for LangGraph Rule Ingestion Workflow
 =============================================
-Tests for the multi-agent workflow with supervisor, analyzer, generator, and validator.
+Tests for the new multi-agent workflow with supervisor, analyzer, generator, and validator.
 """
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from typing import Dict, Any
 
-from agents.graph_workflow import (
-    build_rule_generation_graph,
-    generate_rule_with_langgraph,
-    RuleGenerationResult,
+from agents.nodes.validation_models import (
     RuleDefinitionModel,
     CypherQueriesModel,
     ValidationResultModel,
-    WorkflowState,
-    parse_json_response,
-    build_country_groups_prompt,
+)
+from agents.state.wizard_state import WizardAgentState, create_initial_state
+from agents.workflows.rule_ingestion_workflow import (
+    build_rule_ingestion_graph,
+    run_rule_ingestion,
+    RuleIngestionResult,
+    route_from_supervisor,
+    route_after_validation,
 )
 from pydantic import ValidationError
 
@@ -149,220 +151,210 @@ class TestPydanticModels:
             )
 
 
-class TestJSONParsing:
-    """Test JSON response parsing"""
+class TestWizardAgentState:
+    """Test WizardAgentState initialization"""
 
-    def test_parse_json_response_plain(self):
-        """Test parsing plain JSON"""
-        response = '{"key": "value", "number": 42}'
-        result = parse_json_response(response)
-        assert result == {"key": "value", "number": 42}
+    def test_create_initial_state(self):
+        """Test creating initial state"""
+        state = create_initial_state(
+            origin_country="Germany",
+            scenario_type="transfer",
+            receiving_countries=["India"],
+            rule_text="Prohibit transfers from Germany to India",
+        )
+        assert state["origin_country"] == "Germany"
+        assert state["scenario_type"] == "transfer"
+        assert state["receiving_countries"] == ["India"]
+        assert state["rule_text"] == "Prohibit transfers from Germany to India"
+        assert state["iteration"] == 0
+        assert state["max_iterations"] == 3
+        assert state["success"] is False
+        assert state["current_phase"] == "supervisor"
 
-    def test_parse_json_response_markdown(self):
-        """Test parsing JSON in markdown code block"""
-        response = '''Here is the result:
-```json
-{"key": "value", "number": 42}
-```
-'''
-        result = parse_json_response(response)
-        assert result == {"key": "value", "number": 42}
-
-    def test_parse_json_response_with_text(self):
-        """Test parsing JSON embedded in text"""
-        response = 'The analysis shows: {"key": "value"} which means...'
-        result = parse_json_response(response)
-        assert result == {"key": "value"}
-
-    def test_parse_json_response_invalid(self):
-        """Test parsing invalid JSON"""
-        response = "This is not JSON at all"
-        result = parse_json_response(response)
-        assert result is None
-
-
-class TestCountryGroupsPrompt:
-    """Test country groups prompt building"""
-
-    def test_build_country_groups_prompt(self):
-        """Test country groups prompt contains expected groups"""
-        prompt = build_country_groups_prompt()
-        assert "EU_EEA" in prompt
-        assert "UK_CROWN_DEPENDENCIES" in prompt
-        assert "ADEQUACY" in prompt
+    def test_create_initial_state_with_categories(self):
+        """Test creating initial state with data categories"""
+        state = create_initial_state(
+            origin_country="UK",
+            scenario_type="attribute",
+            receiving_countries=[],
+            rule_text="Health data rule",
+            data_categories=["health", "genetic"],
+            max_iterations=5,
+        )
+        assert state["data_categories"] == ["health", "genetic"]
+        assert state["max_iterations"] == 5
 
 
-class TestWorkflowGraph:
-    """Test LangGraph workflow structure"""
+class TestRouting:
+    """Test workflow routing functions"""
 
-    def test_build_graph(self):
-        """Test graph can be built"""
-        graph = build_rule_generation_graph()
-        assert graph is not None
+    def test_route_from_supervisor_valid_phases(self):
+        """Test routing to valid agent phases"""
+        for phase in ["rule_analyzer", "data_dictionary", "cypher_generator",
+                       "validator", "reference_data", "human_review", "complete", "fail"]:
+            state = create_initial_state("US", "transfer", [], "test")
+            state["current_phase"] = phase
+            assert route_from_supervisor(state) == phase
 
-    def test_graph_has_nodes(self):
-        """Test graph has expected nodes"""
-        graph = build_rule_generation_graph()
-        # The compiled graph should have nodes
-        assert graph is not None
+    def test_route_from_supervisor_max_iterations(self):
+        """Test routing to fail when max iterations reached"""
+        state = create_initial_state("US", "transfer", [], "test", max_iterations=3)
+        state["iteration"] = 3
+        state["current_phase"] = "rule_analyzer"
+        assert route_from_supervisor(state) == "fail"
+
+    def test_route_from_supervisor_invalid_phase(self):
+        """Test routing to fail for unknown phase"""
+        state = create_initial_state("US", "transfer", [], "test")
+        state["current_phase"] = "unknown_agent"
+        assert route_from_supervisor(state) == "fail"
+
+    def test_route_after_validation_complete(self):
+        """Test routing after successful validation"""
+        state = create_initial_state("US", "transfer", [], "test")
+        state["current_phase"] = "complete"
+        assert route_after_validation(state) == "complete"
+
+    def test_route_after_validation_fail(self):
+        """Test routing after failed validation"""
+        state = create_initial_state("US", "transfer", [], "test")
+        state["current_phase"] = "fail"
+        assert route_after_validation(state) == "fail"
+
+    def test_route_after_validation_retry(self):
+        """Test routing back to supervisor for retry"""
+        state = create_initial_state("US", "transfer", [], "test")
+        state["current_phase"] = "supervisor"
+        assert route_after_validation(state) == "supervisor"
 
 
-class TestRuleGenerationResult:
-    """Test RuleGenerationResult model"""
+class TestRuleIngestionResult:
+    """Test RuleIngestionResult model"""
 
     def test_successful_result(self):
-        """Test successful result structure"""
-        result = RuleGenerationResult(
-            success=True,
-            rule_id="RULE_AUTO_001",
-            rule_type="transfer",
-            rule_definition={"rule_id": "RULE_AUTO_001"},
-            iterations=2,
-            message="Rule generated successfully",
-        )
+        """Test successful result from state"""
+        state = create_initial_state("US", "transfer", [], "test")
+        state["success"] = True
+        state["rule_definition"] = {"rule_id": "RULE_AUTO_001", "rule_type": "transfer"}
+        state["iteration"] = 2
+        result = RuleIngestionResult(state)
         assert result.success is True
-        assert result.rule_id == "RULE_AUTO_001"
+        assert result.rule_definition["rule_id"] == "RULE_AUTO_001"
         assert result.iterations == 2
 
     def test_failed_result(self):
-        """Test failed result structure"""
-        result = RuleGenerationResult(
-            success=False,
-            errors=["Validation failed", "Max iterations reached"],
-            iterations=3,
-            message="Rule generation failed",
-        )
+        """Test failed result from state"""
+        state = create_initial_state("US", "transfer", [], "test")
+        state["success"] = False
+        state["error_message"] = "Max iterations reached"
+        state["iteration"] = 3
+        result = RuleIngestionResult(state)
         assert result.success is False
-        assert len(result.errors) == 2
+        assert result.error_message == "Max iterations reached"
+
+    def test_result_with_all_fields(self):
+        """Test result with all optional fields populated"""
+        state = create_initial_state("US", "transfer", ["UK"], "test")
+        state["success"] = True
+        state["rule_definition"] = {"rule_id": "RULE_001"}
+        state["cypher_queries"] = {"queries": {"rule_check": "MATCH (c) RETURN c"}}
+        state["dictionary_result"] = {"keywords": ["test"]}
+        state["analysis_result"] = {"step1": "analysis"}
+        state["validation_result"] = {"overall_valid": True}
+        result = RuleIngestionResult(state)
+        assert result.rule_definition is not None
+        assert result.cypher_queries is not None
+        assert result.dictionary_result is not None
+        assert result.analysis_result is not None
+        assert result.validation_result is not None
 
 
-class TestGenerateRuleWithLangGraph:
-    """Test the main generate_rule_with_langgraph function"""
+class TestBuildGraph:
+    """Test LangGraph workflow graph building"""
 
-    @patch("agents.graph_workflow.get_ai_service")
-    def test_disabled_ai_service(self, mock_get_ai_service):
-        """Test with disabled AI service"""
-        mock_service = Mock()
-        mock_service.is_enabled = False
-        mock_get_ai_service.return_value = mock_service
+    def test_build_graph_with_interrupt(self):
+        """Test building graph with human review interrupt"""
+        graph, checkpointer = build_rule_ingestion_graph(with_interrupt=True)
+        assert graph is not None
+        assert checkpointer is not None
 
-        result = generate_rule_with_langgraph(
-            rule_text="Test rule text",
-            rule_country="United Kingdom",
-        )
+    def test_build_graph_without_interrupt(self):
+        """Test building graph without interrupt"""
+        graph, checkpointer = build_rule_ingestion_graph(with_interrupt=False)
+        assert graph is not None
+        assert checkpointer is not None
 
-        assert result.success is False
-        assert "AI service is not enabled" in result.message
 
-    @patch("agents.graph_workflow.get_ai_service")
-    @patch("agents.graph_workflow.build_rule_generation_graph")
-    def test_successful_workflow(self, mock_build_graph, mock_get_ai_service):
+class TestRunRuleIngestion:
+    """Test the main run_rule_ingestion function"""
+
+    @patch("agents.workflows.rule_ingestion_workflow.build_rule_ingestion_graph")
+    @patch("agents.workflows.rule_ingestion_workflow.get_event_store")
+    def test_successful_workflow(self, mock_event_store, mock_build_graph):
         """Test successful workflow execution"""
-        # Mock AI service as enabled
-        mock_service = Mock()
-        mock_service.is_enabled = True
-        mock_get_ai_service.return_value = mock_service
+        mock_store = MagicMock()
+        mock_event_store.return_value = mock_store
 
-        # Mock workflow execution
-        mock_workflow = Mock()
-        mock_workflow.invoke.return_value = {
-            "success": True,
-            "final_output": {
-                "rule_definition": {
-                    "rule_id": "RULE_AUTO_001",
-                    "rule_type": "transfer",
-                },
-                "cypher_queries": {"queries": {"rule_check": "MATCH (c:Case) RETURN c"}},
-                "validation_result": {"overall_valid": True},
-                "reasoning": {},
-                "iterations": 1,
-            },
-        }
-        mock_build_graph.return_value = mock_workflow
+        final_state = create_initial_state("UK", "transfer", ["US"], "test rule")
+        final_state["success"] = True
+        final_state["rule_definition"] = {"rule_id": "RULE_AUTO_001", "rule_type": "transfer"}
 
-        result = generate_rule_with_langgraph(
-            rule_text="Prohibit transfers from UK to China",
-            rule_country="United Kingdom",
+        mock_graph = MagicMock()
+        mock_graph.invoke.return_value = final_state
+        mock_build_graph.return_value = (mock_graph, MagicMock())
+
+        result = run_rule_ingestion(
+            origin_country="UK",
+            scenario_type="transfer",
+            receiving_countries=["US"],
+            rule_text="Test rule text",
         )
 
         assert result.success is True
-        assert result.rule_id == "RULE_AUTO_001"
+        assert result.rule_definition["rule_id"] == "RULE_AUTO_001"
 
-    @patch("agents.graph_workflow.get_ai_service")
-    @patch("agents.graph_workflow.build_rule_generation_graph")
-    def test_failed_workflow(self, mock_build_graph, mock_get_ai_service):
-        """Test failed workflow execution"""
-        # Mock AI service as enabled
-        mock_service = Mock()
-        mock_service.is_enabled = True
-        mock_get_ai_service.return_value = mock_service
+    @patch("agents.workflows.rule_ingestion_workflow.build_rule_ingestion_graph")
+    @patch("agents.workflows.rule_ingestion_workflow.get_event_store")
+    def test_failed_workflow(self, mock_event_store, mock_build_graph):
+        """Test workflow that fails after max iterations"""
+        mock_store = MagicMock()
+        mock_event_store.return_value = mock_store
 
-        # Mock workflow failure
-        mock_workflow = Mock()
-        mock_workflow.invoke.return_value = {
-            "success": False,
-            "final_output": {
-                "error": "Max iterations reached",
-                "errors": ["Validation failed"],
-                "iterations": 3,
-            },
-        }
-        mock_build_graph.return_value = mock_workflow
+        final_state = create_initial_state("UK", "transfer", [], "test")
+        final_state["success"] = False
+        final_state["error_message"] = "Max iterations reached"
 
-        result = generate_rule_with_langgraph(
+        mock_graph = MagicMock()
+        mock_graph.invoke.return_value = final_state
+        mock_build_graph.return_value = (mock_graph, MagicMock())
+
+        result = run_rule_ingestion(
+            origin_country="UK",
+            scenario_type="transfer",
+            receiving_countries=[],
             rule_text="Invalid rule text",
-            rule_country="Unknown",
         )
 
         assert result.success is False
-        assert "Max iterations reached" in result.message
+        assert "Max iterations" in result.error_message
 
-    @patch("agents.graph_workflow.get_ai_service")
-    @patch("agents.graph_workflow.build_rule_generation_graph")
-    def test_workflow_exception(self, mock_build_graph, mock_get_ai_service):
-        """Test workflow with exception"""
-        # Mock AI service as enabled
-        mock_service = Mock()
-        mock_service.is_enabled = True
-        mock_get_ai_service.return_value = mock_service
+    @patch("agents.workflows.rule_ingestion_workflow.build_rule_ingestion_graph")
+    @patch("agents.workflows.rule_ingestion_workflow.get_event_store")
+    def test_workflow_exception(self, mock_event_store, mock_build_graph):
+        """Test workflow with unexpected exception"""
+        mock_store = MagicMock()
+        mock_event_store.return_value = mock_store
 
-        # Mock workflow exception
-        mock_workflow = Mock()
-        mock_workflow.invoke.side_effect = Exception("Network error")
-        mock_build_graph.return_value = mock_workflow
+        mock_graph = MagicMock()
+        mock_graph.invoke.side_effect = Exception("Network error")
+        mock_build_graph.return_value = (mock_graph, MagicMock())
 
-        result = generate_rule_with_langgraph(
+        result = run_rule_ingestion(
+            origin_country="Germany",
+            scenario_type="transfer",
+            receiving_countries=[],
             rule_text="Test rule",
-            rule_country="Germany",
         )
 
         assert result.success is False
-        assert "Network error" in result.message or "Network error" in result.errors[0]
-
-
-class TestWorkflowState:
-    """Test WorkflowState initialization"""
-
-    def test_initial_state(self):
-        """Test initial state structure"""
-        state: WorkflowState = {
-            "rule_text": "Test rule",
-            "rule_country": "Germany",
-            "rule_type_hint": "transfer",
-            "current_stage": "rule_analyzer",
-            "iteration": 1,
-            "max_iterations": 3,
-            "rule_definition": None,
-            "cypher_queries": None,
-            "validation_result": None,
-            "analyzer_reasoning": None,
-            "generator_reasoning": None,
-            "feedback": "",
-            "previous_errors": [],
-            "success": False,
-            "final_output": None,
-            "error_message": None,
-        }
-        assert state["rule_text"] == "Test rule"
-        assert state["iteration"] == 1
-        assert state["max_iterations"] == 3
+        assert "Network error" in result.error_message

@@ -93,9 +93,13 @@ LIMIT 1
 
 RULE_MATCH_BY_COUNTRIES = """
 MATCH (r:Rule)-[:TRIGGERED_BY_ORIGIN]->(og:CountryGroup)
-MATCH (r:Rule)-[:TRIGGERED_BY_RECEIVING]->(rg:CountryGroup)
-WHERE $origin_country IN og.countries OR og.name = 'ANY'
-  AND $receiving_country IN rg.countries OR rg.name = 'ANY'
+WHERE (og.name = 'ANY' OR EXISTS {
+  MATCH (oc:Country {name: $origin_country})-[:BELONGS_TO]->(og)
+})
+MATCH (r)-[:TRIGGERED_BY_RECEIVING]->(rg:CountryGroup)
+WHERE (rg.name = 'ANY' OR EXISTS {
+  MATCH (rc:Country {name: $receiving_country})-[:BELONGS_TO]->(rg)
+})
 OPTIONAL MATCH (r)-[:HAS_PERMISSION]->(p:Permission)
 OPTIONAL MATCH (r)-[:HAS_PROHIBITION]->(pb:Prohibition)
 OPTIONAL MATCH (p)-[:CAN_HAVE_DUTY]->(d1:Duty)
@@ -105,12 +109,10 @@ ORDER BY r.priority ASC
 """
 
 RULE_CHECK_TRANSFER_PROHIBITION = """
-MATCH (r:Rule {{rule_type: 'transfer'}})
-WHERE ($origin_country IN r.origin_countries OR r.origin_any = true)
-  AND ($receiving_country IN r.receiving_countries OR r.receiving_any = true)
-  AND r.outcome = 'prohibition'
-  AND r.enabled = true
-RETURN r
+MATCH (r:Rule)-[:TRIGGERED_BY_ORIGIN]->(og:CountryGroup)<-[:BELONGS_TO]-(oc:Country {{name: $origin_country}})
+MATCH (r)-[:TRIGGERED_BY_RECEIVING]->(rg:CountryGroup)<-[:BELONGS_TO]-(rc:Country {{name: $receiving_country}})
+MATCH (r)-[:HAS_PROHIBITION]->(pb:Prohibition)
+RETURN r, pb
 ORDER BY r.priority ASC
 LIMIT 1
 """
@@ -121,23 +123,25 @@ LIMIT 1
 # =============================================================================
 
 ATTRIBUTE_RULE_CHECK = """
-MATCH (r:Rule {{rule_type: 'attribute'}})
-WHERE r.attribute_name = $attribute_name
-  AND r.enabled = true
-  AND (
-    $origin_country IN r.origin_countries OR r.origin_any = true
-  )
-  AND (
-    $receiving_country IN r.receiving_countries OR r.receiving_any = true
-  )
+MATCH (r:Rule)-[:TRIGGERED_BY_ORIGIN]->(og:CountryGroup)
+WHERE (og.name = 'ANY' OR EXISTS {{
+  MATCH (c:Country {{name: $origin_country}})-[:BELONGS_TO]->(og)
+}})
+MATCH (r)-[:TRIGGERED_BY_RECEIVING]->(rg:CountryGroup)
+WHERE (rg.name = 'ANY' OR EXISTS {{
+  MATCH (c:Country {{name: $receiving_country}})-[:BELONGS_TO]->(rg)
+}})
 RETURN r
 ORDER BY r.priority ASC
 """
 
 HEALTH_DATA_CHECK = """
-MATCH (r:Rule {{attribute_name: 'health_data', enabled: true}})
-WHERE ($origin_country IN r.origin_countries OR r.origin_any = true)
-RETURN r, r.priority as priority
+MATCH (r:Rule)-[:TRIGGERED_BY_ORIGIN]->(og:CountryGroup)
+WHERE (og.name = 'ANY' OR EXISTS {{
+  MATCH (c:Country {{name: $origin_country}})-[:BELONGS_TO]->(og)
+}})
+OPTIONAL MATCH (r)-[:HAS_PROHIBITION]->(pb:Prohibition)
+RETURN r, pb, r.priority as priority
 ORDER BY priority ASC
 LIMIT 1
 """
@@ -213,6 +217,9 @@ CYPHER_TEMPLATES: Dict[str, CypherTemplate] = {
         query_type=QueryType.CASE_SEARCH,
         query_template=CASE_SEARCH_WITH_COUNT,
         required_params=[],
+        optional_params=["origin_filter", "receiving_filter", "purpose_filter",
+                        "process_filter", "personal_data_filter", "pii_filter",
+                        "assessment_filter"],
     ),
 
     "case_search_exact_match": CypherTemplate(

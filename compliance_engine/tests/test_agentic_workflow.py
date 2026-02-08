@@ -1,8 +1,7 @@
 """
 Tests for Agentic Workflow
 ===========================
-Tests for the agentic reference data creation, rule generation with
-audit trail, and the complete agentic pipeline.
+Tests for the new multi-agent workflow nodes, state management, and API endpoints.
 """
 
 import pytest
@@ -12,283 +11,237 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from agents.rule_generator import (
-    RuleGeneratorAgent,
-    GeneratedRule,
-    ReferenceDataItem,
-)
-from services.agent_audit import (
-    AgentAuditTrail,
-)
+from agents.state.wizard_state import WizardAgentState, create_initial_state
+from agents.nodes.validation_models import RuleDefinitionModel, CypherQueriesModel, ValidationResultModel
+from agents.audit.event_store import EventStore, get_event_store
+from agents.audit.event_types import AuditEventType, AuditEvent
 
 
-class TestReferenceDataDetection:
-    """Tests for detecting what reference data is needed"""
+class TestAgentNodes:
+    """Tests for individual agent nodes"""
 
-    @pytest.fixture
-    def generator(self):
-        """Create a generator with mocked AI service"""
-        with patch('agents.rule_generator.get_ai_service') as mock_ai:
-            mock_service = MagicMock()
-            mock_service.is_enabled = True
-            mock_ai.return_value = mock_service
-            gen = RuleGeneratorAgent()
-            gen.ai_service = mock_service
-            return gen
+    @patch("agents.nodes.rule_analyzer.get_ai_service")
+    @patch("agents.nodes.rule_analyzer.get_event_store")
+    def test_rule_analyzer_success(self, mock_event_store, mock_ai_service):
+        """Test rule analyzer node with successful parsing"""
+        mock_store = MagicMock()
+        mock_event_store.return_value = mock_store
 
-    def test_detect_missing_country_group(self, generator):
-        """Test detection of missing country groups"""
-        rule_def = {
-            "rule_type": "transfer",
-            "origin_group": "NONEXISTENT_GROUP",
-            "receiving_group": "EU_EEA",
-        }
-
-        # Mock AI response for additional needs detection
-        generator.ai_service.chat.return_value = '{"additional_needs": [], "reasoning": "All covered"}'
-
-        needs = generator._detect_reference_data_needs(rule_def, "Test rule")
-
-        # Should detect the missing origin group
-        group_needs = [n for n in needs if n["type"] == "country_group"]
-        assert len(group_needs) >= 1
-        assert any(n["name"] == "NONEXISTENT_GROUP" for n in group_needs)
-
-    def test_detect_existing_country_group_no_need(self, generator):
-        """Test that existing country groups don't trigger needs"""
-        rule_def = {
-            "rule_type": "transfer",
-            "origin_group": "EU_EEA",
-            "receiving_group": "UK_CROWN_DEPENDENCIES",
-        }
-
-        generator.ai_service.chat.return_value = '{"additional_needs": [], "reasoning": "All exists"}'
-
-        needs = generator._detect_reference_data_needs(rule_def, "Test rule")
-
-        group_needs = [n for n in needs if n["type"] == "country_group"]
-        assert len(group_needs) == 0
-
-    def test_detect_attribute_config_need(self, generator):
-        """Test detection of missing attribute config file"""
-        rule_def = {
-            "rule_type": "attribute",
-            "attribute_name": "genetic_data",
-            "attribute_keywords": ["dna", "gene"],
-        }
-
-        generator.ai_service.chat.return_value = '{"additional_needs": [], "reasoning": "checked"}'
-
-        needs = generator._detect_reference_data_needs(rule_def, "Genetic data rule")
-
-        # Should detect missing config file
-        config_needs = [n for n in needs if n["type"] == "attribute_config"]
-        assert len(config_needs) >= 1
-
-    def test_detect_insufficient_keywords(self, generator):
-        """Test detection of insufficient keywords"""
-        rule_def = {
-            "rule_type": "attribute",
-            "attribute_name": "education_data",
-            "attribute_keywords": ["student", "grade"],
-        }
-
-        generator.ai_service.chat.return_value = '{"additional_needs": [], "reasoning": "checked"}'
-
-        needs = generator._detect_reference_data_needs(rule_def, "Education data rule")
-
-        keyword_needs = [n for n in needs if n["type"] == "keyword_dictionary"]
-        assert len(keyword_needs) >= 1
-        assert any(n["name"] == "education_data_keywords" for n in keyword_needs)
-
-
-class TestReferenceDataCreation:
-    """Tests for creating reference data items"""
-
-    @pytest.fixture
-    def generator(self):
-        """Create a generator with mocked AI service"""
-        with patch('agents.rule_generator.get_ai_service') as mock_ai:
-            mock_service = MagicMock()
-            mock_service.is_enabled = True
-            mock_ai.return_value = mock_service
-            gen = RuleGeneratorAgent()
-            gen.ai_service = mock_service
-            return gen
-
-    @pytest.fixture
-    def audit(self):
-        """Create a fresh audit trail"""
-        trail = AgentAuditTrail(max_sessions=100)
-        # Patch the global
-        with patch('agents.rule_generator.get_agent_audit_trail', return_value=trail):
-            yield trail
-
-    def test_create_country_group(self, generator, audit):
-        """Test creating a country group reference data"""
-        session = audit.start_session("test")
-
-        generator.ai_service.chat.return_value = '''```json
+        mock_ai = MagicMock()
+        mock_ai.chat.return_value = '''```json
 {
-    "group_name": "SOUTH_ASIAN",
-    "countries": ["India", "Pakistan", "Bangladesh", "Sri Lanka", "Nepal"],
-    "description": "South Asian countries",
-    "source": "Geographic classification"
+    "chain_of_thought": {"step1": "Analyzed rule text"},
+    "rule_definition": {
+        "rule_type": "transfer",
+        "rule_id": "RULE_TEST_001",
+        "name": "Test Transfer Rule",
+        "description": "A test rule for transfer validation purposes",
+        "priority": 50,
+        "origin_countries": ["Germany"],
+        "receiving_countries": ["India"],
+        "outcome": "prohibition",
+        "odrl_type": "Prohibition"
+    }
 }
 ```'''
+        mock_ai_service.return_value = mock_ai
 
-        need = {
-            "type": "country_group",
-            "name": "SOUTH_ASIAN",
-            "reason": "Missing group",
-            "direction": "receiving",
-        }
+        from agents.nodes.rule_analyzer import rule_analyzer_node
 
-        with patch('agents.rule_generator.get_agent_audit_trail', return_value=audit):
-            item = generator._create_country_group_reference(
-                need, {"description": "Test"}, session.session_id
-            )
+        state = create_initial_state(
+            origin_country="Germany",
+            scenario_type="transfer",
+            receiving_countries=["India"],
+            rule_text="Prohibit transfers from Germany to India",
+        )
 
-        assert item is not None
-        assert item.data_type == "country_group"
-        assert item.name == "SOUTH_ASIAN"
-        assert item.created is True
-        assert item.requires_approval is True
-        assert len(item.details["countries"]) == 5
+        result = rule_analyzer_node(state)
+        assert result.get("rule_definition") is not None
+        assert result["rule_definition"]["rule_id"] == "RULE_TEST_001"
 
-    def test_create_keyword_dictionary(self, generator, audit):
-        """Test creating an expanded keyword dictionary"""
-        session = audit.start_session("test")
+    @patch("agents.nodes.cypher_generator.get_ai_service")
+    @patch("agents.nodes.cypher_generator.get_event_store")
+    def test_cypher_generator_success(self, mock_event_store, mock_ai_service):
+        """Test cypher generator node with successful parsing"""
+        mock_store = MagicMock()
+        mock_event_store.return_value = mock_store
 
-        generator.ai_service.chat.return_value = '''```json
+        mock_ai = MagicMock()
+        mock_ai.chat.return_value = '''```json
 {
-    "dictionary_name": "education_data_keywords",
-    "attribute_name": "education_data",
-    "keywords": ["student", "grade", "transcript", "enrollment", "academic", "course", "degree", "diploma", "gpa", "semester", "tuition", "scholarship", "faculty", "curriculum", "exam"],
-    "categories": {"academic": ["grade", "transcript"], "enrollment": ["enrollment", "course"]},
-    "description": "Keywords for detecting education data"
+    "cypher_queries": {
+        "rule_check": "MATCH (c:Case)-[:ORIGINATES_FROM]->(co:Country {name: 'Germany'}) RETURN c",
+        "rule_insert": "CREATE (r:Rule {rule_id: 'RULE_TEST_001', name: 'Test'}) RETURN r",
+        "validation": "MATCH (r:Rule {rule_id: 'RULE_TEST_001'}) RETURN count(r)"
+    },
+    "query_params": {},
+    "optimization_notes": []
 }
 ```'''
+        mock_ai_service.return_value = mock_ai
 
-        need = {
-            "type": "keyword_dictionary",
-            "name": "education_data_keywords",
-            "reason": "Too few keywords",
-            "current_count": 2,
-        }
+        from agents.nodes.cypher_generator import cypher_generator_node
 
-        rule_def = {
-            "attribute_name": "education_data",
-            "attribute_keywords": ["student", "grade"],
-        }
+        state = create_initial_state("Germany", "transfer", ["India"], "test")
+        state["rule_definition"] = {"rule_id": "RULE_TEST_001"}
 
-        with patch('agents.rule_generator.get_agent_audit_trail', return_value=audit):
-            item = generator._create_keyword_dictionary_reference(
-                need, rule_def, "Education data rule", session.session_id
-            )
+        result = cypher_generator_node(state)
+        assert result.get("cypher_queries") is not None
+        assert result["current_phase"] == "validator"
 
-        assert item is not None
-        assert item.data_type == "keyword_dictionary"
-        assert item.created is True
-        assert item.details["expanded_count"] > item.details["original_count"]
+    @patch("agents.nodes.validator.get_ai_service")
+    @patch("agents.nodes.validator.get_event_store")
+    def test_validator_pass(self, mock_event_store, mock_ai_service):
+        """Test validator node with passing validation"""
+        mock_store = MagicMock()
+        mock_event_store.return_value = mock_store
+
+        mock_ai = MagicMock()
+        mock_ai.chat.return_value = '''```json
+{
+    "overall_valid": true,
+    "confidence_score": 0.9,
+    "validation_results": {
+        "rule_definition": {"valid": true, "errors": [], "warnings": []},
+        "cypher_queries": {"valid": true, "errors": [], "warnings": []},
+        "logical": {"valid": true, "errors": [], "warnings": []}
+    },
+    "suggested_fixes": []
+}
+```'''
+        mock_ai_service.return_value = mock_ai
+
+        from agents.nodes.validator import validator_node
+
+        state = create_initial_state("Germany", "transfer", ["India"], "test")
+        state["rule_definition"] = {"rule_id": "RULE_TEST_001"}
+        state["cypher_queries"] = {"queries": {"rule_check": "MATCH (c) RETURN c"}}
+
+        result = validator_node(state)
+        assert result["success"] is True
+        assert result["current_phase"] == "complete"
+
+    @patch("agents.nodes.validator.get_ai_service")
+    @patch("agents.nodes.validator.get_event_store")
+    def test_validator_fail_retries(self, mock_event_store, mock_ai_service):
+        """Test validator node with failing validation triggers retry"""
+        mock_store = MagicMock()
+        mock_event_store.return_value = mock_store
+
+        mock_ai = MagicMock()
+        mock_ai.chat.return_value = '''```json
+{
+    "overall_valid": false,
+    "confidence_score": 0.3,
+    "validation_results": {
+        "rule_definition": {"valid": false, "errors": ["Missing origin"], "warnings": []},
+        "cypher_queries": {"valid": true, "errors": [], "warnings": []},
+        "logical": {"valid": true, "errors": [], "warnings": []}
+    },
+    "suggested_fixes": ["Add origin countries"]
+}
+```'''
+        mock_ai_service.return_value = mock_ai
+
+        from agents.nodes.validator import validator_node
+
+        state = create_initial_state("Germany", "transfer", ["India"], "test")
+        state["rule_definition"] = {"rule_id": "RULE_TEST_001"}
+        state["cypher_queries"] = {"queries": {"rule_check": "MATCH (c) RETURN c"}}
+
+        result = validator_node(state)
+        assert result["success"] is not True
+        assert result["current_phase"] == "supervisor"
+        assert result["iteration"] == 1
 
 
-class TestGeneratedRuleModel:
-    """Tests for the enhanced GeneratedRule model"""
+class TestEventStore:
+    """Tests for the event store"""
 
-    def test_generated_rule_with_reference_data(self):
-        """Test GeneratedRule includes reference data"""
-        rule = GeneratedRule(
-            rule_definition={"rule_id": "RULE_TEST"},
-            cypher_queries={},
-            reasoning={},
-            test_cases=[],
-            reference_data=[
-                ReferenceDataItem(
-                    data_type="country_group",
-                    name="TEST_GROUP",
-                    details={"countries": ["A", "B"]},
-                    created=True,
-                ),
-                ReferenceDataItem(
-                    data_type="attribute_config",
-                    name="test_config",
-                    details={"keywords_count": 20},
-                    created=True,
-                ),
-            ],
-            audit_session_id="sess-001",
+    def test_append_and_retrieve(self):
+        """Test appending and retrieving events"""
+        store = EventStore()
+        store.append(
+            session_id="test-session",
+            event_type=AuditEventType.AGENT_INVOKED,
+            agent_name="rule_analyzer",
         )
-        assert len(rule.reference_data) == 2
-        assert rule.audit_session_id == "sess-001"
 
-    def test_reference_data_item(self):
-        """Test ReferenceDataItem dataclass"""
-        item = ReferenceDataItem(
-            data_type="keyword_dictionary",
-            name="health_keywords",
-            details={"keywords": ["patient", "diagnosis"]},
-            created=True,
-            requires_approval=True,
-            approval_status="pending",
+        events = store.get_events("test-session")
+        assert len(events) == 1
+        assert events[0].event_type == AuditEventType.AGENT_INVOKED
+        assert events[0].agent_name == "rule_analyzer"
+
+    def test_session_summary(self):
+        """Test session summary"""
+        store = EventStore()
+        store.append("sess1", AuditEventType.WORKFLOW_STARTED)
+        store.append("sess1", AuditEventType.AGENT_INVOKED, agent_name="analyzer")
+        store.append("sess1", AuditEventType.RULE_ANALYZED, agent_name="analyzer")
+        store.append("sess1", AuditEventType.WORKFLOW_COMPLETED)
+
+        summary = store.get_session_summary("sess1")
+        assert summary["total_events"] == 4
+        assert summary["session_id"] == "sess1"
+
+    def test_list_sessions(self):
+        """Test listing sessions"""
+        store = EventStore()
+        store.append("sess1", AuditEventType.WORKFLOW_STARTED)
+        store.append("sess2", AuditEventType.WORKFLOW_STARTED)
+        store.append("sess1", AuditEventType.WORKFLOW_COMPLETED)
+
+        sessions = store.list_sessions()
+        assert len(sessions) == 2
+
+    def test_export_session(self):
+        """Test exporting session events"""
+        store = EventStore()
+        store.append("sess1", AuditEventType.AGENT_INVOKED, agent_name="test")
+
+        export = store.export_session("sess1")
+        assert export != "[]"
+        import json
+        parsed = json.loads(export)
+        assert len(parsed) == 1
+
+    def test_empty_session_export(self):
+        """Test exporting nonexistent session"""
+        store = EventStore()
+        export = store.export_session("nonexistent")
+        assert export == "[]"
+
+    def test_event_with_data_and_duration(self):
+        """Test event with data payload and duration"""
+        store = EventStore()
+        store.append(
+            session_id="sess1",
+            event_type=AuditEventType.CYPHER_GENERATED,
+            agent_name="cypher_gen",
+            data={"query_count": 3},
+            duration_ms=150.5,
         )
-        assert item.requires_approval is True
-        assert item.approval_status == "pending"
+
+        events = store.get_events("sess1")
+        assert events[0].data == {"query_count": 3}
+        assert events[0].duration_ms == 150.5
+
+    def test_event_with_error(self):
+        """Test event with error"""
+        store = EventStore()
+        store.append(
+            session_id="sess1",
+            event_type=AuditEventType.AGENT_FAILED,
+            agent_name="validator",
+            error="Parse error",
+        )
+
+        events = store.get_events("sess1")
+        assert events[0].error == "Parse error"
 
 
-class TestAgenticEndToEnd:
-    """End-to-end tests for the agentic workflow"""
-
-    @pytest.fixture
-    def generator(self):
-        """Create a generator with mocked dependencies"""
-        with patch('agents.rule_generator.get_ai_service') as mock_ai, \
-             patch('agents.rule_generator.get_db_service') as mock_db:
-            mock_service = MagicMock()
-            mock_service.is_enabled = True
-            mock_ai.return_value = mock_service
-            mock_db.return_value = MagicMock()
-            gen = RuleGeneratorAgent()
-            gen.ai_service = mock_service
-            return gen
-
-    def test_agentic_mode_creates_audit_session(self, generator):
-        """Test that agentic mode creates an audit session"""
-        # Mock the LangGraph workflow
-        with patch('agents.rule_generator.generate_rule_with_langgraph') as mock_gen, \
-             patch('agents.rule_generator.get_agent_audit_trail') as mock_audit:
-
-            mock_result = MagicMock()
-            mock_result.success = True
-            mock_result.rule_definition = {
-                "rule_id": "RULE_TEST",
-                "rule_type": "transfer",
-                "origin_group": "EU_EEA",
-            }
-            mock_result.cypher_queries = {}
-            mock_result.reasoning = {}
-            mock_result.iterations = 1
-            mock_result.message = "Success"
-            mock_gen.return_value = mock_result
-
-            mock_trail = AgentAuditTrail()
-            mock_audit.return_value = mock_trail
-
-            result = generator.generate_rule(
-                rule_text="EU data cannot go to restricted countries",
-                rule_country="Germany",
-                agentic_mode=True,
-            )
-
-            assert result.audit_session_id is not None
-            # Verify session was created
-            session = mock_trail.get_session(result.audit_session_id)
-            assert session is not None
-            assert session["agentic_mode"] is True
-
-
-class TestAPIEndpointEnhancements:
-    """Tests for the enhanced API endpoints"""
+class TestAPIEndpoints:
+    """Tests for the API endpoints"""
 
     @pytest.fixture
     def client(self):
@@ -296,6 +249,13 @@ class TestAPIEndpointEnhancements:
         from api.main import app
         from fastapi.testclient import TestClient
         return TestClient(app)
+
+    def test_health_endpoint(self, client):
+        """Test health check endpoint"""
+        response = client.get("/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert "status" in data
 
     def test_agent_sessions_endpoint(self, client):
         """Test the agent sessions listing endpoint"""
@@ -310,55 +270,17 @@ class TestAPIEndpointEnhancements:
         assert response.status_code == 200
         data = response.json()
         assert "total_sessions" in data
-        assert "total_actions" in data
-        assert "success_rate" in data
-
-    def test_agent_pending_approvals_endpoint(self, client):
-        """Test the pending approvals endpoint"""
-        response = client.get("/api/agent/pending-approvals")
-        assert response.status_code == 200
-        data = response.json()
-        assert isinstance(data, list)
-
-    def test_evaluate_rules_returns_evidence(self, client):
-        """Test that evaluation endpoint returns evidence summary"""
-        response = client.post("/api/evaluate-rules", json={
-            "origin_country": "United Kingdom",
-            "receiving_country": "Germany",
-            "pii": False,
-        })
-        assert response.status_code == 200
-        data = response.json()
-        assert "transfer_status" in data
-        # evidence_summary may or may not be present depending on evaluation path
-
-    def test_generate_rule_agentic_mode(self, client):
-        """Test AI rule generation with agentic mode flag"""
-        response = client.post("/api/ai/generate-rule", json={
-            "rule_text": "Health data from US should not go to China",
-            "rule_country": "United States",
-            "rule_type": "attribute",
-            "test_in_temp_graph": False,
-            "agentic_mode": True,
-        })
-        assert response.status_code == 200
-        data = response.json()
-        # Response should have agentic_mode field
-        assert "agentic_mode" in data or "success" in data
+        assert "total_events" in data
 
     def test_agent_session_not_found(self, client):
         """Test 404 for nonexistent session"""
         response = client.get("/api/agent/sessions/nonexistent-id")
         assert response.status_code == 404
 
-    def test_approval_endpoint(self, client):
-        """Test the approval endpoint with nonexistent entry"""
-        response = client.post("/api/agent/approve", json={
-            "entry_id": "nonexistent",
-            "action": "approve",
-            "approved_by": "test",
-        })
-        assert response.status_code == 404
+    def test_cache_stats_endpoint(self, client):
+        """Test cache stats endpoint"""
+        response = client.get("/api/cache/stats")
+        assert response.status_code == 200
 
 
 if __name__ == "__main__":

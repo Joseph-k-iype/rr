@@ -81,10 +81,12 @@ class RulesEvaluator:
     3. Case-matching rules (precedent validation)
     """
 
-    def __init__(self):
+    def __init__(self, extra_transfer_rules=None, extra_attribute_rules=None):
         self.db = get_db_service()
         self.cache = get_cache_service()
         self.attribute_detector = get_attribute_detector()
+        self._extra_transfer_rules = extra_transfer_rules or {}
+        self._extra_attribute_rules = extra_attribute_rules or {}
 
     def evaluate(
         self,
@@ -369,6 +371,8 @@ class RulesEvaluator:
         """Evaluate transfer rules (SET 2A)"""
         result = RuleEvaluationResult()
         transfer_rules = get_enabled_transfer_rules()
+        if self._extra_transfer_rules:
+            transfer_rules = {**transfer_rules, **self._extra_transfer_rules}
 
         for rule_id, rule in transfer_rules.items():
             if self._transfer_rule_matches(rule, context):
@@ -384,8 +388,8 @@ class RulesEvaluator:
 
     def _transfer_rule_matches(self, rule: TransferRule, context: EvaluationContext) -> bool:
         """Check if a transfer rule matches the context"""
-        # Check PII requirement
-        if rule.requires_pii and not context.pii:
+        # Check PII requirement (skip if rule applies to any data)
+        if rule.requires_pii and not rule.requires_any_data and not context.pii:
             return False
 
         origin_normalized = context.origin_country.strip()
@@ -437,6 +441,8 @@ class RulesEvaluator:
         """Evaluate attribute rules (SET 2B)"""
         result = RuleEvaluationResult()
         attribute_rules = get_enabled_attribute_rules()
+        if self._extra_attribute_rules:
+            attribute_rules = {**attribute_rules, **self._extra_attribute_rules}
 
         # Get detected attribute names
         detected_names = {d.attribute_name for d in context.detected_attributes}
@@ -565,9 +571,10 @@ class RulesEvaluator:
         required_assessments: Dict[str, bool]
     ) -> PrecedentValidation:
         """Search for precedent cases matching the context"""
-        # Build the search query
+        # Build the search query using parameterized queries to prevent injection
         match_parts = ["MATCH (c:Case)"]
         where_conditions = ["c.case_status IN ['Completed', 'Complete', 'Active', 'Published']"]
+        params = {}
 
         # Track which filters are applied for reporting
         applied_filters = []
@@ -575,51 +582,53 @@ class RulesEvaluator:
         # Add origin filter
         if context.origin_country:
             match_parts.append(
-                f"MATCH (c)-[:ORIGINATES_FROM]->(origin:Country {{name: '{context.origin_country}'}})"
+                "MATCH (c)-[:ORIGINATES_FROM]->(origin:Country {name: $origin_country})"
             )
+            params["origin_country"] = context.origin_country
             applied_filters.append(f"origin={context.origin_country}")
 
         # Add receiving filter
         if context.receiving_country:
             match_parts.append(
-                f"MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction {{name: '{context.receiving_country}'}})"
+                "MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction {name: $receiving_country})"
             )
+            params["receiving_country"] = context.receiving_country
             applied_filters.append(f"receiving={context.receiving_country}")
 
         # Add purpose filter
         if context.purposes:
-            purposes_str = "', '".join(context.purposes)
             match_parts.append(
-                f"MATCH (c)-[:HAS_PURPOSE]->(p:Purpose)"
+                "MATCH (c)-[:HAS_PURPOSE]->(p:Purpose)"
             )
-            where_conditions.append(f"p.name IN ['{purposes_str}']")
+            where_conditions.append("p.name IN $purposes")
+            params["purposes"] = context.purposes
             applied_filters.append(f"purposes={context.purposes}")
 
         # Add process L1 filter
         if context.process_l1:
-            l1_str = "', '".join(context.process_l1)
             match_parts.append(
-                f"MATCH (c)-[:HAS_PROCESS_L1]->(pl1:ProcessL1)"
+                "MATCH (c)-[:HAS_PROCESS_L1]->(pl1:ProcessL1)"
             )
-            where_conditions.append(f"pl1.name IN ['{l1_str}']")
+            where_conditions.append("pl1.name IN $process_l1")
+            params["process_l1"] = context.process_l1
             applied_filters.append(f"process_l1={context.process_l1}")
 
         # Add process L2 filter
         if context.process_l2:
-            l2_str = "', '".join(context.process_l2)
             match_parts.append(
-                f"MATCH (c)-[:HAS_PROCESS_L2]->(pl2:ProcessL2)"
+                "MATCH (c)-[:HAS_PROCESS_L2]->(pl2:ProcessL2)"
             )
-            where_conditions.append(f"pl2.name IN ['{l2_str}']")
+            where_conditions.append("pl2.name IN $process_l2")
+            params["process_l2"] = context.process_l2
             applied_filters.append(f"process_l2={context.process_l2}")
 
         # Add process L3 filter
         if context.process_l3:
-            l3_str = "', '".join(context.process_l3)
             match_parts.append(
-                f"MATCH (c)-[:HAS_PROCESS_L3]->(pl3:ProcessL3)"
+                "MATCH (c)-[:HAS_PROCESS_L3]->(pl3:ProcessL3)"
             )
-            where_conditions.append(f"pl3.name IN ['{l3_str}']")
+            where_conditions.append("pl3.name IN $process_l3")
+            params["process_l3"] = context.process_l3
             applied_filters.append(f"process_l3={context.process_l3}")
 
         # Build base query
@@ -630,7 +639,7 @@ class RulesEvaluator:
         # First, get total matches
         count_query = base_query + "\nRETURN count(c) as total"
         try:
-            total_result = self.db.execute_data_query(count_query)
+            total_result = self.db.execute_data_query(count_query, params=params or None)
             total_matches = total_result[0].get('total', 0) if total_result else 0
         except Exception as e:
             logger.warning(f"Error counting precedent cases: {e}")
@@ -659,22 +668,20 @@ OPTIONAL MATCH (c)-[:HAS_PURPOSE]->(purpose:Purpose)
 OPTIONAL MATCH (c)-[:HAS_PROCESS_L1]->(proc_l1:ProcessL1)
 OPTIONAL MATCH (c)-[:HAS_PROCESS_L2]->(proc_l2:ProcessL2)
 OPTIONAL MATCH (c)-[:HAS_PROCESS_L3]->(proc_l3:ProcessL3)
-OPTIONAL MATCH (c)-[:HAS_PERSONAL_DATA]->(pdn:PersonalDataName)
-OPTIONAL MATCH (c)-[:HAS_DATA_CATEGORY]->(dc:DataCategory)
-OPTIONAL MATCH (c)-[:HAS_LEGAL_BASIS]->(lb:LegalBasis)
+OPTIONAL MATCH (c)-[:HAS_PERSONAL_DATA]->(pdn:PersonalData)
+OPTIONAL MATCH (c)-[:HAS_PERSONAL_DATA_CATEGORY]->(dc:PersonalDataCategory)
 WITH c,
      collect(DISTINCT purpose.name) as purposes,
      collect(DISTINCT proc_l1.name) as process_l1,
      collect(DISTINCT proc_l2.name) as process_l2,
      collect(DISTINCT proc_l3.name) as process_l3,
      collect(DISTINCT pdn.name) as personal_data_names,
-     collect(DISTINCT dc.name) as data_categories,
-     collect(DISTINCT lb.name)[0] as legal_basis
-RETURN c, purposes, process_l1, process_l2, process_l3, personal_data_names, data_categories, legal_basis
+     collect(DISTINCT dc.name) as data_categories
+RETURN c, purposes, process_l1, process_l2, process_l3, personal_data_names, data_categories
 LIMIT 10"""
 
         try:
-            compliant_result = self.db.execute_data_query(compliant_query)
+            compliant_result = self.db.execute_data_query(compliant_query, params=params or None)
         except Exception as e:
             logger.warning(f"Error searching compliant cases: {e}")
             compliant_result = []
@@ -720,7 +727,6 @@ LIMIT 10"""
                     process_l3=case_l3,
                     personal_data_names=personal_data,
                     data_categories=data_cats,
-                    legal_basis=row.get('legal_basis'),
                     created_date=case_data.get('created_date'),
                     last_updated=case_data.get('last_updated'),
                     match_score=match_score,

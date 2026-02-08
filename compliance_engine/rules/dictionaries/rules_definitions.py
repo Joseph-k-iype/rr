@@ -177,7 +177,7 @@ class AttributeRule:
     # ODRL properties
     odrl_type: str = "Prohibition"
     odrl_action: str = "transfer"
-    odrl_target: str = "HealthData"
+    odrl_target: str = "Data"
 
 
 # =============================================================================
@@ -349,6 +349,7 @@ TRANSFER_RULES: Dict[str, TransferRule] = {
         outcome=RuleOutcome.PROHIBITION,
         requires_any_data=True,
         required_actions=["Sanctions Compliance Check", "Legal Review Required"],
+        odrl_type="Prohibition",
         enabled=True,
     ),
 }
@@ -409,6 +410,7 @@ ATTRIBUTE_RULES: Dict[str, AttributeRule] = {
         receiving_countries=frozenset({"Cuba", "Iran", "North Korea", "Syria", "Venezuela"}),
         outcome=RuleOutcome.PROHIBITION,
         requires_pii=False,  # Financial data itself is sensitive
+        odrl_target="FinancialData",
         enabled=True,
     ),
 
@@ -427,6 +429,7 @@ ATTRIBUTE_RULES: Dict[str, AttributeRule] = {
         receiving_countries=None,
         outcome=RuleOutcome.PROHIBITION,
         requires_pii=False,  # Biometric is inherently PII
+        odrl_target="BiometricData",
         enabled=True,
     ),
 }

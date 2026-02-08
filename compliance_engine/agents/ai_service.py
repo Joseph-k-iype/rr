@@ -179,7 +179,10 @@ class AIService:
                 },
                 headers={
                     "Content-Type": "application/json",
-                    "Authorization": f"Bearer {token}"
+                    "Token_Type": settings.ai.auth_token_type,
+                    settings.ai.auth_header_name: token,
+                    settings.ai.correlation_id_header: self._username,
+                    settings.ai.session_id_header: self._username,
                 },
                 timeout=120  # LLM calls can take a while
             )
@@ -197,7 +200,10 @@ class AIService:
                     },
                     headers={
                         "Content-Type": "application/json",
-                        "Authorization": f"Bearer {token}"
+                        "Token_Type": settings.ai.auth_token_type,
+                        settings.ai.auth_header_name: token,
+                        settings.ai.correlation_id_header: self._username,
+                        settings.ai.session_id_header: self._username,
                     },
                     timeout=120
                 )

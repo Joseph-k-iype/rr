@@ -1,40 +1,91 @@
-# Compliance Engine v5.0.0
+# Compliance Engine v6.0.0
 
-A scalable, production-ready compliance engine for cross-border data transfer evaluation using graph-based rules and AI-powered rule generation.
+A scalable, production-ready compliance engine for cross-border data transfer evaluation using graph-based rules, a React frontend, and AI-powered multi-agent rule generation. Agent-to-agent communication uses the [Google A2A SDK](https://github.com/google/a2a-python) (`a2a-sdk`) with LangGraph as the workflow backbone.
 
 ## Architecture Overview
 
 ```
 compliance_engine/
-├── api/                    # FastAPI application
-│   └── main.py            # API endpoints
-├── agents/                 # AI agents
-│   ├── ai_service.py      # JWT authentication & LLM calls
-│   └── rule_generator.py  # AI rule generation
-├── config/                 # Configuration
-│   ├── settings.py        # Global settings (env-based)
-│   ├── health_data_config.json
-│   └── metadata_detection_config.json
-├── models/                 # Pydantic models
-│   └── schemas.py         # Request/response schemas
-├── rules/                  # Rule definitions
-│   ├── dictionaries/      # Developer-editable rules
-│   │   ├── country_groups.py
-│   │   └── rules_definitions.py
-│   └── templates/         # Cypher query templates
-│       └── cypher_templates.py
-├── services/              # Core services
-│   ├── database.py        # FalkorDB connection
-│   ├── cache.py           # LRU cache with TTL
-│   ├── attribute_detector.py  # Metadata detection
-│   └── rules_evaluator.py # Main evaluation engine
-├── utils/                 # Utilities
-│   ├── graph_builder.py   # Build RulesGraph
-│   └── data_uploader.py   # Upload case data
-├── tests/                 # Test suite
-├── templates/             # HTML templates
-├── static/                # Static assets
-└── main.py               # Entry point
+├── api/                        # FastAPI application
+│   ├── main.py                 # App entrypoint, router registration, static serving
+│   └── routers/                # API router modules
+│       ├── evaluation.py       # POST /api/evaluate-rules, /api/search-cases
+│       ├── metadata.py         # GET /api/countries, purposes, processes, all-dropdown-values
+│       ├── rules_overview.py   # GET /api/rules-overview, /api/cypher-templates
+│       ├── graph_data.py       # GET /api/graph/rules-network, /api/graph/country-groups
+│       ├── wizard.py           # Wizard lifecycle (10-step flow)
+│       ├── sandbox.py          # Sandbox graph testing
+│       ├── agent_events.py     # SSE streaming for agent progress
+│       └── health.py           # GET /health, /api/stats, /api/cache/*
+├── agents/                     # Multi-agent system
+│   ├── ai_service.py           # Token auth & LLM calls (o3-mini)
+│   ├── state/                  # LangGraph state
+│   │   └── wizard_state.py     # WizardAgentState TypedDict
+│   ├── executors/              # Google A2A SDK AgentExecutor implementations
+│   │   ├── base_executor.py    # Core bridge: ComplianceAgentExecutor, wrap_executor_as_node()
+│   │   ├── utils.py            # Shared parse_json_response()
+│   │   ├── supervisor_executor.py
+│   │   ├── rule_analyzer_executor.py
+│   │   ├── cypher_generator_executor.py  # + FalkorDB EXPLAIN validation
+│   │   ├── validator_executor.py         # + FalkorDB temp graph testing
+│   │   ├── data_dictionary_executor.py
+│   │   └── reference_data_executor.py    # + FalkorDB group lookup
+│   ├── nodes/                  # Thin LangGraph node shims (wrap executors)
+│   │   ├── supervisor.py
+│   │   ├── rule_analyzer.py
+│   │   ├── cypher_generator.py
+│   │   ├── validator.py
+│   │   ├── data_dictionary.py
+│   │   ├── reference_data.py
+│   │   └── validation_models.py # Pydantic validation models
+│   ├── prompts/                # All agent prompts
+│   │   ├── supervisor_prompts.py
+│   │   ├── analyzer_prompts.py
+│   │   ├── cypher_prompts.py
+│   │   ├── validator_prompts.py
+│   │   ├── dictionary_prompts.py
+│   │   ├── reference_prompts.py
+│   │   └── prompt_builder.py   # Dynamic prompt assembly
+│   ├── workflows/
+│   │   └── rule_ingestion_workflow.py  # LangGraph StateGraph
+│   ├── protocol/               # A2A agent registry (Google A2A SDK AgentCard/AgentSkill)
+│   └── audit/                  # Event-sourced audit trail
+│       ├── event_store.py
+│       └── event_types.py
+├── config/                     # Configuration
+│   └── settings.py             # Pydantic v2 settings (env-based)
+├── models/                     # Pydantic models
+│   ├── schemas.py              # Request/response schemas
+│   ├── wizard_models.py        # Wizard session models
+│   └── agent_models.py         # AgentEventType & AgentEvent for SSE
+├── rules/                      # Rule definitions
+│   ├── dictionaries/
+│   │   ├── country_groups.py   # Country groups (EU_EEA, BCR, etc.)
+│   │   └── rules_definitions.py # All 3 rule sets
+│   └── templates/
+│       └── cypher_templates.py # Cypher query templates
+├── services/                   # Core services
+│   ├── database.py             # FalkorDB connection
+│   ├── cache.py                # LRU cache with TTL
+│   ├── attribute_detector.py   # Metadata detection
+│   ├── rules_evaluator.py      # Main evaluation engine
+│   ├── sandbox_service.py      # Sandbox graph lifecycle
+│   └── sse_manager.py          # SSE connection manager
+├── utils/
+│   ├── graph_builder.py        # Build RulesGraph from definitions
+│   └── data_uploader.py        # Upload case data to DataTransferGraph
+├── frontend/                   # React + TypeScript app (Vite)
+│   ├── src/
+│   │   ├── pages/              # HomePage (graph), EvaluatorPage, WizardPage
+│   │   ├── components/         # graph/, evaluator/, wizard/ (10 steps)
+│   │   ├── stores/             # Zustand stores (wizardStore, evaluationStore)
+│   │   ├── services/           # API client layer
+│   │   ├── hooks/              # Custom hooks (useRulesNetwork, useAgentEvents)
+│   │   └── types/              # TypeScript interfaces
+│   └── package.json
+├── cli/
+│   └── rule_generator_cli.py   # Interactive CLI for rule generation
+└── tests/                      # Test suite
 ```
 
 ## Quick Start
@@ -43,15 +94,23 @@ compliance_engine/
 
 ```bash
 pip install -r requirements.txt
+cd frontend && npm install && cd ..
 ```
 
 ### 2. Configure Environment
 
-Copy `.env.example` to `.env` and update:
-
 ```bash
 cp .env.example .env
-# Edit .env with your settings
+```
+
+Key variables:
+```env
+FALKORDB_HOST=localhost
+FALKORDB_PORT=6379
+AI_TOKEN_API_URL=https://your-token-api/translate
+AI_LLM_API_URL=https://your-llm-api/chat/completions
+AI_LLM_MODEL=o3-mini
+ENABLE_AI_RULE_GENERATION=true
 ```
 
 ### 3. Build Rules Graph
@@ -60,10 +119,10 @@ cp .env.example .env
 python main.py --build-graph
 ```
 
-### 4. Upload Sample Data (optional)
+### 4. Build Frontend
 
 ```bash
-python main.py --upload-data ../sample_data.json --clear-data
+cd frontend && npm run build && cd ..
 ```
 
 ### 5. Run the Server
@@ -73,90 +132,29 @@ python main.py
 ```
 
 Access:
-- Dashboard: http://localhost:5001/
+- Frontend: http://localhost:5001/
 - API Docs: http://localhost:5001/docs
-- Rules Overview: http://localhost:5001/rules
 
-## Two Sets of Rules
+## Three Rule Sets
 
 ### SET 1: Case-Matching Rules
-
-These rules search for historical cases that match parameters. If at least one case matches with completed assessments, transfer is **ALLOWED**.
-
-**How it works:**
-1. User provides origin country, receiving country, PII flag, purposes, etc.
-2. System finds applicable rules based on country groups
-3. System searches for precedent cases matching the criteria
-4. If a compliant case exists (with required assessments completed), transfer is allowed
+Search for historical cases in the DataTransferGraph. If a precedent case with completed assessments (PIA, TIA, HRPR) is found, transfer is **ALLOWED**.
 
 **Defined in:** `rules/dictionaries/rules_definitions.py` → `CASE_MATCHING_RULES`
 
-Example:
-```python
-"RULE_1_EU_INTERNAL": CaseMatchingRule(
-    rule_id="RULE_1",
-    name="EU/EEA/UK/Crown/Switzerland Internal Transfers",
-    origin_group="EU_EEA_UK_CROWN_CH",
-    receiving_group="EU_EEA_UK_CROWN_CH",
-    required_assessments=RequiredAssessments(pia_required=True),
-)
-```
-
 ### SET 2A: Transfer Rules
-
-Country-to-country transfer permissions/prohibitions that take **highest priority**.
+Country-to-country transfer permissions/prohibitions with highest priority.
 
 **Defined in:** `rules/dictionaries/rules_definitions.py` → `TRANSFER_RULES`
 
-Example:
-```python
-"RULE_9_US_RESTRICTED_PII": TransferRule(
-    rule_id="RULE_9",
-    name="US PII to Restricted Countries",
-    transfer_pairs=[
-        ("United States", "China"),
-        ("United States", "Russia"),
-        # ...
-    ],
-    outcome=RuleOutcome.PROHIBITION,
-    requires_pii=True,
-)
-```
-
 ### SET 2B: Attribute Rules
-
-Rules based on specific data attributes (health, financial, biometric, etc.).
+Rules based on data attributes (health, financial, biometric data).
 
 **Defined in:** `rules/dictionaries/rules_definitions.py` → `ATTRIBUTE_RULES`
 
-Example:
-```python
-"RULE_11_US_HEALTH": AttributeRule(
-    rule_id="RULE_11",
-    name="US Health Data Transfer",
-    attribute_name="health_data",
-    attribute_config_file="health_data_config.json",
-    origin_countries=frozenset({"United States"}),
-    outcome=RuleOutcome.PROHIBITION,
-)
-```
-
 ## Adding New Rules
 
-### Adding a Country Group
-
-Edit `rules/dictionaries/country_groups.py`:
-
-```python
-MY_NEW_GROUP: FrozenSet[str] = frozenset({
-    "Country1", "Country2", "Country3"
-})
-
-# Add to registry
-COUNTRY_GROUPS["MY_NEW_GROUP"] = MY_NEW_GROUP
-```
-
-### Adding a Transfer Rule
+### Manual Addition
 
 Edit `rules/dictionaries/rules_definitions.py`:
 
@@ -165,73 +163,37 @@ TRANSFER_RULES["MY_NEW_RULE"] = TransferRule(
     rule_id="RULE_MY_01",
     name="My New Transfer Rule",
     description="Description of the rule",
-    priority=5,  # Lower = higher priority
+    priority=5,
     origin_group="EU_EEA",
     receiving_countries=frozenset({"SomeCountry"}),
     outcome=RuleOutcome.PROHIBITION,
-    requires_pii=True,
-    required_actions=["Get Legal Approval"],
+    odrl_type="Prohibition",
 )
 ```
 
-### Adding an Attribute Rule
+Then rebuild: `python main.py --build-graph`
 
-Edit `rules/dictionaries/rules_definitions.py`:
+### AI-Powered Generation (10-Step Wizard)
 
-```python
-ATTRIBUTE_RULES["MY_ATTRIBUTE_RULE"] = AttributeRule(
-    rule_id="RULE_ATTR_01",
-    name="My Attribute Rule",
-    attribute_name="my_data_type",
-    attribute_keywords=["keyword1", "keyword2"],
-    origin_countries=frozenset({"Country1"}),
-    outcome=RuleOutcome.PROHIBITION,
-)
-```
+Use the React frontend wizard at http://localhost:5001/wizard:
 
-Then add detection config in `config/metadata_detection_config.json`.
+1. Select origin country and receiving countries
+2. Choose scenario type (transfer/attribute)
+3. Enter rule text in natural language
+4. AI analyzes rule (Chain of Thought)
+5. AI generates keyword dictionary
+6. Review generated outputs
+7. Edit rule definition and terms
+8. Load into sandbox graph
+9. Test in sandbox with sample evaluations
+10. Approve and load to main graph
 
-### Rebuilding After Changes
+### CLI Tool
 
 ```bash
-python main.py --build-graph
+python -m cli.rule_generator_cli --interactive
+python -m cli.rule_generator_cli --rule "Prohibit transfers from UK to China"
 ```
-
-## AI Rule Generation
-
-### Configuration
-
-Set up AI credentials in `.env`:
-
-```env
-AI_TOKEN_API_URL=https://your-token-api/translate
-AI_TOKEN_USERNAME=your_username
-AI_TOKEN_PASSWORD=your_password
-AI_LLM_API_URL=https://your-llm-api/chat/completions
-AI_LLM_MODEL=gpt-4.1
-ENABLE_AI_RULE_GENERATION=true
-```
-
-### Using AI to Generate Rules
-
-Via API:
-```bash
-curl -X POST http://localhost:5001/api/ai/generate-rule \
-  -H "Content-Type: application/json" \
-  -d '{
-    "rule_text": "Personal health data from the United States should not be transferred to China",
-    "rule_country": "United States",
-    "rule_type": "attribute",
-    "test_in_temp_graph": true
-  }'
-```
-
-Via Dashboard:
-1. Go to http://localhost:5001/
-2. Enter rule text in the AI Rule Generation section
-3. Click "Generate Rule"
-4. Review generated dictionary and Cypher query
-5. Add to `rules_definitions.py` if approved
 
 ## API Endpoints
 
@@ -239,13 +201,25 @@ Via Dashboard:
 - `POST /api/evaluate-rules` - Evaluate transfer compliance
 - `POST /api/search-cases` - Search historical cases
 
-### Rules
+### Rules & Graph
 - `GET /api/rules-overview` - Get all rules overview
 - `GET /api/cypher-templates` - Get available Cypher templates
+- `GET /api/graph/rules-network` - Rules network graph data
+- `GET /api/graph/country-groups` - Country group data
 
-### AI
-- `POST /api/ai/generate-rule` - Generate rule from text
-- `GET /api/ai/status` - Check AI service status
+### Wizard (10-Step Flow)
+- `POST /api/wizard/start-session` - Start wizard session
+- `POST /api/wizard/submit-step` - Submit step data
+- `GET /api/wizard/session/{id}` - Get session state
+- `PUT /api/wizard/session/{id}/edit-rule` - Edit rule definition
+- `PUT /api/wizard/session/{id}/edit-terms` - Edit terms dictionary
+- `POST /api/wizard/session/{id}/load-sandbox` - Load to sandbox
+- `POST /api/wizard/session/{id}/sandbox-evaluate` - Test in sandbox
+- `POST /api/wizard/session/{id}/approve` - Approve & load to main
+- `DELETE /api/wizard/session/{id}` - Cancel session
+
+### Agent Events
+- `GET /api/agent-events/stream/{session_id}` - SSE event stream
 
 ### Metadata
 - `GET /api/countries` - List countries
@@ -255,61 +229,32 @@ Via Dashboard:
 
 ### Admin
 - `GET /health` - Health check
-- `GET /api/stats` - Dashboard statistics
-- `GET /api/cache/clear` - Clear cache
+- `GET /api/stats` - System statistics
 - `GET /api/cache/stats` - Cache statistics
+- `POST /api/cache/clear` - Clear cache
+
+### Agent Audit
+- `GET /api/agent/sessions` - List audit sessions
+- `GET /api/agent/sessions/{id}` - Session details
+- `GET /api/agent/stats` - Agent statistics
 
 ## Testing
 
-Run tests:
-```bash
-python main.py --test
-```
-
-Or directly:
 ```bash
 pytest tests/ -v
 ```
 
-## Configuration Reference
-
-### Environment Variables
+## Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `FALKORDB_HOST` | localhost | FalkorDB host |
 | `FALKORDB_PORT` | 6379 | FalkorDB port |
 | `API_PORT` | 5001 | API server port |
-| `LOG_LEVEL` | INFO | Logging level |
+| `AI_LLM_MODEL` | o3-mini | LLM model name |
+| `ENABLE_AI_RULE_GENERATION` | true | Enable AI features |
 | `ENABLE_CACHE` | true | Enable caching |
 | `CACHE_TTL` | 300 | Cache TTL in seconds |
-| `ENABLE_AI_RULE_GENERATION` | true | Enable AI features |
-
-See `.env.example` for complete list.
-
-## Production Deployment
-
-1. Set `ENVIRONMENT=production` in `.env`
-2. Configure `API_WORKERS` for your server (default: 4)
-3. Set up a reverse proxy (nginx, Traefik, etc.)
-4. Use a process manager (systemd, supervisord)
-5. Enable HTTPS
-
-Example systemd service:
-```ini
-[Unit]
-Description=Compliance Engine
-After=network.target
-
-[Service]
-User=app
-WorkingDirectory=/path/to/compliance_engine
-ExecStart=/path/to/venv/bin/python main.py
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
 
 ## License
 

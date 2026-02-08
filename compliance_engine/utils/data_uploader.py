@@ -194,11 +194,15 @@ class DataUploader:
             )
 
         # Create and link Processes
-        for level, key in [('ProcessL1', 'process_l1'), ('ProcessL2', 'process_l2'), ('ProcessL3', 'process_l3')]:
+        for level, key, rel in [
+            ('ProcessL1', 'process_l1', 'HAS_PROCESS_L1'),
+            ('ProcessL2', 'process_l2', 'HAS_PROCESS_L2'),
+            ('ProcessL3', 'process_l3', 'HAS_PROCESS_L3'),
+        ]:
             processes = self._parse_list(case.get(key) or case.get(key.replace('_', '')))
             for process in processes:
                 self._create_and_link_node(
-                    level, process, case_ref_id, f'HAS_{level.upper()}'
+                    level, process, case_ref_id, rel
                 )
 
         # Create and link Personal Data

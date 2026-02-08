@@ -1,0 +1,73 @@
+"""
+Wizard Agent State
+==================
+LangGraph TypedDict state for the wizard workflow.
+"""
+
+from typing import Dict, List, Optional, Any, TypedDict, Annotated
+from langgraph.graph.message import add_messages
+
+
+class WizardAgentState(TypedDict):
+    """State maintained throughout the wizard agent workflow."""
+
+    # Input from wizard steps 1-3
+    origin_country: str
+    scenario_type: str
+    receiving_countries: List[str]
+    rule_text: str
+    data_categories: List[str]
+
+    # A2A message log
+    messages: Annotated[list, add_messages]
+
+    # Agent outputs
+    analysis_result: Optional[Dict[str, Any]]
+    dictionary_result: Optional[Dict[str, Any]]
+    rule_definition: Optional[Dict[str, Any]]
+    cypher_queries: Optional[Dict[str, Any]]
+    validation_result: Optional[Dict[str, Any]]
+
+    # Workflow control
+    current_phase: str
+    iteration: int
+    max_iterations: int
+    requires_human_input: bool
+
+    # Events for SSE streaming
+    events: List[Dict[str, Any]]
+
+    # Final status
+    success: bool
+    error_message: Optional[str]
+
+
+def create_initial_state(
+    origin_country: str,
+    scenario_type: str,
+    receiving_countries: List[str],
+    rule_text: str,
+    data_categories: Optional[List[str]] = None,
+    max_iterations: int = 3,
+) -> WizardAgentState:
+    """Create the initial state for a wizard workflow run."""
+    return WizardAgentState(
+        origin_country=origin_country,
+        scenario_type=scenario_type,
+        receiving_countries=receiving_countries,
+        rule_text=rule_text,
+        data_categories=data_categories or [],
+        messages=[],
+        analysis_result=None,
+        dictionary_result=None,
+        rule_definition=None,
+        cypher_queries=None,
+        validation_result=None,
+        current_phase="supervisor",
+        iteration=0,
+        max_iterations=max_iterations,
+        requires_human_input=False,
+        events=[],
+        success=False,
+        error_message=None,
+    )

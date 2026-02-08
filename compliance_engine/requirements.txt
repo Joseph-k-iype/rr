@@ -22,6 +22,9 @@ httpx>=0.25.0
 langgraph>=0.2.0
 langchain-core>=0.3.0
 
+# Google A2A SDK for agent-to-agent protocol
+a2a-sdk>=0.3.22
+
 # Templates
 jinja2>=3.1.2
 aiofiles>=23.2.1

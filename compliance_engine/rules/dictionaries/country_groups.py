@@ -7,13 +7,14 @@ Each group is a set of country names that can be referenced in rules.
 
 from typing import Dict, Set, FrozenSet
 
-# EU/EEA Member States
+# EU/EEA Member States (EU 27 + EEA: Norway, Iceland, Liechtenstein)
 EU_EEA_COUNTRIES: FrozenSet[str] = frozenset({
     "Belgium", "Bulgaria", "Czechia", "Denmark", "Germany", "Estonia",
     "Ireland", "Greece", "Spain", "France", "Croatia", "Italy", "Cyprus",
     "Latvia", "Lithuania", "Luxembourg", "Hungary", "Malta", "Netherlands",
     "Austria", "Poland", "Portugal", "Romania", "Slovenia", "Slovakia",
-    "Finland", "Sweden"
+    "Finland", "Sweden",
+    "Norway", "Iceland", "Liechtenstein",
 })
 
 # UK and Crown Dependencies
@@ -29,11 +30,12 @@ CROWN_DEPENDENCIES: FrozenSet[str] = frozenset({
 # Switzerland
 SWITZERLAND: FrozenSet[str] = frozenset({"Switzerland"})
 
-# EU Adequacy Countries (as of latest adequacy decisions)
+# EU Adequacy Countries (as of latest adequacy decisions, incl. US Data Privacy Framework)
 ADEQUACY_COUNTRIES: FrozenSet[str] = frozenset({
     "Andorra", "Argentina", "Canada", "Faroe Islands", "Guernsey",
     "Israel", "Isle of Man", "Japan", "Jersey", "New Zealand",
-    "Republic of Korea", "Switzerland", "United Kingdom", "Uruguay"
+    "Republic of Korea", "Switzerland", "United Kingdom", "Uruguay",
+    "United States", "United States of America",
 })
 
 # Switzerland Approved Countries
