@@ -54,22 +54,28 @@ export function WizardContainer() {
   }, [store]);
 
   const handleNext = async () => {
-    const step = store.currentStep;
-    let sessionId = store.sessionId;
+    // Read fresh state directly from Zustand to avoid stale closures
+    const state = useWizardStore.getState();
+    const step = state.currentStep;
+    let sessionId = state.sessionId;
 
-    if (step === 1 && !sessionId) {
-      const { session_id } = await startWizardSession();
-      store.setSessionId(session_id);
-      sessionId = session_id;
-    }
+    store.setError(null);
+    store.setProcessing(true);
 
-    if (step <= 3 && sessionId) {
-      store.setProcessing(true);
-      try {
+    try {
+      // Step 1: create session if needed
+      if (step === 1 && !sessionId) {
+        const { session_id } = await startWizardSession();
+        store.setSessionId(session_id);
+        sessionId = session_id;
+      }
+
+      // Steps 1-3: submit step data to backend
+      if (step <= 3 && sessionId) {
         const stepData: Record<number, Record<string, unknown>> = {
-          1: { origin_country: store.originCountry, receiving_countries: store.receivingCountries },
-          2: { scenario_type: store.scenarioType, data_categories: store.dataCategories },
-          3: { rule_text: store.ruleText },
+          1: { origin_country: state.originCountry, receiving_countries: state.receivingCountries },
+          2: { scenario_type: state.scenarioType, data_categories: state.dataCategories },
+          3: { rule_text: state.ruleText },
         };
 
         const result = await submitWizardStep(sessionId, { step, data: stepData[step] || {} });
@@ -77,6 +83,8 @@ export function WizardContainer() {
         if (step === 3) {
           if (result.status === 'failed') {
             store.setError(result.error_message || 'AI processing failed');
+            store.setProcessing(false);
+            return;
           } else {
             const session = await getWizardSession(sessionId);
             if (session.analysis_result) {
@@ -93,39 +101,43 @@ export function WizardContainer() {
             }
           }
         }
-      } catch (err) {
-        store.setError(err instanceof Error ? err.message : 'Step submission failed');
       }
-      store.setProcessing(false);
-    }
 
-    if (step === 8 && sessionId && !store.sandboxGraphName) {
-      store.setProcessing(true);
-      try {
+      // Step 8: load sandbox
+      if (step === 8 && sessionId && !state.sandboxGraphName) {
         const result = await loadSandbox(sessionId);
         store.setSandboxGraphName(result.sandbox_graph);
-      } catch (err) {
-        store.setError(err instanceof Error ? err.message : 'Sandbox load failed');
+        store.setProcessing(false);
+        return;
       }
-      store.setProcessing(false);
-      return;
-    }
 
-    if (step === 10 && sessionId) {
-      store.setProcessing(true);
-      try {
+      // Step 10: approve
+      if (step === 10 && sessionId) {
         await approveWizard(sessionId);
         store.setApproved(true);
-      } catch (err) {
-        store.setError(err instanceof Error ? err.message : 'Approval failed');
+        store.setProcessing(false);
+        return;
       }
-      store.setProcessing(false);
-      return;
+
+      // Advance step
+      if (step < 10) {
+        store.setStep(step + 1);
+      }
+    } catch (err: unknown) {
+      // Extract detailed error from axios response
+      let message = 'Step submission failed';
+      if (err && typeof err === 'object' && 'response' in err) {
+        const axiosErr = err as { response?: { status?: number; data?: { detail?: string } } };
+        const status = axiosErr.response?.status;
+        const detail = axiosErr.response?.data?.detail;
+        message = `Request failed (${status}): ${detail || 'Unknown error'}`;
+      } else if (err instanceof Error) {
+        message = err.message;
+      }
+      store.setError(message);
     }
 
-    if (step < 10) {
-      store.setStep(step + 1);
-    }
+    store.setProcessing(false);
   };
 
   const handleBack = () => {
