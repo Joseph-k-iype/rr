@@ -5,6 +5,11 @@ import { useEvaluationStore } from '../../stores/evaluationStore';
 import type { RulesEvaluationRequest } from '../../types/api';
 import { LoadingSpinner } from '../common/LoadingSpinner';
 
+interface MetadataEntry {
+  key: string;
+  value: string;
+}
+
 export function EvaluatorForm() {
   const { data: dropdowns, isLoading: loadingDropdowns } = useDropdownData();
   const evaluate = useEvaluation();
@@ -20,13 +25,58 @@ export function EvaluatorForm() {
     process_l3: [],
   });
 
+  const [metadataEntries, setMetadataEntries] = useState<MetadataEntry[]>([]);
+  const [jsonMode, setJsonMode] = useState(false);
+  const [jsonInput, setJsonInput] = useState('');
+  const [jsonError, setJsonError] = useState('');
+
   if (loadingDropdowns) return <LoadingSpinner message="Loading dropdown values..." />;
+
+  const buildMetadata = (): Record<string, unknown> | undefined => {
+    if (jsonMode) {
+      if (!jsonInput.trim()) return undefined;
+      try {
+        const parsed = JSON.parse(jsonInput);
+        setJsonError('');
+        return parsed;
+      } catch {
+        setJsonError('Invalid JSON');
+        return undefined;
+      }
+    }
+    const filtered = metadataEntries.filter(e => e.key.trim());
+    if (filtered.length === 0) return undefined;
+    const obj: Record<string, unknown> = {};
+    for (const entry of filtered) {
+      obj[entry.key.trim()] = entry.value;
+    }
+    return obj;
+  };
+
+  const addMetadataEntry = () => {
+    setMetadataEntries(prev => [...prev, { key: '', value: '' }]);
+  };
+
+  const removeMetadataEntry = (index: number) => {
+    setMetadataEntries(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const updateMetadataEntry = (index: number, field: 'key' | 'value', val: string) => {
+    setMetadataEntries(prev => prev.map((e, i) => i === index ? { ...e, [field]: val } : e));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const result = await evaluate.mutateAsync(formData);
+      const metadata = buildMetadata();
+      if (jsonMode && jsonInput.trim() && !metadata) {
+        setError('Invalid JSON in metadata field');
+        setLoading(false);
+        return;
+      }
+      const payload = { ...formData, ...(metadata ? { metadata } : {}) };
+      const result = await evaluate.mutateAsync(payload);
       setResult(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Evaluation failed');
@@ -122,6 +172,74 @@ export function EvaluatorForm() {
           className="rounded border-gray-300"
         />
         <label htmlFor="pii" className="text-sm text-gray-700">Contains PII</label>
+      </div>
+
+      {/* Metadata Section */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-sm font-medium text-gray-700">Metadata (for attribute detection)</label>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setJsonMode(false)}
+              className={`text-xs px-2 py-1 rounded ${!jsonMode ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Key-Value
+            </button>
+            <button
+              type="button"
+              onClick={() => setJsonMode(true)}
+              className={`text-xs px-2 py-1 rounded ${jsonMode ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              JSON
+            </button>
+          </div>
+        </div>
+
+        {jsonMode ? (
+          <div>
+            <textarea
+              value={jsonInput}
+              onChange={(e) => { setJsonInput(e.target.value); setJsonError(''); }}
+              placeholder='{"data_type": "health_records", "sensitivity": "high"}'
+              className={`w-full rounded-md border py-2 px-3 text-sm font-mono h-24 ${jsonError ? 'border-red-300' : 'border-gray-300'}`}
+            />
+            {jsonError && <p className="text-xs text-red-600 mt-1">{jsonError}</p>}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {metadataEntries.map((entry, i) => (
+              <div key={i} className="flex gap-2 items-center">
+                <input
+                  value={entry.key}
+                  onChange={(e) => updateMetadataEntry(i, 'key', e.target.value)}
+                  placeholder="Key"
+                  className="flex-1 rounded-md border border-gray-300 py-1.5 px-2 text-sm"
+                />
+                <input
+                  value={entry.value}
+                  onChange={(e) => updateMetadataEntry(i, 'value', e.target.value)}
+                  placeholder="Value"
+                  className="flex-1 rounded-md border border-gray-300 py-1.5 px-2 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeMetadataEntry(i)}
+                  className="text-red-500 hover:text-red-700 text-sm px-1"
+                >
+                  &times;
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={addMetadataEntry}
+              className="text-xs text-blue-600 hover:text-blue-800"
+            >
+              + Add metadata entry
+            </button>
+          </div>
+        )}
       </div>
 
       <button

@@ -60,6 +60,21 @@ class CypherQueriesModel(BaseModel):
     def validate_cypher_syntax(cls, v):
         if not any(keyword in v.upper() for keyword in ['MATCH', 'CREATE', 'MERGE', 'RETURN']):
             raise ValueError("Invalid Cypher query - missing required keywords")
+        # FalkorDB: single statement only — no semicolons
+        stripped = v.strip().rstrip(';')
+        if ';' in stripped:
+            raise ValueError("FalkorDB does not support multiple statements in a single query — remove semicolons")
+        # FalkorDB: no EXISTS { MATCH ... } subqueries
+        if 'EXISTS' in v.upper() and '{' in v and 'MATCH' in v.upper():
+            # Check for EXISTS { MATCH pattern (subquery syntax)
+            import re
+            if re.search(r'EXISTS\s*\{', v, re.IGNORECASE):
+                raise ValueError("FalkorDB does not support EXISTS { MATCH ... } subqueries — use OPTIONAL MATCH instead")
+        # FalkorDB: no CALL { } subqueries
+        if 'CALL' in v.upper() and '{' in v:
+            import re
+            if re.search(r'CALL\s*\{', v, re.IGNORECASE):
+                raise ValueError("FalkorDB does not support CALL { } subqueries")
         return v
 
 

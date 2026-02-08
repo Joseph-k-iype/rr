@@ -77,7 +77,12 @@ class CypherGeneratorExecutor(ComplianceAgentExecutor):
 
                     # FalkorDB syntax validation via EXPLAIN
                     if self.db_service:
-                        self._validate_cypher_syntax(validated, session_id)
+                        syntax_ok = self._validate_cypher_syntax(validated, session_id)
+                        if not syntax_ok:
+                            logger.warning("Cypher EXPLAIN validation failed, routing back to supervisor for retry")
+                            state["current_phase"] = "supervisor"
+                            await self.emit_completed(event_queue, ctx)
+                            return
 
                     state["current_phase"] = "validator"
 
@@ -124,14 +129,17 @@ class CypherGeneratorExecutor(ComplianceAgentExecutor):
         self,
         queries: CypherQueriesModel,
         session_id: str,
-    ):
-        """Validate generated Cypher queries against FalkorDB using EXPLAIN."""
+    ) -> bool:
+        """Validate generated Cypher queries against FalkorDB using EXPLAIN.
+        Returns True if all queries pass, False if any fail."""
+        all_passed = True
         for query_name in ("rule_check", "rule_insert", "validation"):
             cypher = getattr(queries, query_name)
             try:
                 self.db_service.execute_query(f"EXPLAIN {cypher}")
                 logger.debug(f"EXPLAIN passed for {query_name}")
             except Exception as e:
+                all_passed = False
                 logger.warning(f"EXPLAIN failed for {query_name}: {e}")
                 self.event_store.append(
                     session_id=session_id,
@@ -139,3 +147,4 @@ class CypherGeneratorExecutor(ComplianceAgentExecutor):
                     agent_name=self.agent_name,
                     error=f"Cypher syntax error in {query_name}: {e}",
                 )
+        return all_passed

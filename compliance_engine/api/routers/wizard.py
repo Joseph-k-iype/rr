@@ -17,6 +17,7 @@ from models.wizard_models import (
     WizardSessionState,
     WizardSessionResponse,
     WizardSessionStatus,
+    ScenarioType,
     RuleEditRequest,
     TermsEditRequest,
     WizardApprovalRequest,
@@ -74,7 +75,11 @@ async def submit_step(session_id: str, submission: WizardStepSubmission):
         session.current_step = 2
 
     elif step == 2:
-        session.scenario_type = data.get("scenario_type")
+        raw_scenario = data.get("scenario_type", "transfer")
+        try:
+            session.scenario_type = ScenarioType(raw_scenario)
+        except (ValueError, KeyError):
+            session.scenario_type = raw_scenario
         session.data_categories = data.get("data_categories", [])
         session.current_step = 3
 
@@ -146,7 +151,7 @@ async def get_session(session_id: str):
         current_step=session.current_step,
         origin_country=session.origin_country,
         receiving_countries=session.receiving_countries,
-        scenario_type=session.scenario_type.value if session.scenario_type else None,
+        scenario_type=session.scenario_type.value if session.scenario_type and hasattr(session.scenario_type, 'value') else session.scenario_type,
         data_categories=session.data_categories,
         rule_text=session.rule_text,
         analysis_result=session.analysis_result,

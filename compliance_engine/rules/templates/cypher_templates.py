@@ -93,13 +93,11 @@ LIMIT 1
 
 RULE_MATCH_BY_COUNTRIES = """
 MATCH (r:Rule)-[:TRIGGERED_BY_ORIGIN]->(og:CountryGroup)
-WHERE (og.name = 'ANY' OR EXISTS {
-  MATCH (oc:Country {name: $origin_country})-[:BELONGS_TO]->(og)
-})
+OPTIONAL MATCH (oc:Country {name: $origin_country})-[:BELONGS_TO]->(og)
+WHERE og.name = 'ANY' OR oc IS NOT NULL
 MATCH (r)-[:TRIGGERED_BY_RECEIVING]->(rg:CountryGroup)
-WHERE (rg.name = 'ANY' OR EXISTS {
-  MATCH (rc:Country {name: $receiving_country})-[:BELONGS_TO]->(rg)
-})
+OPTIONAL MATCH (rc:Country {name: $receiving_country})-[:BELONGS_TO]->(rg)
+WHERE rg.name = 'ANY' OR rc IS NOT NULL
 OPTIONAL MATCH (r)-[:HAS_PERMISSION]->(p:Permission)
 OPTIONAL MATCH (r)-[:HAS_PROHIBITION]->(pb:Prohibition)
 OPTIONAL MATCH (p)-[:CAN_HAVE_DUTY]->(d1:Duty)
@@ -124,22 +122,19 @@ LIMIT 1
 
 ATTRIBUTE_RULE_CHECK = """
 MATCH (r:Rule)-[:TRIGGERED_BY_ORIGIN]->(og:CountryGroup)
-WHERE (og.name = 'ANY' OR EXISTS {{
-  MATCH (c:Country {{name: $origin_country}})-[:BELONGS_TO]->(og)
-}})
+OPTIONAL MATCH (oc:Country {{name: $origin_country}})-[:BELONGS_TO]->(og)
+WHERE og.name = 'ANY' OR oc IS NOT NULL
 MATCH (r)-[:TRIGGERED_BY_RECEIVING]->(rg:CountryGroup)
-WHERE (rg.name = 'ANY' OR EXISTS {{
-  MATCH (c:Country {{name: $receiving_country}})-[:BELONGS_TO]->(rg)
-}})
+OPTIONAL MATCH (rc:Country {{name: $receiving_country}})-[:BELONGS_TO]->(rg)
+WHERE rg.name = 'ANY' OR rc IS NOT NULL
 RETURN r
 ORDER BY r.priority ASC
 """
 
 HEALTH_DATA_CHECK = """
 MATCH (r:Rule)-[:TRIGGERED_BY_ORIGIN]->(og:CountryGroup)
-WHERE (og.name = 'ANY' OR EXISTS {{
-  MATCH (c:Country {{name: $origin_country}})-[:BELONGS_TO]->(og)
-}})
+OPTIONAL MATCH (oc:Country {{name: $origin_country}})-[:BELONGS_TO]->(og)
+WHERE og.name = 'ANY' OR oc IS NOT NULL
 OPTIONAL MATCH (r)-[:HAS_PROHIBITION]->(pb:Prohibition)
 RETURN r, pb, r.priority as priority
 ORDER BY priority ASC
@@ -306,45 +301,41 @@ CYPHER_TEMPLATES: Dict[str, CypherTemplate] = {
 # =============================================================================
 
 def build_origin_filter(country: Optional[str], use_index: bool = True) -> str:
-    """Build Cypher filter for origin country"""
+    """Build Cypher filter for origin country (uses $origin_country param)"""
     if not country:
         return ""
     if use_index:
-        return f"MATCH (c)-[:ORIGINATES_FROM]->(origin:Country {{name: '{country}'}})"
-    return f"MATCH (c)-[:ORIGINATES_FROM]->(origin:Country) WHERE origin.name = '{country}'"
+        return "MATCH (c)-[:ORIGINATES_FROM]->(origin:Country {name: $origin_country})"
+    return "MATCH (c)-[:ORIGINATES_FROM]->(origin:Country) WHERE origin.name = $origin_country"
 
 
 def build_receiving_filter(country: Optional[str], use_index: bool = True) -> str:
-    """Build Cypher filter for receiving country"""
+    """Build Cypher filter for receiving country (uses $receiving_country param)"""
     if not country:
         return ""
     if use_index:
-        return f"MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction {{name: '{country}'}})"
-    return f"MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction) WHERE receiving.name = '{country}'"
+        return "MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction {name: $receiving_country})"
+    return "MATCH (c)-[:TRANSFERS_TO]->(receiving:Jurisdiction) WHERE receiving.name = $receiving_country"
 
 
 def build_purpose_filter(purposes: Optional[List[str]]) -> str:
-    """Build Cypher filter for purposes"""
+    """Build Cypher filter for purposes (uses $purposes param)"""
     if not purposes:
         return ""
-    purposes_str = "', '".join(purposes)
-    return f"MATCH (c)-[:HAS_PURPOSE]->(p:Purpose) WHERE p.name IN ['{purposes_str}']"
+    return "MATCH (c)-[:HAS_PURPOSE]->(p:Purpose) WHERE p.name IN $purposes"
 
 
 def build_process_filter(process_l1: Optional[List[str]] = None,
                         process_l2: Optional[List[str]] = None,
                         process_l3: Optional[List[str]] = None) -> str:
-    """Build Cypher filter for processes"""
+    """Build Cypher filter for processes (uses $process_l1/$process_l2/$process_l3 params)"""
     filters = []
     if process_l1:
-        l1_str = "', '".join(process_l1)
-        filters.append(f"MATCH (c)-[:HAS_PROCESS_L1]->(pl1:ProcessL1) WHERE pl1.name IN ['{l1_str}']")
+        filters.append("MATCH (c)-[:HAS_PROCESS_L1]->(pl1:ProcessL1) WHERE pl1.name IN $process_l1")
     if process_l2:
-        l2_str = "', '".join(process_l2)
-        filters.append(f"MATCH (c)-[:HAS_PROCESS_L2]->(pl2:ProcessL2) WHERE pl2.name IN ['{l2_str}']")
+        filters.append("MATCH (c)-[:HAS_PROCESS_L2]->(pl2:ProcessL2) WHERE pl2.name IN $process_l2")
     if process_l3:
-        l3_str = "', '".join(process_l3)
-        filters.append(f"MATCH (c)-[:HAS_PROCESS_L3]->(pl3:ProcessL3) WHERE pl3.name IN ['{l3_str}']")
+        filters.append("MATCH (c)-[:HAS_PROCESS_L3]->(pl3:ProcessL3) WHERE pl3.name IN $process_l3")
     return "\n".join(filters)
 
 
