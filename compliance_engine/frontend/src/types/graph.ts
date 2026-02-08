@@ -14,6 +14,7 @@ export interface GraphNode {
     prohibition_name?: string;
     expanded?: boolean;
     onExpand?: () => void;
+    side?: 'origin' | 'receiving';
   };
   position: { x: number; y: number };
 }

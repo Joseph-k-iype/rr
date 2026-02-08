@@ -83,7 +83,7 @@ class APISettings(BaseSettings):
     port: int = Field(default=5001, validation_alias="API_PORT")
     debug: bool = Field(default=False, validation_alias="API_DEBUG")
     reload: bool = Field(default=False, validation_alias="API_RELOAD")
-    workers: int = Field(default=4, validation_alias="API_WORKERS")
+    workers: int = Field(default=1, validation_alias="API_WORKERS")
 
     # CORS
     cors_origins: List[str] = Field(default=["*"], validation_alias="CORS_ORIGINS")

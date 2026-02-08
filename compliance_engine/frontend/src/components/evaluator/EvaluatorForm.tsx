@@ -16,6 +16,8 @@ export function EvaluatorForm() {
     pii: false,
     purposes: [],
     process_l1: [],
+    process_l2: [],
+    process_l3: [],
   });
 
   if (loadingDropdowns) return <LoadingSpinner message="Loading dropdown values..." />;
@@ -75,16 +77,40 @@ export function EvaluatorForm() {
         </select>
       </div>
 
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Process L1</label>
-        <select
-          multiple
-          value={formData.process_l1 || []}
-          onChange={(e) => setFormData(f => ({ ...f, process_l1: Array.from(e.target.selectedOptions, o => o.value) }))}
-          className="w-full rounded-md border border-gray-300 py-2 px-3 text-sm h-20"
-        >
-          {dropdowns?.processes.l1.map(p => <option key={p} value={p}>{p}</option>)}
-        </select>
+      <div className="grid grid-cols-3 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Process L1</label>
+          <select
+            multiple
+            value={formData.process_l1 || []}
+            onChange={(e) => setFormData(f => ({ ...f, process_l1: Array.from(e.target.selectedOptions, o => o.value) }))}
+            className="w-full rounded-md border border-gray-300 py-2 px-3 text-sm h-24"
+          >
+            {dropdowns?.processes.l1.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Process L2</label>
+          <select
+            multiple
+            value={formData.process_l2 || []}
+            onChange={(e) => setFormData(f => ({ ...f, process_l2: Array.from(e.target.selectedOptions, o => o.value) }))}
+            className="w-full rounded-md border border-gray-300 py-2 px-3 text-sm h-24"
+          >
+            {dropdowns?.processes.l2.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Process L3</label>
+          <select
+            multiple
+            value={formData.process_l3 || []}
+            onChange={(e) => setFormData(f => ({ ...f, process_l3: Array.from(e.target.selectedOptions, o => o.value) }))}
+            className="w-full rounded-md border border-gray-300 py-2 px-3 text-sm h-24"
+          >
+            {dropdowns?.processes.l3.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
       </div>
 
       <div className="flex items-center gap-2">

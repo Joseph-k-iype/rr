@@ -31,7 +31,9 @@ const stepComponents: Record<number, React.FC> = {
 
 export function WizardContainer() {
   const store = useWizardStore();
-  const { events, connected } = useAgentEvents(store.sessionId);
+  // Only connect SSE when step >= 3 (agent processing). Steps 1-2 have no agent activity.
+  const sseSessionId = store.currentStep >= 3 ? store.sessionId : null;
+  const { events, connected } = useAgentEvents(sseSessionId);
 
   const canGoNext = useCallback(() => {
     switch (store.currentStep) {
