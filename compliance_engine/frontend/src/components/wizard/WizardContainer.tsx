@@ -48,12 +48,20 @@ export function WizardContainer() {
       case 5: return true;
       case 6: return !!store.editedRuleDefinition;
       case 7: return !!store.editedRuleDefinition;
-      case 8: return !!store.sandboxGraphName;
+      // Step 8: allow Next if sandbox loaded, OR allow retry (Next acts as "Load Sandbox")
+      case 8: return !!store.editedRuleDefinition;
       case 9: return store.sandboxTestResults.length > 0;
       case 10: return true;
       default: return false;
     }
   }, [store]);
+
+  const getNextLabel = () => {
+    const step = store.currentStep;
+    if (step === 8 && !store.sandboxGraphName) return 'Load Sandbox';
+    if (step === 10) return 'Approve & Load';
+    return 'Next';
+  };
 
   const handleNext = async () => {
     // Read fresh state directly from Zustand to avoid stale closures
@@ -84,7 +92,7 @@ export function WizardContainer() {
 
         if (step === 3) {
           if (result.status === 'failed') {
-            store.setError(result.error_message || 'AI processing failed');
+            store.setError(result.error_message || 'AI processing failed. You can go Back and resubmit.');
             store.setProcessing(false);
             return;
           } else {
@@ -105,10 +113,31 @@ export function WizardContainer() {
         }
       }
 
-      // Step 8: load sandbox
+      // Step 8: load sandbox (or retry if previous attempt failed)
       if (step === 8 && sessionId && !state.sandboxGraphName) {
-        const result = await loadSandbox(sessionId);
-        store.setSandboxGraphName(result.sandbox_graph);
+        try {
+          const result = await loadSandbox(sessionId);
+          store.setSandboxGraphName(result.sandbox_graph);
+        } catch (sandboxErr: unknown) {
+          let msg = 'Failed to load sandbox';
+          if (sandboxErr && typeof sandboxErr === 'object' && 'response' in sandboxErr) {
+            const axiosErr = sandboxErr as { response?: { data?: { detail?: string } } };
+            msg = axiosErr.response?.data?.detail || msg;
+          } else if (sandboxErr instanceof Error) {
+            msg = sandboxErr.message;
+          }
+          store.setError(`Sandbox Error: ${msg}. You can go Back to edit the rule and try again.`);
+          store.setProcessing(false);
+          return;
+        }
+        store.setProcessing(false);
+        // Don't auto-advance — user sees sandbox loaded status, clicks Next to go to test
+        return;
+      }
+
+      // Step 8: sandbox already loaded, just advance
+      if (step === 8 && state.sandboxGraphName) {
+        store.setStep(9);
         store.setProcessing(false);
         return;
       }
@@ -144,6 +173,7 @@ export function WizardContainer() {
 
   const handleBack = () => {
     if (store.currentStep > 1) {
+      store.setError(null);
       store.setStep(store.currentStep - 1);
     }
   };
@@ -163,9 +193,14 @@ export function WizardContainer() {
       )}
 
       {store.error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-800">
-          {store.error}
-          <button onClick={() => store.setError(null)} className="ml-2 text-red-600 underline text-xs">Dismiss</button>
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-sm font-medium text-red-800">Error</p>
+              <p className="text-sm text-red-700 mt-0.5">{store.error}</p>
+            </div>
+            <button onClick={() => store.setError(null)} className="text-red-400 hover:text-red-600 text-sm ml-3 shrink-0">&times;</button>
+          </div>
         </div>
       )}
 
@@ -174,7 +209,7 @@ export function WizardContainer() {
         onBack={handleBack}
         onNext={handleNext}
         canGoNext={canGoNext()}
-        nextLabel={store.currentStep === 10 ? 'Approve & Load' : undefined}
+        nextLabel={getNextLabel()}
         isProcessing={store.isProcessing}
       />
     </div>

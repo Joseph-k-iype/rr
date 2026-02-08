@@ -130,21 +130,46 @@ class CypherGeneratorExecutor(ComplianceAgentExecutor):
         queries: CypherQueriesModel,
         session_id: str,
     ) -> bool:
-        """Validate generated Cypher queries against FalkorDB using EXPLAIN.
-        Returns True if all queries pass, False if any fail."""
+        """Validate generated Cypher queries for FalkorDB compatibility.
+
+        FalkorDB's EXPLAIN requires actual parameter values, so we do
+        structural validation instead of running EXPLAIN with $params.
+        Returns True if all queries pass, False if any fail.
+        """
         all_passed = True
         for query_name in ("rule_check", "rule_insert", "validation"):
             cypher = getattr(queries, query_name)
-            try:
-                self.db_service.execute_query(f"EXPLAIN {cypher}")
-                logger.debug(f"EXPLAIN passed for {query_name}")
-            except Exception as e:
+            errors = []
+
+            # Check for multi-statement (semicolons inside the query body)
+            stripped = cypher.strip().rstrip(';')
+            if ';' in stripped:
+                errors.append("Multiple statements not supported — remove semicolons")
+
+            # Check for EXISTS { MATCH ... } subquery syntax
+            import re
+            if re.search(r'EXISTS\s*\{', cypher, re.IGNORECASE):
+                errors.append("EXISTS { } subqueries not supported — use OPTIONAL MATCH instead")
+
+            # Check for CALL { } subquery syntax
+            if re.search(r'CALL\s*\{', cypher, re.IGNORECASE):
+                errors.append("CALL { } subqueries not supported")
+
+            # Check for UNION
+            if re.search(r'\bUNION\b', cypher, re.IGNORECASE):
+                errors.append("UNION not supported in single query")
+
+            if errors:
                 all_passed = False
-                logger.warning(f"EXPLAIN failed for {query_name}: {e}")
+                error_msg = f"Cypher validation failed for {query_name}: {'; '.join(errors)}"
+                logger.warning(error_msg)
                 self.event_store.append(
                     session_id=session_id,
                     event_type=AuditEventType.AGENT_FAILED,
                     agent_name=self.agent_name,
-                    error=f"Cypher syntax error in {query_name}: {e}",
+                    error=error_msg,
                 )
+            else:
+                logger.debug(f"Structural validation passed for {query_name}")
+
         return all_passed
