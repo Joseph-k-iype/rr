@@ -35,8 +35,9 @@ class WizardAgentState(TypedDict):
     max_iterations: int
     requires_human_input: bool
 
-    # Validation tracking — errors from previous iterations for context
-    validation_errors: List[str]
+    # Validation tracking
+    validation_errors: List[str]  # errors from previous iterations for context
+    validation_retry_count: int   # consecutive validation failures (for skip fallback)
 
     # Events for SSE streaming
     events: List[Dict[str, Any]]
@@ -74,6 +75,7 @@ def create_initial_state(
         max_iterations=max_iterations,
         requires_human_input=False,
         validation_errors=[],
+        validation_retry_count=0,
         events=[],
         success=False,
         error_message=None,

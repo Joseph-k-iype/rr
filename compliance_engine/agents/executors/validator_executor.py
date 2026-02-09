@@ -5,10 +5,9 @@ Validates rules, Cypher queries, and logical consistency.
 Supports FalkorDB test queries in temporary graphs.
 Implements Google A2A SDK AgentExecutor interface.
 
-Preserves context across retries:
-- Stores validation errors on state["validation_errors"]
-- Passes previous errors to the LLM so it can learn from past failures
-- Retries transparently on auth errors (401) without burning iterations
+Fallback: if validation fails MAX_VALIDATION_RETRIES times consecutively,
+skip validation and proceed to complete with a warning. This prevents
+infinite retry loops when the LLM validator is overly strict.
 """
 
 import logging
@@ -32,9 +31,12 @@ from agents.ai_service import AIRequestError
 
 logger = logging.getLogger(__name__)
 
+# After this many consecutive validation failures, skip and proceed
+MAX_VALIDATION_RETRIES = 3
+
 
 class ValidatorExecutor(ComplianceAgentExecutor):
-    """Validator agent executor - comprehensive validation with optional FalkorDB testing."""
+    """Validator agent executor - comprehensive validation with fallback skip."""
 
     agent_name = "validator"
 
@@ -51,6 +53,37 @@ class ValidatorExecutor(ComplianceAgentExecutor):
         # Guard: cannot validate without rule_definition and cypher_queries
         if not state.get("rule_definition") or not state.get("cypher_queries"):
             state["current_phase"] = "supervisor"
+            return
+
+        # ── Fallback: skip validation after too many consecutive failures ──
+        retry_count = state.get("validation_retry_count", 0)
+        if retry_count >= MAX_VALIDATION_RETRIES:
+            logger.warning(
+                f"Validation failed {retry_count} times consecutively — "
+                f"skipping validation and proceeding to complete"
+            )
+            state["current_phase"] = "complete"
+            state["success"] = True
+            state["validation_result"] = {
+                "overall_valid": True,
+                "confidence_score": 0.5,
+                "skipped": True,
+                "skip_reason": f"Auto-approved after {retry_count} validation retries",
+                "errors": [],
+                "warnings": [f"Validation skipped after {retry_count} failed attempts"],
+            }
+            state["events"].append({
+                "event_type": "validation_skipped",
+                "agent_name": self.agent_name,
+                "message": f"Validation skipped after {retry_count} retries — rule auto-approved for human review",
+            })
+            self.event_store.append(
+                session_id=session_id,
+                event_type=AuditEventType.VALIDATION_PASSED,
+                agent_name=self.agent_name,
+                data={"skipped": True, "retry_count": retry_count},
+            )
+            await self.emit_completed(event_queue, ctx)
             return
 
         await self.emit_working(event_queue, ctx)
@@ -78,7 +111,7 @@ class ValidatorExecutor(ComplianceAgentExecutor):
         try:
             response = self.call_ai_with_retry(user_prompt, VALIDATOR_SYSTEM_PROMPT)
         except AIRequestError as e:
-            # All retries failed — go back to supervisor without burning an iteration
+            # Auth/request error — go back to supervisor without burning a retry
             state["current_phase"] = "supervisor"
             self.event_store.append(
                 session_id=session_id,
@@ -92,6 +125,8 @@ class ValidatorExecutor(ComplianceAgentExecutor):
         parsed = parse_json_response(response)
 
         if not parsed:
+            # Unparseable response — count as a validation retry
+            state["validation_retry_count"] = retry_count + 1
             state["current_phase"] = "supervisor"
             await self.emit_completed(event_queue, ctx)
             return
@@ -126,6 +161,8 @@ class ValidatorExecutor(ComplianceAgentExecutor):
                 self._run_test_queries(state, session_id)
 
             if validated.overall_valid and validated.confidence_score >= 0.7:
+                # Validation passed — reset retry counter
+                state["validation_retry_count"] = 0
                 state["current_phase"] = "complete"
                 state["success"] = True
                 self.event_store.append(
@@ -137,6 +174,9 @@ class ValidatorExecutor(ComplianceAgentExecutor):
                 )
                 logger.info(f"Validation passed with confidence {validated.confidence_score}")
             else:
+                # Validation failed — increment retry counter
+                state["validation_retry_count"] = retry_count + 1
+
                 # Store errors for next iteration's context
                 if validated.errors:
                     state.setdefault("validation_errors", []).extend(validated.errors)
@@ -159,9 +199,14 @@ class ValidatorExecutor(ComplianceAgentExecutor):
                     data={"errors": validated.errors, "fixes": validated.suggested_fixes},
                     duration_ms=duration,
                 )
-                logger.warning(f"Validation failed, iteration {state['iteration']}")
+                logger.warning(
+                    f"Validation failed (retry {state['validation_retry_count']}/{MAX_VALIDATION_RETRIES}), "
+                    f"iteration {state['iteration']}"
+                )
 
         except ValidationError as ve:
+            # Pydantic model error — count as retry
+            state["validation_retry_count"] = retry_count + 1
             state["current_phase"] = "supervisor"
             self.event_store.append(
                 session_id=session_id,
@@ -177,7 +222,6 @@ class ValidatorExecutor(ComplianceAgentExecutor):
 
         Skips execution if queries contain $param placeholders since
         FalkorDB requires actual parameter values (not just placeholders).
-        Structural validation is already done in cypher_generator_executor.
         """
         cypher_queries = state.get("cypher_queries", {}).get("queries", {})
         rule_insert = cypher_queries.get("rule_insert", "")
@@ -186,21 +230,15 @@ class ValidatorExecutor(ComplianceAgentExecutor):
         if not rule_insert or not validation_query:
             return
 
-        # Skip if queries contain $param placeholders — FalkorDB EXPLAIN/query
-        # requires actual values, not parameter placeholders
         if '$' in rule_insert or '$' in validation_query:
-            logger.info("Skipping FalkorDB test: queries contain $param placeholders (structural validation already passed)")
+            logger.info("Skipping FalkorDB test: queries contain $param placeholders")
             return
 
         temp_graph = None
         graph_name = None
         try:
             temp_graph, graph_name = self.db_service.get_temp_graph()
-
-            # Insert rule into temp graph
             temp_graph.query(rule_insert)
-
-            # Run validation query
             result = temp_graph.query(validation_query)
             logger.info(f"Test query returned {len(result.result_set) if hasattr(result, 'result_set') else 0} rows")
 

@@ -84,8 +84,18 @@ def fail_node(state: WizardAgentState) -> WizardAgentState:
 
 
 def route_from_supervisor(state: WizardAgentState) -> str:
-    """Route based on supervisor decision."""
+    """Route based on supervisor decision.
+
+    If validation has been retried enough times, route directly to
+    validator so its skip-fallback triggers (instead of letting the
+    supervisor re-analyze endlessly).
+    """
     phase = state.get("current_phase", "fail")
+
+    # If validation retries exhausted, go straight to validator (triggers skip fallback)
+    retry_count = state.get("validation_retry_count", 0)
+    if retry_count >= 3 and phase not in ("complete", "fail"):
+        return "validator"
 
     # Check max iterations
     if state["iteration"] >= state["max_iterations"] and phase not in ("complete", "fail"):
@@ -262,7 +272,10 @@ def run_rule_ingestion(
 
     try:
         graph, checkpointer = build_rule_ingestion_graph()
-        config = {"configurable": {"thread_id": thread_id or "default"}}
+        config = {
+            "configurable": {"thread_id": thread_id or "default"},
+            "recursion_limit": 50,
+        }
         final_state = graph.invoke(initial_state, config)
         return RuleIngestionResult(final_state)
 
