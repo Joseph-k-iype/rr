@@ -65,7 +65,7 @@ export function Step7Edit() {
     description: (rule.description as string) || '',
     rule_type: (rule.rule_type as string) || 'transfer',
     outcome: (rule.outcome as string) || 'permission',
-    priority: (rule.priority as number) || 50,
+    priority: (rule.priority as string) || 'medium',
     odrl_type: (rule.odrl_type as string) || 'Permission',
     origin_group: (rule.origin_group as string) || '',
     receiving_group: (rule.receiving_group as string) || '',
@@ -218,8 +218,12 @@ export function Step7Edit() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Priority (1-100)</label>
-                <input type="number" min={1} max={100} value={formState.priority} onChange={e => updateField('priority', parseInt(e.target.value) || 50)} className="w-full rounded-md border border-gray-300 py-1.5 px-2 text-sm" />
+                <label className="block text-xs text-gray-500 mb-1">Priority</label>
+                <select value={formState.priority} onChange={e => updateField('priority', e.target.value)} className="w-full rounded-md border border-gray-300 py-1.5 px-2 text-sm">
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
               </div>
             </div>
 

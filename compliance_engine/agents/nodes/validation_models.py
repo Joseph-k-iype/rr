@@ -17,7 +17,7 @@ class RuleDefinitionModel(BaseModel):
     rule_id: str = Field(..., pattern=r"^RULE_.*$")
     name: str = Field(..., min_length=3, max_length=200)
     description: str = Field(..., min_length=10)
-    priority: int = Field(..., ge=1, le=100)
+    priority: Literal["high", "medium", "low"]
     origin_countries: Optional[List[str]] = None
     origin_group: Optional[str] = None
     receiving_countries: Optional[List[str]] = None

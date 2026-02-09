@@ -2,19 +2,50 @@
 Attribute Detection Service
 ===========================
 Detects specific data attributes (health, financial, biometric, etc.)
-from metadata using keywords, patterns, and configurations.
+from metadata using token-based matching, patterns, and configurations.
+
+Production-grade detection:
+- Token-based matching (not substring) to avoid false positives
+- Stop word filtering to skip common words
+- Multi-word phrase matching for compound terms
+- Minimum keyword length to avoid noise
+- Configurable confidence thresholds
 """
 
 import re
 import json
 import logging
-from typing import Dict, List, Optional, Any, Set
+from typing import Dict, List, Optional, Any, Set, FrozenSet
 from pathlib import Path
 from dataclasses import dataclass
 
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
+
+# Common English stop words that should never trigger a match on their own
+STOP_WORDS: FrozenSet[str] = frozenset({
+    'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+    'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+    'should', 'may', 'might', 'shall', 'can', 'must',
+    'and', 'or', 'but', 'if', 'then', 'else', 'when', 'where', 'how',
+    'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those',
+    'it', 'its', 'i', 'we', 'you', 'he', 'she', 'they', 'me', 'us',
+    'him', 'her', 'them', 'my', 'our', 'your', 'his', 'their',
+    'not', 'no', 'nor', 'so', 'too', 'very', 'just', 'also',
+    'of', 'in', 'on', 'at', 'to', 'for', 'with', 'by', 'from',
+    'up', 'out', 'off', 'over', 'under', 'between', 'through', 'about',
+    'into', 'during', 'before', 'after', 'above', 'below',
+    'all', 'any', 'each', 'every', 'both', 'few', 'more', 'most',
+    'other', 'some', 'such', 'only', 'own', 'same',
+    'data', 'transfer', 'sharing', 'processing', 'storage', 'use',
+    'information', 'system', 'service', 'type', 'name', 'value',
+    'country', 'countries', 'rule', 'rules', 'policy', 'policies',
+    'true', 'false', 'null', 'none', 'yes', 'no',
+})
+
+# Minimum length for a keyword to be considered valid for matching
+MIN_KEYWORD_LENGTH = 3
 
 
 @dataclass
@@ -41,12 +72,35 @@ class AttributeDetectionConfig:
         enabled: bool = True
     ):
         self.name = name
-        self.keywords = set(k.lower() if not case_sensitive else k for k in (keywords or []))
-        self.patterns = [re.compile(p, re.IGNORECASE if not case_sensitive else 0) for p in (patterns or [])]
-        self.categories = set(c.lower() for c in (categories or []))
         self.case_sensitive = case_sensitive
         self.word_boundaries = word_boundaries
         self.enabled = enabled
+
+        # Separate single-word keywords from multi-word phrases
+        raw_keywords = [k.lower() if not case_sensitive else k for k in (keywords or [])]
+        self.single_keywords: Set[str] = set()
+        self.phrase_keywords: List[List[str]] = []
+
+        for kw in raw_keywords:
+            # Skip stop words and too-short keywords
+            kw_clean = kw.strip()
+            if not kw_clean:
+                continue
+
+            parts = kw_clean.replace('_', ' ').replace('-', ' ').split()
+            # Filter out stop words from single-word entries
+            non_stop_parts = [p for p in parts if p.lower() not in STOP_WORDS and len(p) >= MIN_KEYWORD_LENGTH]
+
+            if len(parts) > 1:
+                # Multi-word phrase: store as phrase for ordered matching
+                if non_stop_parts:  # At least one meaningful word
+                    self.phrase_keywords.append([p.lower() for p in parts])
+            elif non_stop_parts:
+                # Single word that's not a stop word and meets min length
+                self.single_keywords.add(kw_clean.lower())
+
+        self.patterns = [re.compile(p, re.IGNORECASE if not case_sensitive else 0) for p in (patterns or [])]
+        self.categories = set(c.lower() for c in (categories or []))
 
 
 class AttributeDetector:
@@ -195,13 +249,19 @@ class AttributeDetector:
                         # If we already have a default config, merge with it
                         if 'health_data' in self._configs:
                             existing = self._configs['health_data']
-                            existing.keywords.update(k.lower() for k in keywords)
-                            for p in patterns:
-                                try:
-                                    existing.patterns.append(re.compile(p, re.IGNORECASE))
-                                except re.error:
-                                    logger.warning(f"Invalid pattern in health_data_config: {p}")
-                            existing.categories.update(c.lower() for c in categories)
+                            # Re-create by merging new keywords into a fresh config
+                            merged_kw = list(existing.single_keywords) + [' '.join(p) for p in existing.phrase_keywords]
+                            merged_kw.extend(k.lower() for k in keywords)
+                            merged_config = AttributeDetectionConfig(
+                                name='health_data',
+                                keywords=merged_kw,
+                                patterns=[p.pattern for p in existing.patterns] + patterns,
+                                categories=list(existing.categories) + categories,
+                                case_sensitive=existing.case_sensitive,
+                                word_boundaries=existing.word_boundaries,
+                                enabled=True,
+                            )
+                            self._configs['health_data'] = merged_config
                         else:
                             # Create new config from file
                             self._configs['health_data'] = AttributeDetectionConfig(
@@ -287,35 +347,90 @@ class AttributeDetector:
         text_lower: str,
         config: AttributeDetectionConfig
     ) -> DetectionResult:
-        """Detect a single attribute type"""
+        """
+        Detect a single attribute type using token-based matching.
+
+        Uses word-boundary matching to avoid false positives from substrings.
+        E.g., 'health' won't match inside 'healthcare' unless 'healthcare' is
+        also a keyword. Multi-word phrases are matched as contiguous sequences.
+        """
         matched_terms: Set[str] = set()
         detection_method = None
 
-        # Check keywords using case-insensitive contains matching
-        for keyword in config.keywords:
-            check_text = text if config.case_sensitive else text_lower
-            keyword_check = keyword if config.case_sensitive else keyword.lower()
-            # Use contains matching — substring match is sufficient
-            # This catches compound terms like "patient_health_records" matching "health"
-            if keyword_check in check_text:
+        # Tokenize text into words for token-based matching
+        # Split on whitespace, underscores, hyphens, commas, colons, etc.
+        tokens = re.findall(r'[a-zA-Z0-9]+', text_lower)
+        token_set = set(tokens)
+
+        # Also build compound tokens (underscore/hyphen joined pairs from original)
+        # This catches "health_data", "credit_card" etc. in structured metadata keys
+        compound_tokens = set()
+        compound_parts = re.findall(r'[a-zA-Z0-9]+(?:[_\-][a-zA-Z0-9]+)+', text_lower)
+        for compound in compound_parts:
+            compound_tokens.add(compound.replace('-', '_'))
+
+        # 1. Single keyword matching — exact token match
+        for keyword in config.single_keywords:
+            kw_normalized = keyword.replace('-', '_').replace(' ', '_')
+
+            # Check compound tokens first (e.g. "health_data" matches "health_data")
+            if kw_normalized in compound_tokens:
+                matched_terms.add(keyword)
+                detection_method = 'keyword'
+                continue
+
+            # Check single token match (e.g. "diagnosis" matches token "diagnosis")
+            if keyword in token_set:
                 matched_terms.add(keyword)
                 detection_method = 'keyword'
 
-        # Check patterns
+        # 2. Phrase matching — check if phrase words appear contiguously
+        for phrase_parts in config.phrase_keywords:
+            phrase_len = len(phrase_parts)
+            if phrase_len == 0:
+                continue
+
+            # Check if all phrase words appear as contiguous tokens
+            for i in range(len(tokens) - phrase_len + 1):
+                window = tokens[i:i + phrase_len]
+                if all(window[j] == phrase_parts[j] for j in range(phrase_len)):
+                    matched_terms.add(' '.join(phrase_parts))
+                    detection_method = detection_method or 'keyword'
+                    break
+
+            # Also check compound tokens for underscore-joined phrases
+            compound_form = '_'.join(phrase_parts)
+            if compound_form in compound_tokens:
+                matched_terms.add(' '.join(phrase_parts))
+                detection_method = detection_method or 'keyword'
+
+        # 3. Pattern matching (regex)
         for pattern in config.patterns:
             matches = pattern.findall(text)
             if matches:
-                matched_terms.update(str(m) for m in matches[:5])  # Limit matches
+                matched_terms.update(str(m) for m in matches[:5])
                 detection_method = detection_method or 'pattern'
 
-        # Calculate confidence based on number of matches
-        confidence = min(1.0, len(matched_terms) / 3.0) if matched_terms else 0.0
+        # Calculate confidence: require at least 2 distinct keyword matches
+        # for high confidence, 1 match = low confidence
+        n_matches = len(matched_terms)
+        if n_matches >= 3:
+            confidence = min(1.0, 0.7 + (n_matches - 3) * 0.1)
+        elif n_matches == 2:
+            confidence = 0.5
+        elif n_matches == 1:
+            confidence = 0.3
+        else:
+            confidence = 0.0
+
+        # Only consider detected if confidence meets threshold
+        detected = confidence >= 0.3 and n_matches >= 1
 
         return DetectionResult(
-            detected=bool(matched_terms),
+            detected=detected,
             attribute_name=config.name,
             detection_method=detection_method or 'none',
-            matched_terms=list(matched_terms)[:10],  # Limit returned terms
+            matched_terms=list(matched_terms)[:10],
             confidence=confidence
         )
 

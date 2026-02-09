@@ -23,7 +23,7 @@ function RuleNodeComponent({ data }: NodeProps) {
           </span>
         </div>
         <div className="text-[10px] text-gray-400 tabular-nums">
-          P{String(data.priority || 0)}{data.has_pii_required ? ' \u00B7 PII' : ''}
+          {String(data.priority || 'medium').toString().toUpperCase()}{data.has_pii_required ? ' \u00B7 PII' : ''}
         </div>
       </div>
 

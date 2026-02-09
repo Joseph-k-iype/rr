@@ -153,12 +153,23 @@ class ValidatorExecutor(ComplianceAgentExecutor):
         await self.emit_completed(event_queue, ctx)
 
     def _run_test_queries(self, state: dict, session_id: str):
-        """Run validation queries in a temporary FalkorDB graph."""
+        """Run validation queries in a temporary FalkorDB graph.
+
+        Skips execution if queries contain $param placeholders since
+        FalkorDB requires actual parameter values (not just placeholders).
+        Structural validation is already done in cypher_generator_executor.
+        """
         cypher_queries = state.get("cypher_queries", {}).get("queries", {})
-        rule_insert = cypher_queries.get("rule_insert")
-        validation_query = cypher_queries.get("validation")
+        rule_insert = cypher_queries.get("rule_insert", "")
+        validation_query = cypher_queries.get("validation", "")
 
         if not rule_insert or not validation_query:
+            return
+
+        # Skip if queries contain $param placeholders — FalkorDB EXPLAIN/query
+        # requires actual values, not parameter placeholders
+        if '$' in rule_insert or '$' in validation_query:
+            logger.info("Skipping FalkorDB test: queries contain $param placeholders (structural validation already passed)")
             return
 
         temp_graph = None

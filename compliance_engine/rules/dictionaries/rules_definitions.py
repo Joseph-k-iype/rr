@@ -34,6 +34,24 @@ class RuleOutcome(Enum):
     PROHIBITION = "prohibition"
 
 
+class RulePriority(str, Enum):
+    """Three-tier priority system. HIGH = evaluated first, LOW = evaluated last."""
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+# Sort order for priority: lower value = evaluated first
+PRIORITY_ORDER = {
+    RulePriority.HIGH: 1,
+    RulePriority.MEDIUM: 2,
+    RulePriority.LOW: 3,
+    "high": 1,
+    "medium": 2,
+    "low": 3,
+}
+
+
 class AssessmentType(Enum):
     """Types of assessments that can be required"""
     PIA = "pia"       # Privacy Impact Assessment
@@ -71,7 +89,7 @@ class CaseMatchingRule:
     rule_id: str
     name: str
     description: str
-    priority: int  # Lower number = higher priority
+    priority: str  # "high", "medium", "low"
 
     # Country matching
     origin_countries: Optional[FrozenSet[str]] = None  # None = any country
@@ -107,7 +125,7 @@ class TransferRule:
     rule_id: str
     name: str
     description: str
-    priority: int
+    priority: str  # "high", "medium", "low"
 
     # Transfer specification (can use tuples or groups)
     # Format: List of (origin, receiving) tuples
@@ -149,7 +167,7 @@ class AttributeRule:
     rule_id: str
     name: str
     description: str
-    priority: int
+    priority: str  # "high", "medium", "low"
 
     # Attribute specification
     attribute_name: str  # e.g., "health_data", "financial_data"
@@ -191,7 +209,7 @@ CASE_MATCHING_RULES: Dict[str, CaseMatchingRule] = {
         rule_id="RULE_1",
         name="EU/EEA/UK/Crown/Switzerland Internal Transfers",
         description="Transfers within EU/EEA, UK, Crown Dependencies, and Switzerland require PIA completion",
-        priority=10,
+        priority="low",
         origin_group="EU_EEA_UK_CROWN_CH",
         receiving_group="EU_EEA_UK_CROWN_CH",
         required_assessments=RequiredAssessments(pia_required=True),
@@ -202,7 +220,7 @@ CASE_MATCHING_RULES: Dict[str, CaseMatchingRule] = {
         rule_id="RULE_2",
         name="EU/EEA to Adequacy Countries",
         description="Transfers from EU/EEA to adequacy countries require PIA completion",
-        priority=20,
+        priority="low",
         origin_group="EU_EEA",
         receiving_group="ADEQUACY_COUNTRIES",
         required_assessments=RequiredAssessments(pia_required=True),
@@ -213,7 +231,7 @@ CASE_MATCHING_RULES: Dict[str, CaseMatchingRule] = {
         rule_id="RULE_3",
         name="Crown Dependencies to Adequacy + EU/EEA",
         description="Transfers from Crown Dependencies to adequacy countries or EU/EEA require PIA",
-        priority=30,
+        priority="low",
         origin_group="CROWN_DEPENDENCIES",
         receiving_group="ADEQUACY_PLUS_EU",
         required_assessments=RequiredAssessments(pia_required=True),
@@ -224,7 +242,7 @@ CASE_MATCHING_RULES: Dict[str, CaseMatchingRule] = {
         rule_id="RULE_4",
         name="UK to Adequacy + EU/EEA",
         description="Transfers from UK to adequacy countries or EU/EEA require PIA",
-        priority=40,
+        priority="low",
         origin_countries=frozenset({"United Kingdom"}),
         receiving_group="ADEQUACY_PLUS_EU",
         required_assessments=RequiredAssessments(pia_required=True),
@@ -235,7 +253,7 @@ CASE_MATCHING_RULES: Dict[str, CaseMatchingRule] = {
         rule_id="RULE_5",
         name="Switzerland to Approved Countries",
         description="Transfers from Switzerland to approved jurisdictions require PIA",
-        priority=50,
+        priority="low",
         origin_countries=frozenset({"Switzerland"}),
         receiving_group="SWITZERLAND_APPROVED",
         required_assessments=RequiredAssessments(pia_required=True),
@@ -246,7 +264,7 @@ CASE_MATCHING_RULES: Dict[str, CaseMatchingRule] = {
         rule_id="RULE_6",
         name="EU/EEA/Adequacy/UK to Rest of World",
         description="Transfers to non-adequacy countries require PIA and TIA",
-        priority=60,
+        priority="low",
         origin_group="EU_EEA_ADEQUACY_UK",
         receiving_not_in=frozenset({"EU_EEA_ADEQUACY_UK"}),  # Marker: not in this group
         required_assessments=RequiredAssessments(pia_required=True, tia_required=True),
@@ -257,7 +275,7 @@ CASE_MATCHING_RULES: Dict[str, CaseMatchingRule] = {
         rule_id="RULE_7",
         name="BCR Countries Transfer",
         description="Transfers from BCR countries require PIA and HRPR",
-        priority=70,
+        priority="low",
         origin_group="BCR_COUNTRIES",
         receiving_countries=None,  # Any country
         required_assessments=RequiredAssessments(pia_required=True, hrpr_required=True),
@@ -268,7 +286,7 @@ CASE_MATCHING_RULES: Dict[str, CaseMatchingRule] = {
         rule_id="RULE_8",
         name="Personal Data Transfer",
         description="Any transfer with personal data requires PIA",
-        priority=80,
+        priority="low",
         origin_countries=None,  # Any
         receiving_countries=None,  # Any
         requires_personal_data=True,
@@ -288,7 +306,7 @@ TRANSFER_RULES: Dict[str, TransferRule] = {
         rule_id="RULE_9",
         name="US PII to Restricted Countries",
         description="Transfer of PII from US to restricted countries is prohibited",
-        priority=1,  # Highest priority
+        priority="high",
         origin_group=None,
         receiving_group="US_RESTRICTED",
         transfer_pairs=[
@@ -321,7 +339,7 @@ TRANSFER_RULES: Dict[str, TransferRule] = {
         rule_id="RULE_10",
         name="US to China Cloud Storage",
         description="Cloud storage of any data from US in China/HK/Macao is prohibited",
-        priority=1,
+        priority="high",
         transfer_pairs=[
             ("United States", "China"),
             ("United States", "Hong Kong"),
@@ -343,7 +361,7 @@ TRANSFER_RULES: Dict[str, TransferRule] = {
         rule_id="RULE_EU_RUSSIA",
         name="EU to Russia Data Transfer",
         description="Data transfers from EU to Russia are restricted",
-        priority=2,
+        priority="high",
         origin_group="EU_EEA",
         receiving_countries=frozenset({"Russia"}),
         outcome=RuleOutcome.PROHIBITION,
@@ -366,7 +384,7 @@ ATTRIBUTE_RULES: Dict[str, AttributeRule] = {
         rule_id="RULE_11",
         name="US Health Data Transfer",
         description="Transfer of US health data is restricted",
-        priority=1,
+        priority="high",
         attribute_name="health_data",
         attribute_config_file="health_data_config.json",
         origin_countries=frozenset({"United States", "United States of America"}),
@@ -381,7 +399,7 @@ ATTRIBUTE_RULES: Dict[str, AttributeRule] = {
         rule_id="RULE_HEALTH_GEN",
         name="General Health Data Transfer",
         description="Transfer of health-related data requires review",
-        priority=10,
+        priority="medium",
         attribute_name="health_data",
         attribute_keywords=[
             "patient", "medical", "health", "diagnosis", "treatment",
@@ -400,7 +418,7 @@ ATTRIBUTE_RULES: Dict[str, AttributeRule] = {
         rule_id="RULE_FIN_01",
         name="Financial Data to High Risk Jurisdictions",
         description="Financial data transfer to high-risk jurisdictions requires additional controls",
-        priority=5,
+        priority="high",
         attribute_name="financial_data",
         attribute_keywords=[
             "bank_account", "credit_card", "financial", "payment",
@@ -419,7 +437,7 @@ ATTRIBUTE_RULES: Dict[str, AttributeRule] = {
         rule_id="RULE_BIO_01",
         name="Biometric Data Transfer",
         description="Biometric data transfers require special handling",
-        priority=3,
+        priority="high",
         attribute_name="biometric_data",
         attribute_keywords=[
             "fingerprint", "facial_recognition", "retina", "iris",
@@ -476,5 +494,5 @@ def get_rules_by_priority() -> List[Tuple[str, Any]]:
     for rule_id, rule in get_enabled_attribute_rules().items():
         all_rules.append((rule_id, rule, RuleType.ATTRIBUTE))
 
-    # Sort by priority (lower = higher priority)
-    return sorted(all_rules, key=lambda x: x[1].priority)
+    # Sort by priority (high first, then medium, then low)
+    return sorted(all_rules, key=lambda x: PRIORITY_ORDER.get(x[1].priority, 2))

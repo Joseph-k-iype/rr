@@ -7,6 +7,7 @@ Implements Google A2A SDK AgentExecutor interface.
 
 import logging
 import time
+import uuid
 
 from pydantic import ValidationError
 
@@ -78,6 +79,25 @@ class RuleAnalyzerExecutor(ComplianceAgentExecutor):
                 }
 
                 rule_def = parsed.get("rule_definition", {})
+
+                # Auto-generate rule_id if AI returned placeholder
+                raw_id = rule_def.get("rule_id", "")
+                if not raw_id or "<" in raw_id or "unique_id" in raw_id.lower():
+                    short_id = uuid.uuid4().hex[:8].upper()
+                    rule_def["rule_id"] = f"RULE_{short_id}"
+
+                # Normalise priority to high/medium/low
+                raw_priority = rule_def.get("priority", "medium")
+                if isinstance(raw_priority, (int, float)):
+                    if raw_priority <= 33:
+                        rule_def["priority"] = "high"
+                    elif raw_priority <= 66:
+                        rule_def["priority"] = "medium"
+                    else:
+                        rule_def["priority"] = "low"
+                elif isinstance(raw_priority, str) and raw_priority not in ("high", "medium", "low"):
+                    rule_def["priority"] = "medium"
+
                 try:
                     validated = RuleDefinitionModel(**rule_def)
                     state["rule_definition"] = validated.model_dump()

@@ -106,10 +106,10 @@ Respond with a JSON object:
     }},
     "rule_definition": {{
         "rule_type": "transfer" | "attribute",
-        "rule_id": "RULE_AUTO_<unique_id>",
+        "rule_id": "RULE_<SHORT_UPPERCASE_SLUG>",
         "name": "<descriptive name>",
         "description": "<full description including regulatory context>",
-        "priority": <1-100>,
+        "priority": "high" | "medium" | "low",
         "origin_countries": ["country1"] | null,
         "origin_group": "<GROUP_NAME>" | null,
         "receiving_countries": ["country1"] | null,
