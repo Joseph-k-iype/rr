@@ -302,7 +302,7 @@ def interactive_mode():
             receiving_countries=receiving_countries,
             rule_text=rule_text,
             data_categories=data_categories,
-            max_iterations=3,
+            max_iterations=10,
         )
 
         if not result.success:

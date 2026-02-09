@@ -154,7 +154,7 @@ class TriggeredRule(BaseModel):
     rule_id: str
     rule_name: str
     rule_type: str  # case_matching, transfer, attribute
-    priority: int
+    priority: str  # high, medium, low
     origin_match_type: str = "group"
     receiving_match_type: str = "group"
     odrl_type: str = "Permission"
@@ -305,7 +305,7 @@ class RuleOverview(BaseModel):
     name: str
     description: str
     rule_type: str
-    priority: int
+    priority: str  # high, medium, low
     origin_scope: str  # Human-readable origin description
     receiving_scope: str  # Human-readable receiving description
     origin_match_type: str = "group"

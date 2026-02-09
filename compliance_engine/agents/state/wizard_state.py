@@ -35,6 +35,9 @@ class WizardAgentState(TypedDict):
     max_iterations: int
     requires_human_input: bool
 
+    # Validation tracking — errors from previous iterations for context
+    validation_errors: List[str]
+
     # Events for SSE streaming
     events: List[Dict[str, Any]]
 
@@ -50,7 +53,7 @@ def create_initial_state(
     rule_text: str,
     data_categories: Optional[List[str]] = None,
     is_pii_related: bool = False,
-    max_iterations: int = 3,
+    max_iterations: int = 10,
 ) -> WizardAgentState:
     """Create the initial state for a wizard workflow run."""
     return WizardAgentState(
@@ -70,6 +73,7 @@ def create_initial_state(
         iteration=0,
         max_iterations=max_iterations,
         requires_human_input=False,
+        validation_errors=[],
         events=[],
         success=False,
         error_message=None,

@@ -4,6 +4,11 @@ Validator Executor
 Validates rules, Cypher queries, and logical consistency.
 Supports FalkorDB test queries in temporary graphs.
 Implements Google A2A SDK AgentExecutor interface.
+
+Preserves context across retries:
+- Stores validation errors on state["validation_errors"]
+- Passes previous errors to the LLM so it can learn from past failures
+- Retries transparently on auth errors (401) without burning iterations
 """
 
 import logging
@@ -56,6 +61,9 @@ class ValidatorExecutor(ComplianceAgentExecutor):
             agent_name=self.agent_name,
         )
 
+        # Pass previous validation errors so the LLM can learn from them
+        previous_errors = state.get("validation_errors", [])
+
         user_prompt = build_validator_prompt(
             template=VALIDATOR_USER_TEMPLATE,
             rule_text=state["rule_text"],
@@ -64,90 +72,102 @@ class ValidatorExecutor(ComplianceAgentExecutor):
             dictionary=state.get("dictionary_result"),
             iteration=state["iteration"],
             max_iterations=state["max_iterations"],
-            previous_errors=[],
+            previous_errors=previous_errors,
         )
 
         try:
-            response = self.ai_service.chat(user_prompt, VALIDATOR_SYSTEM_PROMPT)
-            parsed = parse_json_response(response)
-
-            if parsed:
-                val_results = parsed.get("validation_results", {})
-
-                try:
-                    validated = ValidationResultModel(
-                        overall_valid=parsed.get("overall_valid", False),
-                        confidence_score=parsed.get("confidence_score", 0.0),
-                        rule_definition_valid=val_results.get("rule_definition", {}).get("valid", False),
-                        cypher_valid=val_results.get("cypher_queries", {}).get("valid", False),
-                        logical_valid=val_results.get("logical", {}).get("valid", False),
-                        errors=sum([
-                            val_results.get("rule_definition", {}).get("errors", []),
-                            val_results.get("cypher_queries", {}).get("errors", []),
-                            val_results.get("logical", {}).get("errors", []),
-                        ], []),
-                        warnings=sum([
-                            val_results.get("rule_definition", {}).get("warnings", []),
-                            val_results.get("cypher_queries", {}).get("warnings", []),
-                            val_results.get("logical", {}).get("warnings", []),
-                        ], []),
-                        suggested_fixes=parsed.get("suggested_fixes", []),
-                    )
-
-                    state["validation_result"] = validated.model_dump()
-                    duration = (time.time() - start_time) * 1000
-
-                    # FalkorDB test queries in temp graph
-                    if self.db_service and validated.overall_valid:
-                        self._run_test_queries(state, session_id)
-
-                    if validated.overall_valid and validated.confidence_score >= 0.7:
-                        state["current_phase"] = "complete"
-                        state["success"] = True
-                        self.event_store.append(
-                            session_id=session_id,
-                            event_type=AuditEventType.VALIDATION_PASSED,
-                            agent_name=self.agent_name,
-                            data={"confidence": validated.confidence_score},
-                            duration_ms=duration,
-                        )
-                        logger.info(f"Validation passed with confidence {validated.confidence_score}")
-                    else:
-                        state["iteration"] += 1
-                        if state["iteration"] >= state["max_iterations"]:
-                            state["current_phase"] = "fail"
-                            state["error_message"] = f"Max iterations ({state['max_iterations']}) reached"
-                        else:
-                            state["current_phase"] = "supervisor"
-
-                        self.event_store.append(
-                            session_id=session_id,
-                            event_type=AuditEventType.VALIDATION_FAILED,
-                            agent_name=self.agent_name,
-                            data={"errors": validated.errors, "fixes": validated.suggested_fixes},
-                            duration_ms=duration,
-                        )
-                        logger.warning(f"Validation failed, iteration {state['iteration']}")
-
-                except ValidationError as ve:
-                    state["current_phase"] = "supervisor"
-                    self.event_store.append(
-                        session_id=session_id,
-                        event_type=AuditEventType.AGENT_FAILED,
-                        agent_name=self.agent_name,
-                        error=str(ve),
-                    )
-            else:
-                state["current_phase"] = "supervisor"
-
+            response = self.call_ai_with_retry(user_prompt, VALIDATOR_SYSTEM_PROMPT)
         except AIRequestError as e:
-            logger.error(f"Validator error: {e}")
+            # All retries failed — go back to supervisor without burning an iteration
             state["current_phase"] = "supervisor"
             self.event_store.append(
                 session_id=session_id,
                 event_type=AuditEventType.AGENT_FAILED,
                 agent_name=self.agent_name,
-                error=str(e),
+                error=f"Auth/request error: {e}",
+            )
+            await self.emit_completed(event_queue, ctx)
+            return
+
+        parsed = parse_json_response(response)
+
+        if not parsed:
+            state["current_phase"] = "supervisor"
+            await self.emit_completed(event_queue, ctx)
+            return
+
+        val_results = parsed.get("validation_results", {})
+
+        try:
+            validated = ValidationResultModel(
+                overall_valid=parsed.get("overall_valid", False),
+                confidence_score=parsed.get("confidence_score", 0.0),
+                rule_definition_valid=val_results.get("rule_definition", {}).get("valid", False),
+                cypher_valid=val_results.get("cypher_queries", {}).get("valid", False),
+                logical_valid=val_results.get("logical", {}).get("valid", False),
+                errors=sum([
+                    val_results.get("rule_definition", {}).get("errors", []),
+                    val_results.get("cypher_queries", {}).get("errors", []),
+                    val_results.get("logical", {}).get("errors", []),
+                ], []),
+                warnings=sum([
+                    val_results.get("rule_definition", {}).get("warnings", []),
+                    val_results.get("cypher_queries", {}).get("warnings", []),
+                    val_results.get("logical", {}).get("warnings", []),
+                ], []),
+                suggested_fixes=parsed.get("suggested_fixes", []),
+            )
+
+            state["validation_result"] = validated.model_dump()
+            duration = (time.time() - start_time) * 1000
+
+            # FalkorDB test queries in temp graph
+            if self.db_service and validated.overall_valid:
+                self._run_test_queries(state, session_id)
+
+            if validated.overall_valid and validated.confidence_score >= 0.7:
+                state["current_phase"] = "complete"
+                state["success"] = True
+                self.event_store.append(
+                    session_id=session_id,
+                    event_type=AuditEventType.VALIDATION_PASSED,
+                    agent_name=self.agent_name,
+                    data={"confidence": validated.confidence_score},
+                    duration_ms=duration,
+                )
+                logger.info(f"Validation passed with confidence {validated.confidence_score}")
+            else:
+                # Store errors for next iteration's context
+                if validated.errors:
+                    state.setdefault("validation_errors", []).extend(validated.errors)
+                if validated.suggested_fixes:
+                    state.setdefault("validation_errors", []).extend(
+                        [f"Fix: {fix}" for fix in validated.suggested_fixes]
+                    )
+
+                state["iteration"] += 1
+                if state["iteration"] >= state["max_iterations"]:
+                    state["current_phase"] = "fail"
+                    state["error_message"] = f"Max iterations ({state['max_iterations']}) reached"
+                else:
+                    state["current_phase"] = "supervisor"
+
+                self.event_store.append(
+                    session_id=session_id,
+                    event_type=AuditEventType.VALIDATION_FAILED,
+                    agent_name=self.agent_name,
+                    data={"errors": validated.errors, "fixes": validated.suggested_fixes},
+                    duration_ms=duration,
+                )
+                logger.warning(f"Validation failed, iteration {state['iteration']}")
+
+        except ValidationError as ve:
+            state["current_phase"] = "supervisor"
+            self.event_store.append(
+                session_id=session_id,
+                event_type=AuditEventType.AGENT_FAILED,
+                agent_name=self.agent_name,
+                error=str(ve),
             )
 
         await self.emit_completed(event_queue, ctx)

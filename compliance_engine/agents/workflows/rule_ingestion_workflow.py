@@ -225,7 +225,7 @@ def run_rule_ingestion(
     rule_text: str,
     data_categories: Optional[List[str]] = None,
     is_pii_related: bool = False,
-    max_iterations: int = 3,
+    max_iterations: int = 10,
     thread_id: Optional[str] = None,
 ) -> RuleIngestionResult:
     """

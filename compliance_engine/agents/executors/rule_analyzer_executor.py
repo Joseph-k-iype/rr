@@ -67,7 +67,7 @@ class RuleAnalyzerExecutor(ComplianceAgentExecutor):
         )
 
         try:
-            response = self.ai_service.chat(user_prompt, system_prompt)
+            response = self.call_ai_with_retry(user_prompt, system_prompt)
             parsed = parse_json_response(response)
 
             if parsed:

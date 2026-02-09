@@ -65,7 +65,7 @@ class DataDictionaryExecutor(ComplianceAgentExecutor):
         )
 
         try:
-            response = self.ai_service.chat(user_prompt, DICTIONARY_SYSTEM_PROMPT)
+            response = self.call_ai_with_retry(user_prompt, DICTIONARY_SYSTEM_PROMPT)
             parsed = parse_json_response(response)
 
             if parsed:

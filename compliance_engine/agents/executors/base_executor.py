@@ -20,6 +20,7 @@ Architecture:
 
 import asyncio
 import logging
+import time
 import uuid
 from typing import Optional
 
@@ -31,7 +32,7 @@ from a2a.types import (
     TaskStatusUpdateEvent,
 )
 
-from agents.ai_service import get_ai_service
+from agents.ai_service import get_ai_service, AIRequestError, AIAuthenticationError
 from agents.audit.event_store import get_event_store
 from agents.state.wizard_state import WizardAgentState
 from models.agent_models import AgentEvent, AgentEventType
@@ -143,6 +144,43 @@ class ComplianceAgentExecutor(AgentExecutor):
                 status=TaskStatus(state=TaskState.input_required, message=None),
                 final=False,
             )
+        )
+
+    # -- AI call with retry (handles 401 token refresh transparently) ----------
+
+    def call_ai_with_retry(
+        self,
+        user_prompt: str,
+        system_prompt: str,
+        max_retries: int = 2,
+    ) -> str:
+        """Call AI service with transparent retry on auth/request errors.
+
+        Retries up to max_retries times on AIRequestError or
+        AIAuthenticationError (e.g. token expiry, 401). Preserves the
+        full prompt context across retries so no information is lost.
+
+        Returns:
+            LLM response text
+
+        Raises:
+            AIRequestError: If all retries fail
+        """
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                return self.ai_service.chat(user_prompt, system_prompt)
+            except (AIRequestError, AIAuthenticationError) as e:
+                last_error = e
+                if attempt < max_retries:
+                    logger.warning(
+                        f"{self.agent_name}: auth/request error "
+                        f"(attempt {attempt + 1}/{max_retries + 1}), retrying: {e}"
+                    )
+                    time.sleep(1)
+                    continue
+        raise AIRequestError(
+            f"{self.agent_name}: failed after {max_retries + 1} attempts: {last_error}"
         )
 
     # -- abstract methods from AgentExecutor -----------------------------------
