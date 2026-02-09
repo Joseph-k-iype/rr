@@ -97,6 +97,7 @@ class WizardSessionState(BaseModel):
 
     # Step 3: Rule text input
     rule_text: Optional[str] = None
+    is_pii_related: bool = False
 
     # Steps 4-5: AI-generated results
     analysis_result: Optional[Dict[str, Any]] = None

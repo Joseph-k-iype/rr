@@ -61,6 +61,7 @@ class DataDictionaryExecutor(ComplianceAgentExecutor):
             origin_country=state["origin_country"],
             scenario_type=state["scenario_type"],
             feedback="",
+            is_pii_related=state.get("is_pii_related", False),
         )
 
         try:

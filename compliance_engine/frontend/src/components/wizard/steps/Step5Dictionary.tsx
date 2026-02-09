@@ -7,8 +7,8 @@ export function Step5Dictionary() {
     return (
       <div className="space-y-4">
         <h3 className="text-lg font-semibold text-gray-900">Generated Dictionary</h3>
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center">
-          <p className="text-sm text-gray-500">No dictionary generated. This is normal for transfer-type rules.</p>
+        <div className="border border-gray-200 rounded-lg p-8 text-center">
+          <p className="text-sm text-gray-500">No dictionary generated.</p>
           <p className="text-xs text-gray-400 mt-1">Click Next to continue.</p>
         </div>
       </div>
@@ -16,69 +16,135 @@ export function Step5Dictionary() {
   }
 
   const dict = dictionaryResult as Record<string, unknown>;
-  const terms = dict.terms as Record<string, unknown>[] | undefined;
-  const termEntries = terms || Object.entries(dict)
-    .filter(([k]) => k !== 'metadata' && k !== 'generated_at')
-    .map(([key, val]) => {
-      if (typeof val === 'object' && val !== null) return val as Record<string, unknown>;
-      return { term: key, definition: String(val) };
-    });
+  const dictionaries = dict.dictionaries as Record<string, Record<string, unknown>> | undefined;
+  const reasoning = dict.reasoning as string | undefined;
+  const coverage = dict.coverage_assessment as string | undefined;
 
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold text-gray-900">Generated Dictionary</h3>
-      <p className="text-sm text-gray-600">The AI has identified the following terms and definitions from the rule text.</p>
+      <p className="text-sm text-gray-600">Comprehensive terms identified for attribute detection.</p>
 
-      {termEntries.length > 0 ? (
-        <div className="border border-gray-200 rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide">Term</th>
-                <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide">Definition / Value</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {termEntries.map((entry, i) => {
-                const e = entry as Record<string, unknown>;
-                const term = (e.term as string) || (e.name as string) || (e.key as string) || `Term ${i + 1}`;
-                const definition = (e.definition as string) || (e.value as string) || (e.description as string) || JSON.stringify(e);
-                const category = e.category as string | undefined;
-                return (
-                  <tr key={i} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 align-top">
-                      <span className="font-medium text-gray-900">{term}</span>
-                      {category && (
-                        <span className="ml-2 inline-flex items-center px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded text-[10px]">{category}</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-gray-600 text-xs">{definition}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        /* Fallback: display as key-value cards */
-        <div className="grid grid-cols-1 gap-3">
-          {Object.entries(dict).map(([key, value]) => (
-            <div key={key} className="bg-white border border-gray-200 rounded-lg p-3">
-              <span className="text-xs text-gray-500 uppercase tracking-wide">{key.replace(/_/g, ' ')}</span>
-              <p className="text-sm text-gray-800 mt-0.5">
-                {typeof value === 'string' ? value : JSON.stringify(value)}
-              </p>
+      {dictionaries ? (
+        Object.entries(dictionaries).map(([categoryName, category]) => {
+          const keywords = (category.keywords as string[]) || [];
+          const subCategories = category.sub_categories as Record<string, string[]> | undefined;
+          const synonyms = category.synonyms as Record<string, string[]> | undefined;
+          const acronyms = category.acronyms as Record<string, string> | undefined;
+          const description = category.description as string | undefined;
+          const confidence = category.confidence as number | undefined;
+
+          return (
+            <div key={categoryName} className="border border-gray-200 rounded-lg overflow-hidden">
+              <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                <div>
+                  <h4 className="text-sm font-medium text-gray-900">{categoryName.replace(/_/g, ' ')}</h4>
+                  {description && <p className="text-xs text-gray-500 mt-0.5">{description}</p>}
+                </div>
+                {confidence !== undefined && (
+                  <span className="text-xs text-gray-400">{Math.round(confidence * 100)}% confidence</span>
+                )}
+              </div>
+
+              <div className="p-4 space-y-3">
+                {/* Keywords */}
+                {keywords.length > 0 && (
+                  <div>
+                    <span className="text-xs text-gray-500 uppercase tracking-wide">Keywords ({keywords.length})</span>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {keywords.map(kw => (
+                        <span key={kw} className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded">{kw}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Sub-categories */}
+                {subCategories && Object.keys(subCategories).length > 0 && (
+                  <div>
+                    <span className="text-xs text-gray-500 uppercase tracking-wide">Sub-categories</span>
+                    <div className="mt-1 space-y-2">
+                      {Object.entries(subCategories).map(([subName, terms]) => (
+                        <div key={subName}>
+                          <span className="text-xs font-medium text-gray-700">{subName.replace(/_/g, ' ')}</span>
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {terms.map(t => (
+                              <span key={t} className="text-xs bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">{t}</span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Acronyms */}
+                {acronyms && Object.keys(acronyms).length > 0 && (
+                  <div>
+                    <span className="text-xs text-gray-500 uppercase tracking-wide">Acronyms</span>
+                    <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-0.5">
+                      {Object.entries(acronyms).map(([acr, full]) => (
+                        <div key={acr} className="text-xs">
+                          <span className="font-medium text-gray-800">{acr}</span>
+                          <span className="text-gray-500"> — {full}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Synonyms */}
+                {synonyms && Object.keys(synonyms).length > 0 && (
+                  <div>
+                    <span className="text-xs text-gray-500 uppercase tracking-wide">Synonyms</span>
+                    <div className="mt-1 space-y-1">
+                      {Object.entries(synonyms).slice(0, 10).map(([term, syns]) => (
+                        <div key={term} className="text-xs">
+                          <span className="font-medium text-gray-700">{term}</span>
+                          <span className="text-gray-400"> = </span>
+                          <span className="text-gray-600">{syns.join(', ')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-          ))}
+          );
+        })
+      ) : (
+        /* Fallback for flat dictionary structure */
+        <div className="border border-gray-200 rounded-lg p-4">
+          {Object.entries(dict)
+            .filter(([k]) => !['internal_patterns', 'reasoning', 'coverage_assessment', 'metadata'].includes(k))
+            .map(([key, value]) => (
+              <div key={key} className="mb-3 last:mb-0">
+                <span className="text-xs text-gray-500 uppercase tracking-wide">{key.replace(/_/g, ' ')}</span>
+                <p className="text-sm text-gray-800 mt-0.5">
+                  {typeof value === 'string' ? value : Array.isArray(value) ? (value as string[]).join(', ') : JSON.stringify(value)}
+                </p>
+              </div>
+            ))}
         </div>
       )}
 
-      <details className="text-xs">
-        <summary className="text-gray-400 cursor-pointer hover:text-gray-600">View raw dictionary data</summary>
-        <pre className="bg-gray-50 p-3 rounded-lg mt-2 overflow-auto max-h-48 border border-gray-200 text-gray-600">
-          {JSON.stringify(dictionaryResult, null, 2)}
-        </pre>
-      </details>
+      {/* Reasoning & Coverage */}
+      {(reasoning || coverage) && (
+        <div className="border border-gray-200 rounded-lg p-4 space-y-2">
+          {reasoning && (
+            <div>
+              <span className="text-xs text-gray-500 uppercase tracking-wide">Reasoning</span>
+              <p className="text-xs text-gray-700 mt-0.5">{reasoning}</p>
+            </div>
+          )}
+          {coverage && (
+            <div>
+              <span className="text-xs text-gray-500 uppercase tracking-wide">Coverage Assessment</span>
+              <p className="text-xs text-gray-700 mt-0.5">{coverage}</p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

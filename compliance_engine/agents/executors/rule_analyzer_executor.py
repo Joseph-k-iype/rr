@@ -62,6 +62,7 @@ class RuleAnalyzerExecutor(ComplianceAgentExecutor):
             scenario_type=state["scenario_type"],
             data_categories=state["data_categories"],
             feedback="",
+            is_pii_related=state.get("is_pii_related", False),
         )
 
         try:
@@ -69,7 +70,12 @@ class RuleAnalyzerExecutor(ComplianceAgentExecutor):
             parsed = parse_json_response(response)
 
             if parsed:
-                state["analysis_result"] = parsed.get("chain_of_thought", {})
+                state["analysis_result"] = {
+                    "chain_of_thought": parsed.get("chain_of_thought", {}),
+                    "tree_of_thought": parsed.get("tree_of_thought", {}),
+                    "expert_perspectives": parsed.get("expert_perspectives", {}),
+                    "confidence": parsed.get("confidence"),
+                }
 
                 rule_def = parsed.get("rule_definition", {})
                 try:

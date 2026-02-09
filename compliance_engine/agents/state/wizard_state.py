@@ -17,6 +17,7 @@ class WizardAgentState(TypedDict):
     receiving_countries: List[str]
     rule_text: str
     data_categories: List[str]
+    is_pii_related: bool
 
     # A2A message log
     messages: Annotated[list, add_messages]
@@ -48,6 +49,7 @@ def create_initial_state(
     receiving_countries: List[str],
     rule_text: str,
     data_categories: Optional[List[str]] = None,
+    is_pii_related: bool = False,
     max_iterations: int = 3,
 ) -> WizardAgentState:
     """Create the initial state for a wizard workflow run."""
@@ -57,6 +59,7 @@ def create_initial_state(
         receiving_countries=receiving_countries,
         rule_text=rule_text,
         data_categories=data_categories or [],
+        is_pii_related=is_pii_related,
         messages=[],
         analysis_result=None,
         dictionary_result=None,

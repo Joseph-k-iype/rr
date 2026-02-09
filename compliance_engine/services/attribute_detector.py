@@ -291,19 +291,15 @@ class AttributeDetector:
         matched_terms: Set[str] = set()
         detection_method = None
 
-        # Check keywords
+        # Check keywords using case-insensitive contains matching
         for keyword in config.keywords:
             check_text = text if config.case_sensitive else text_lower
-            if config.word_boundaries:
-                # Use word boundary check
-                pattern = r'\b' + re.escape(keyword) + r'\b'
-                if re.search(pattern, check_text, re.IGNORECASE if not config.case_sensitive else 0):
-                    matched_terms.add(keyword)
-                    detection_method = 'keyword'
-            else:
-                if keyword in check_text:
-                    matched_terms.add(keyword)
-                    detection_method = 'keyword'
+            keyword_check = keyword if config.case_sensitive else keyword.lower()
+            # Use contains matching — substring match is sufficient
+            # This catches compound terms like "patient_health_records" matching "health"
+            if keyword_check in check_text:
+                matched_terms.add(keyword)
+                detection_method = 'keyword'
 
         # Check patterns
         for pattern in config.patterns:

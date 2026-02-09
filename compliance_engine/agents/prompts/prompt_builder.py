@@ -57,6 +57,7 @@ def build_analyzer_prompt(
     scenario_type: str,
     data_categories: List[str],
     feedback: str,
+    is_pii_related: bool = False,
 ) -> str:
     """Build a fully-assembled analyzer user prompt."""
     return template.format(
@@ -65,6 +66,7 @@ def build_analyzer_prompt(
         receiving_countries=", ".join(receiving_countries),
         scenario_type=scenario_type,
         data_categories=", ".join(data_categories) if data_categories else "None",
+        is_pii_related=str(is_pii_related),
         feedback=feedback or "None",
     )
 
@@ -111,6 +113,7 @@ def build_dictionary_prompt(
     origin_country: str,
     scenario_type: str,
     feedback: str,
+    is_pii_related: bool = False,
 ) -> str:
     """Build a fully-assembled dictionary user prompt."""
     return template.format(
@@ -118,6 +121,7 @@ def build_dictionary_prompt(
         rule_text=rule_text,
         origin_country=origin_country,
         scenario_type=scenario_type,
+        is_pii_related=str(is_pii_related),
         feedback=feedback or "None",
     )
 

@@ -85,6 +85,7 @@ async def submit_step(session_id: str, submission: WizardStepSubmission):
 
     elif step == 3:
         session.rule_text = data.get("rule_text")
+        session.is_pii_related = data.get("is_pii_related", False)
         session.status = WizardSessionStatus.PROCESSING
         session.current_step = 4
 
@@ -96,6 +97,7 @@ async def submit_step(session_id: str, submission: WizardStepSubmission):
                 receiving_countries=session.receiving_countries,
                 rule_text=session.rule_text,
                 data_categories=session.data_categories,
+                is_pii_related=session.is_pii_related,
                 thread_id=session_id,
             )
 

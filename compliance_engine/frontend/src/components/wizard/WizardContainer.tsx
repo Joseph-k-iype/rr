@@ -39,8 +39,6 @@ export function WizardContainer() {
     switch (store.currentStep) {
       case 1: return !!store.originCountry;
       case 2: return !!store.scenarioType && (
-        store.scenarioType !== 'transfer' || store.receivingCountries.length > 0
-      ) && (
         store.scenarioType !== 'attribute' || store.dataCategories.length > 0
       );
       case 3: return store.ruleText.length > 10;
@@ -85,7 +83,7 @@ export function WizardContainer() {
         const stepData: Record<number, Record<string, unknown>> = {
           1: { origin_country: state.originCountry, receiving_countries: state.receivingCountries },
           2: { scenario_type: state.scenarioType, data_categories: state.dataCategories },
-          3: { rule_text: state.ruleText },
+          3: { rule_text: state.ruleText, is_pii_related: state.isPiiRelated },
         };
 
         const result = await submitWizardStep(sessionId, { step, data: stepData[step] || {} });
@@ -174,6 +172,10 @@ export function WizardContainer() {
   const handleBack = () => {
     if (store.currentStep > 1) {
       store.setError(null);
+      // If going back from sandbox or later, clear sandbox so it rebuilds on next attempt
+      if (store.currentStep >= 8 && store.sandboxGraphName) {
+        store.setSandboxGraphName(null);
+      }
       store.setStep(store.currentStep - 1);
     }
   };

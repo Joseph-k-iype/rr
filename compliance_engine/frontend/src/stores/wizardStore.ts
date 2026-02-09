@@ -8,6 +8,7 @@ interface WizardState {
   scenarioType: string;
   dataCategories: string[];
   ruleText: string;
+  isPiiRelated: boolean;
   analysisResult: Record<string, unknown> | null;
   dictionaryResult: Record<string, unknown> | null;
   editedRuleDefinition: Record<string, unknown> | null;
@@ -25,11 +26,12 @@ interface WizardState {
   setScenarioType: (t: string) => void;
   setDataCategories: (c: string[]) => void;
   setRuleText: (t: string) => void;
+  setIsPiiRelated: (p: boolean) => void;
   setAnalysisResult: (r: Record<string, unknown>) => void;
   setDictionaryResult: (r: Record<string, unknown>) => void;
   setEditedRuleDefinition: (r: Record<string, unknown>) => void;
   setEditedTermsDictionary: (r: Record<string, unknown>) => void;
-  setSandboxGraphName: (n: string) => void;
+  setSandboxGraphName: (n: string | null) => void;
   addSandboxTestResult: (r: Record<string, unknown>) => void;
   setApproved: (a: boolean) => void;
   setProcessing: (p: boolean) => void;
@@ -45,6 +47,7 @@ const initialState = {
   scenarioType: 'transfer',
   dataCategories: [],
   ruleText: '',
+  isPiiRelated: false,
   analysisResult: null,
   dictionaryResult: null,
   editedRuleDefinition: null,
@@ -66,6 +69,7 @@ export const useWizardStore = create<WizardState>((set) => ({
   setScenarioType: (t) => set({ scenarioType: t }),
   setDataCategories: (c) => set({ dataCategories: c }),
   setRuleText: (t) => set({ ruleText: t }),
+  setIsPiiRelated: (p) => set({ isPiiRelated: p }),
   setAnalysisResult: (r) => set({ analysisResult: r }),
   setDictionaryResult: (r) => set({ dictionaryResult: r }),
   setEditedRuleDefinition: (r) => set({ editedRuleDefinition: r }),
