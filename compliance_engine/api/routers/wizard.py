@@ -209,7 +209,11 @@ async def load_sandbox(session_id: str):
 
     try:
         graph_name = sandbox.create_sandbox(session_id)
-        success = sandbox.add_rule_to_sandbox(graph_name, session.edited_rule_definition)
+        success = sandbox.add_rule_to_sandbox(
+            graph_name,
+            session.edited_rule_definition,
+            dictionary_result=session.dictionary_result,
+        )
 
         if success:
             session.sandbox_graph_name = graph_name

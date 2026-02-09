@@ -33,6 +33,7 @@ interface WizardState {
   setEditedTermsDictionary: (r: Record<string, unknown>) => void;
   setSandboxGraphName: (n: string | null) => void;
   addSandboxTestResult: (r: Record<string, unknown>) => void;
+  clearSandboxTestResults: () => void;
   setApproved: (a: boolean) => void;
   setProcessing: (p: boolean) => void;
   setError: (e: string | null) => void;
@@ -76,6 +77,7 @@ export const useWizardStore = create<WizardState>((set) => ({
   setEditedTermsDictionary: (r) => set({ editedTermsDictionary: r }),
   setSandboxGraphName: (n) => set({ sandboxGraphName: n }),
   addSandboxTestResult: (r) => set((s) => ({ sandboxTestResults: [...s.sandboxTestResults, r] })),
+  clearSandboxTestResults: () => set({ sandboxTestResults: [] }),
   setApproved: (a) => set({ approved: a }),
   setProcessing: (p) => set({ isProcessing: p }),
   setError: (e) => set({ error: e }),

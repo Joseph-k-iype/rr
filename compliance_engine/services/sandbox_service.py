@@ -33,6 +33,8 @@ class SandboxService:
         self.db = get_db_service()
         self._active_sandboxes: Dict[str, str] = {}  # session_id -> graph_name
         self._sandbox_rules: Dict[str, Dict[str, Any]] = {}  # graph_name -> rule_def
+        self._sandbox_dictionaries: Dict[str, Dict[str, Any]] = {}  # graph_name -> dictionary_result
+        self._registered_configs: Dict[str, str] = {}  # graph_name -> attribute_name (for cleanup)
         self._initialized = True
         logger.info("Sandbox Service initialized")
 
@@ -64,13 +66,19 @@ class SandboxService:
             logger.error(f"Failed to create sandbox: {e}")
             raise
 
-    def add_rule_to_sandbox(self, graph_name: str, rule_def: Dict[str, Any]) -> bool:
+    def add_rule_to_sandbox(
+        self,
+        graph_name: str,
+        rule_def: Dict[str, Any],
+        dictionary_result: Optional[Dict[str, Any]] = None,
+    ) -> bool:
         """
         Add a rule to the sandbox graph.
 
         Args:
             graph_name: Sandbox graph name
             rule_def: Rule definition dictionary
+            dictionary_result: AI-generated dictionary with keywords for attribute detection
 
         Returns:
             True if rule was added successfully
@@ -85,9 +93,11 @@ class SandboxService:
             else:
                 success = builder.add_transfer_rule(rule_def)
 
-            # Store rule definition for sandbox evaluation
+            # Store rule definition and dictionary for sandbox evaluation
             if success:
                 self._sandbox_rules[graph_name] = rule_def
+                if dictionary_result:
+                    self._sandbox_dictionaries[graph_name] = dictionary_result
 
             return success
 
@@ -112,7 +122,9 @@ class SandboxService:
         Run evaluation against the sandbox graph.
 
         Includes the sandbox rule in the evaluator so the new rule
-        is tested alongside existing rules.
+        is tested alongside existing rules. For attribute rules, also
+        registers the rule's keywords with the attribute detector so
+        custom attributes can be detected from metadata.
         """
         from services.rules_evaluator import RulesEvaluator
 
@@ -126,6 +138,11 @@ class SandboxService:
                 if rule_type == 'attribute':
                     attr_rule = self._build_attribute_rule(rule_def)
                     extra_attribute[rule_def['rule_id']] = attr_rule
+
+                    # Register custom attribute keywords with the detector
+                    # so metadata matching works for user-created rules
+                    dictionary = self._sandbox_dictionaries.get(graph_name)
+                    self._register_attribute_detection(rule_def, dictionary, graph_name)
                 else:
                     transfer_rule = self._build_transfer_rule(rule_def)
                     extra_transfer[rule_def['rule_id']] = transfer_rule
@@ -154,6 +171,87 @@ class SandboxService:
                 "message": f"Sandbox evaluation error: {str(e)}",
                 "error": str(e),
             }
+
+    def _register_attribute_detection(
+        self,
+        rule_def: Dict[str, Any],
+        dictionary_result: Optional[Dict[str, Any]],
+        graph_name: str,
+    ):
+        """
+        Register custom attribute keywords with the AttributeDetector so
+        user-created attribute rules can match against metadata.
+
+        Merges keywords from:
+        1. rule_def.attribute_keywords (from the AI rule analyzer)
+        2. dictionary_result.dictionaries.*.keywords (from the AI dictionary agent)
+        """
+        from services.attribute_detector import get_attribute_detector, AttributeDetectionConfig
+
+        attr_name = rule_def.get('attribute_name', '')
+        if not attr_name:
+            return
+
+        # Collect all keywords from the rule definition
+        all_keywords = list(rule_def.get('attribute_keywords', []))
+
+        # Merge keywords from the AI-generated dictionary
+        if dictionary_result:
+            dictionaries = dictionary_result.get('dictionaries', {})
+            for cat_name, cat_data in dictionaries.items():
+                if isinstance(cat_data, dict):
+                    all_keywords.extend(cat_data.get('keywords', []))
+                    # Also include sub-category terms
+                    for sub_terms in cat_data.get('sub_categories', {}).values():
+                        if isinstance(sub_terms, list):
+                            all_keywords.extend(sub_terms)
+                    # Include synonym values
+                    for synonyms in cat_data.get('synonyms', {}).values():
+                        if isinstance(synonyms, list):
+                            all_keywords.extend(synonyms)
+                    # Include expanded acronyms
+                    for full_form in cat_data.get('acronyms', {}).values():
+                        if isinstance(full_form, str):
+                            all_keywords.append(full_form)
+
+            # Also include PII dictionary terms if present
+            pii_dict = dictionary_result.get('pii_dictionary', {})
+            if isinstance(pii_dict, dict):
+                all_keywords.extend(pii_dict.get('keywords', []))
+
+        # Collect patterns
+        all_patterns = list(rule_def.get('attribute_patterns', []))
+        if dictionary_result:
+            all_patterns.extend(dictionary_result.get('internal_patterns', []))
+
+        # De-duplicate while preserving order
+        seen = set()
+        unique_keywords = []
+        for kw in all_keywords:
+            kw_lower = str(kw).lower().strip()
+            if kw_lower and kw_lower not in seen:
+                seen.add(kw_lower)
+                unique_keywords.append(kw_lower)
+
+        if not unique_keywords:
+            logger.warning(f"No keywords found for attribute '{attr_name}' — detection may fail")
+            return
+
+        detector = get_attribute_detector()
+        config = AttributeDetectionConfig(
+            name=attr_name,
+            keywords=unique_keywords,
+            patterns=all_patterns,
+            case_sensitive=False,
+            word_boundaries=False,
+            enabled=True,
+        )
+        detector.add_config(config)
+        self._registered_configs[graph_name] = attr_name
+        logger.info(
+            f"Registered attribute detection for '{attr_name}' with "
+            f"{len(unique_keywords)} keywords and {len(all_patterns)} patterns"
+        )
 
     def _build_transfer_rule(self, rule_def: Dict[str, Any]):
         """Build a TransferRule dataclass from a rule definition dict."""
@@ -212,6 +310,7 @@ class SandboxService:
 
         Adds the rule to both the FalkorDB graph and the in-memory
         rule dictionaries so it takes effect in the evaluator immediately.
+        For attribute rules, also permanently registers the detection config.
 
         Args:
             graph_name: Sandbox graph name
@@ -231,6 +330,13 @@ class SandboxService:
                 if success:
                     attr_rule = self._build_attribute_rule(rule_def)
                     ATTRIBUTE_RULES[rule_def['rule_id']] = attr_rule
+
+                    # Permanently register attribute detection keywords
+                    # so the main evaluator can detect this attribute type
+                    dictionary = self._sandbox_dictionaries.get(graph_name)
+                    self._register_attribute_detection(rule_def, dictionary, graph_name)
+                    # Remove from cleanup tracking — this config should persist
+                    self._registered_configs.pop(graph_name, None)
             else:
                 success = main_builder.add_transfer_rule(rule_def)
                 if success:
@@ -246,7 +352,7 @@ class SandboxService:
             return False
 
     def cleanup_sandbox(self, graph_name: str):
-        """Delete a sandbox graph and associated rule data."""
+        """Delete a sandbox graph and associated rule/dictionary data."""
         try:
             self.db.delete_temp_graph(graph_name)
 
@@ -258,8 +364,17 @@ class SandboxService:
             for sid in sessions_to_remove:
                 del self._active_sandboxes[sid]
 
-            # Remove stored rule definition
+            # Remove stored rule definition and dictionary
             self._sandbox_rules.pop(graph_name, None)
+            self._sandbox_dictionaries.pop(graph_name, None)
+
+            # Remove registered attribute config from detector
+            attr_name = self._registered_configs.pop(graph_name, None)
+            if attr_name:
+                from services.attribute_detector import get_attribute_detector
+                detector = get_attribute_detector()
+                detector._configs.pop(attr_name, None)
+                logger.info(f"Unregistered attribute detection config '{attr_name}'")
 
             logger.info(f"Cleaned up sandbox graph '{graph_name}'")
 

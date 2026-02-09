@@ -172,9 +172,12 @@ export function WizardContainer() {
   const handleBack = () => {
     if (store.currentStep > 1) {
       store.setError(null);
-      // If going back from sandbox or later, clear sandbox so it rebuilds on next attempt
-      if (store.currentStep >= 8 && store.sandboxGraphName) {
-        store.setSandboxGraphName(null);
+      // If going back from sandbox or later, clear sandbox and test results so it rebuilds
+      if (store.currentStep >= 8) {
+        if (store.sandboxGraphName) {
+          store.setSandboxGraphName(null);
+        }
+        store.clearSandboxTestResults();
       }
       store.setStep(store.currentStep - 1);
     }
