@@ -38,3 +38,43 @@ export interface GraphData {
     total_edges: number;
   };
 }
+
+// Admin-specific types
+export interface AdminNodeData {
+  label: string;
+  category?: string;
+  dictType?: 'processes' | 'purposes' | 'data_subjects' | 'gdc';
+}
+
+export interface AdminGraphNode {
+  id: string;
+  type: 'ruleNode' | 'countryGroup' | 'adminNode';
+  data: Record<string, unknown>;
+  position: { x: number; y: number };
+}
+
+export interface AdminRule {
+  rule_id: string;
+  name: string;
+  description: string;
+  rule_type: string;
+  priority: string;
+  outcome: string;
+  origin_match_type: string;
+  receiving_match_type: string;
+  enabled: boolean;
+  odrl_type: string;
+  origin_scopes: string[];
+  receiving_scopes: string[];
+  required_assessments: string[];
+}
+
+export interface AdminCountryGroup {
+  name: string;
+  countries: string[];
+}
+
+export interface AdminDictionaryEntry {
+  name: string;
+  category: string;
+}

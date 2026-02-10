@@ -1,15 +1,97 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useWizardStore } from '../../../stores/wizardStore';
 import { useDropdownData } from '../../../hooks/useDropdownData';
 import { LoadingSpinner } from '../../common/LoadingSpinner';
+import type { DictionaryEntry } from '../../../types/api';
+
+function GroupedMultiSelect({
+  label,
+  entries,
+  selected,
+  onChange,
+}: {
+  label: string;
+  entries: DictionaryEntry[];
+  selected: string[];
+  onChange: (v: string[]) => void;
+}) {
+  const grouped = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const e of entries) {
+      const cat = e.category || 'Other';
+      (map[cat] ??= []).push(e.name);
+    }
+    return map;
+  }, [entries]);
+
+  const toggle = (name: string) => {
+    onChange(
+      selected.includes(name)
+        ? selected.filter(s => s !== name)
+        : [...selected, name]
+    );
+  };
+
+  return (
+    <details className="mt-4">
+      <summary className="text-sm font-medium text-gray-700 cursor-pointer select-none">
+        {label} (optional)
+        {selected.length > 0 && (
+          <span className="ml-2 text-xs text-blue-600">{selected.length} selected</span>
+        )}
+      </summary>
+      <div className="mt-2">
+        {selected.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-2">
+            {selected.map(s => (
+              <span key={s} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full text-xs">
+                {s}
+                <button onClick={() => toggle(s)} className="text-blue-600 hover:text-blue-900">&times;</button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-md p-2 space-y-2">
+          {Object.entries(grouped).map(([category, names]) => (
+            <div key={category}>
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">{category}</div>
+              <div className="flex flex-wrap gap-1">
+                {names.map(name => (
+                  <label
+                    key={name}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs cursor-pointer transition-colors ${
+                      selected.includes(name) ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(name)}
+                      onChange={() => toggle(name)}
+                      className="sr-only"
+                    />
+                    {name}
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </details>
+  );
+}
 
 export function Step2Scenario() {
-  const { scenarioType, dataCategories, receivingCountries, setScenarioType, setDataCategories, setReceivingCountries } = useWizardStore();
+  const {
+    scenarioType, dataCategories, receivingCountries,
+    selectedProcesses, selectedPurposes, selectedDataSubjects, selectedGdc,
+    setScenarioType, setDataCategories, setReceivingCountries,
+    setSelectedProcesses, setSelectedPurposes, setSelectedDataSubjects, setSelectedGdc,
+  } = useWizardStore();
   const { data: dropdowns, isLoading } = useDropdownData();
   const [tagInput, setTagInput] = useState('');
 
   const addTags = (input: string) => {
-    // Split by comma, trim, and add each non-empty unique tag
     const newTags = input
       .split(',')
       .map(t => t.trim())
@@ -29,10 +111,8 @@ export function Step2Scenario() {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    // If user pastes or types something with a comma, auto-add the completed tags
     if (value.includes(',')) {
       const parts = value.split(',');
-      // The last part (after the last comma) stays in the input as the user is still typing
       const completedParts = parts.slice(0, -1);
       const remaining = parts[parts.length - 1];
       const newTags = completedParts
@@ -130,6 +210,44 @@ export function Step2Scenario() {
             <p className="text-xs text-green-600 mt-1">{dataCategories.length} categor{dataCategories.length === 1 ? 'y' : 'ies'} added</p>
           )}
         </div>
+      )}
+
+      {/* Optional dictionary-based selectors */}
+      {!isLoading && dropdowns && (
+        <>
+          {dropdowns.processes_dict?.length > 0 && (
+            <GroupedMultiSelect
+              label="Processes"
+              entries={dropdowns.processes_dict}
+              selected={selectedProcesses}
+              onChange={setSelectedProcesses}
+            />
+          )}
+          {dropdowns.purposes_dict?.length > 0 && (
+            <GroupedMultiSelect
+              label="Purposes"
+              entries={dropdowns.purposes_dict}
+              selected={selectedPurposes}
+              onChange={setSelectedPurposes}
+            />
+          )}
+          {dropdowns.data_subjects?.length > 0 && (
+            <GroupedMultiSelect
+              label="Data Subjects"
+              entries={dropdowns.data_subjects}
+              selected={selectedDataSubjects}
+              onChange={setSelectedDataSubjects}
+            />
+          )}
+          {dropdowns.gdc?.length > 0 && (
+            <GroupedMultiSelect
+              label="Global Data Categories"
+              entries={dropdowns.gdc}
+              selected={selectedGdc}
+              onChange={setSelectedGdc}
+            />
+          )}
+        </>
       )}
     </div>
   );

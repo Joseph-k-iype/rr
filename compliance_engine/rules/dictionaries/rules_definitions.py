@@ -300,77 +300,7 @@ CASE_MATCHING_RULES: Dict[str, CaseMatchingRule] = {
 # =============================================================================
 # Country-to-country transfer permissions/prohibitions
 
-TRANSFER_RULES: Dict[str, TransferRule] = {
-    # US to Restricted Countries (PII)
-    "RULE_9_US_RESTRICTED_PII": TransferRule(
-        rule_id="RULE_9",
-        name="US PII to Restricted Countries",
-        description="Transfer of PII from US to restricted countries is prohibited",
-        priority="high",
-        origin_group=None,
-        receiving_group="US_RESTRICTED",
-        transfer_pairs=[
-            ("United States", "China"),
-            ("United States", "Hong Kong"),
-            ("United States", "Macao"),
-            ("United States", "Cuba"),
-            ("United States", "Iran"),
-            ("United States", "North Korea"),
-            ("United States", "Russia"),
-            ("United States", "Venezuela"),
-            ("United States of America", "China"),
-            ("United States of America", "Hong Kong"),
-            ("United States of America", "Macao"),
-            ("United States of America", "Cuba"),
-            ("United States of America", "Iran"),
-            ("United States of America", "North Korea"),
-            ("United States of America", "Russia"),
-            ("United States of America", "Venezuela"),
-        ],
-        outcome=RuleOutcome.PROHIBITION,
-        requires_pii=True,
-        required_actions=["Obtain Legal Exemption", "Document Business Justification"],
-        odrl_type="Prohibition",
-        odrl_target="PII",
-    ),
-
-    # US to China Cloud Storage (Any Data)
-    "RULE_10_US_CHINA_CLOUD": TransferRule(
-        rule_id="RULE_10",
-        name="US to China Cloud Storage",
-        description="Cloud storage of any data from US in China/HK/Macao is prohibited",
-        priority="high",
-        transfer_pairs=[
-            ("United States", "China"),
-            ("United States", "Hong Kong"),
-            ("United States", "Macao"),
-            ("United States of America", "China"),
-            ("United States of America", "Hong Kong"),
-            ("United States of America", "Macao"),
-        ],
-        outcome=RuleOutcome.PROHIBITION,
-        requires_any_data=True,
-        required_actions=["Obtain Regional CTO Approval", "Alternative Storage Location Required"],
-        odrl_type="Prohibition",
-        odrl_action="store",
-        odrl_target="Data",
-    ),
-
-    # Example: EU to Russia (sanctions)
-    "RULE_EU_RUSSIA": TransferRule(
-        rule_id="RULE_EU_RUSSIA",
-        name="EU to Russia Data Transfer",
-        description="Data transfers from EU to Russia are restricted",
-        priority="high",
-        origin_group="EU_EEA",
-        receiving_countries=frozenset({"Russia"}),
-        outcome=RuleOutcome.PROHIBITION,
-        requires_any_data=True,
-        required_actions=["Sanctions Compliance Check", "Legal Review Required"],
-        odrl_type="Prohibition",
-        enabled=True,
-    ),
-}
+TRANSFER_RULES: Dict[str, TransferRule] = {}
 
 
 # =============================================================================
@@ -378,79 +308,7 @@ TRANSFER_RULES: Dict[str, TransferRule] = {
 # =============================================================================
 # Attribute-level rules based on data characteristics
 
-ATTRIBUTE_RULES: Dict[str, AttributeRule] = {
-    # US Health Data Transfer Prohibition
-    "RULE_11_US_HEALTH": AttributeRule(
-        rule_id="RULE_11",
-        name="US Health Data Transfer",
-        description="Transfer of US health data is restricted",
-        priority="high",
-        attribute_name="health_data",
-        attribute_config_file="health_data_config.json",
-        origin_countries=frozenset({"United States", "United States of America"}),
-        receiving_countries=None,  # Any country
-        outcome=RuleOutcome.PROHIBITION,
-        requires_pii=False,  # Applies even without PII flag
-        odrl_target="HealthData",
-    ),
-
-    # General Health Data Transfer (Any Origin)
-    "RULE_HEALTH_GENERAL": AttributeRule(
-        rule_id="RULE_HEALTH_GEN",
-        name="General Health Data Transfer",
-        description="Transfer of health-related data requires review",
-        priority="medium",
-        attribute_name="health_data",
-        attribute_keywords=[
-            "patient", "medical", "health", "diagnosis", "treatment",
-            "hospital", "clinical", "disease", "medication", "prescription"
-        ],
-        origin_countries=None,  # Any origin
-        receiving_countries=None,  # Any destination
-        outcome=RuleOutcome.PROHIBITION,
-        requires_pii=False,  # Applies even without PII flag
-        odrl_target="HealthData",
-        enabled=True,
-    ),
-
-    # Financial Data to High Risk Jurisdictions
-    "RULE_FINANCIAL_HIGH_RISK": AttributeRule(
-        rule_id="RULE_FIN_01",
-        name="Financial Data to High Risk Jurisdictions",
-        description="Financial data transfer to high-risk jurisdictions requires additional controls",
-        priority="high",
-        attribute_name="financial_data",
-        attribute_keywords=[
-            "bank_account", "credit_card", "financial", "payment",
-            "transaction", "balance", "loan", "mortgage", "investment"
-        ],
-        origin_countries=None,
-        receiving_countries=frozenset({"Cuba", "Iran", "North Korea", "Syria", "Venezuela"}),
-        outcome=RuleOutcome.PROHIBITION,
-        requires_pii=False,  # Financial data itself is sensitive
-        odrl_target="FinancialData",
-        enabled=True,
-    ),
-
-    # Biometric Data
-    "RULE_BIOMETRIC": AttributeRule(
-        rule_id="RULE_BIO_01",
-        name="Biometric Data Transfer",
-        description="Biometric data transfers require special handling",
-        priority="high",
-        attribute_name="biometric_data",
-        attribute_keywords=[
-            "fingerprint", "facial_recognition", "retina", "iris",
-            "voice_print", "dna", "biometric"
-        ],
-        origin_countries=None,
-        receiving_countries=None,
-        outcome=RuleOutcome.PROHIBITION,
-        requires_pii=False,  # Biometric is inherently PII
-        odrl_target="BiometricData",
-        enabled=True,
-    ),
-}
+ATTRIBUTE_RULES: Dict[str, AttributeRule] = {}
 
 
 # =============================================================================

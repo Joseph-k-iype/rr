@@ -18,6 +18,11 @@ interface WizardState {
   approved: boolean;
   isProcessing: boolean;
   error: string | null;
+  // Data dictionary selections (optional)
+  selectedProcesses: string[];
+  selectedPurposes: string[];
+  selectedDataSubjects: string[];
+  selectedGdc: string[];
 
   setSessionId: (id: string) => void;
   setStep: (step: number) => void;
@@ -37,6 +42,10 @@ interface WizardState {
   setApproved: (a: boolean) => void;
   setProcessing: (p: boolean) => void;
   setError: (e: string | null) => void;
+  setSelectedProcesses: (p: string[]) => void;
+  setSelectedPurposes: (p: string[]) => void;
+  setSelectedDataSubjects: (p: string[]) => void;
+  setSelectedGdc: (p: string[]) => void;
   reset: () => void;
 }
 
@@ -58,6 +67,10 @@ const initialState = {
   approved: false,
   isProcessing: false,
   error: null,
+  selectedProcesses: [] as string[],
+  selectedPurposes: [] as string[],
+  selectedDataSubjects: [] as string[],
+  selectedGdc: [] as string[],
 };
 
 export const useWizardStore = create<WizardState>((set) => ({
@@ -81,5 +94,9 @@ export const useWizardStore = create<WizardState>((set) => ({
   setApproved: (a) => set({ approved: a }),
   setProcessing: (p) => set({ isProcessing: p }),
   setError: (e) => set({ error: e }),
+  setSelectedProcesses: (p) => set({ selectedProcesses: p }),
+  setSelectedPurposes: (p) => set({ selectedPurposes: p }),
+  setSelectedDataSubjects: (p) => set({ selectedDataSubjects: p }),
+  setSelectedGdc: (p) => set({ selectedGdc: p }),
   reset: () => set(initialState),
 }));

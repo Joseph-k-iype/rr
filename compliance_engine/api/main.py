@@ -35,6 +35,7 @@ from api.routers import (
     sandbox,
     agent_events,
     health,
+    admin,
 )
 
 # Configure logging
@@ -100,6 +101,7 @@ app.include_router(graph_data.router)
 app.include_router(wizard.router)
 app.include_router(sandbox.router)
 app.include_router(agent_events.router)
+app.include_router(admin.router)
 
 # Serve React frontend static files
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"

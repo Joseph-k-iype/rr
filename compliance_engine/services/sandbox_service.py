@@ -84,14 +84,10 @@ class SandboxService:
             graph = self.db.db.select_graph(graph_name)
             builder = RulesGraphBuilder(graph=graph)
 
-            rule_type = rule_def.get('rule_type', 'transfer')
-
-            # For attribute rules, merge dictionary keywords into the rule_def
-            # so they are stored on the graph node
-            if rule_type == 'attribute' and dictionary_result:
+            # Merge dictionary keywords if provided
+            if dictionary_result:
                 merged = list(rule_def.get('attribute_keywords', []))
                 merged.extend(self._extract_dictionary_keywords(dictionary_result))
-                # De-duplicate, lowercase
                 seen = set()
                 unique = []
                 for kw in merged:
@@ -101,10 +97,7 @@ class SandboxService:
                         unique.append(kw_lower)
                 rule_def['attribute_keywords'] = unique
 
-            if rule_type == 'attribute':
-                success = builder.add_attribute_rule(rule_def)
-            else:
-                success = builder.add_transfer_rule(rule_def)
+            success = builder.add_rule(rule_def)
 
             if success:
                 self._sandbox_rules[graph_name] = rule_def
@@ -201,25 +194,22 @@ class SandboxService:
         """
         try:
             main_builder = RulesGraphBuilder()
-            rule_type = rule_def.get('rule_type', 'transfer')
 
-            # Merge dictionary keywords for attribute rules (same as sandbox)
-            if rule_type == 'attribute':
-                dictionary = self._sandbox_dictionaries.get(graph_name)
-                if dictionary:
-                    merged = list(rule_def.get('attribute_keywords', []))
-                    merged.extend(self._extract_dictionary_keywords(dictionary))
-                    seen = set()
-                    unique = []
-                    for kw in merged:
-                        kw_lower = str(kw).lower().strip()
-                        if kw_lower and kw_lower not in seen:
-                            seen.add(kw_lower)
-                            unique.append(kw_lower)
-                    rule_def['attribute_keywords'] = unique
-                success = main_builder.add_attribute_rule(rule_def)
-            else:
-                success = main_builder.add_transfer_rule(rule_def)
+            # Merge dictionary keywords if available
+            dictionary = self._sandbox_dictionaries.get(graph_name)
+            if dictionary:
+                merged = list(rule_def.get('attribute_keywords', []))
+                merged.extend(self._extract_dictionary_keywords(dictionary))
+                seen = set()
+                unique = []
+                for kw in merged:
+                    kw_lower = str(kw).lower().strip()
+                    if kw_lower and kw_lower not in seen:
+                        seen.add(kw_lower)
+                        unique.append(kw_lower)
+                rule_def['attribute_keywords'] = unique
+
+            success = main_builder.add_rule(rule_def)
 
             if success:
                 logger.info(f"Rule {rule_def.get('rule_id')} promoted to main graph")

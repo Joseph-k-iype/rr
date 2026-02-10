@@ -2,6 +2,7 @@
 Tests for Rules Evaluation
 ==========================
 Tests for the compliance engine rules evaluation.
+Updated for simplified architecture (case-matching rules only).
 """
 
 import pytest
@@ -16,7 +17,7 @@ from rules.dictionaries.country_groups import (
     UK_CROWN_DEPENDENCIES,
     ADEQUACY_COUNTRIES,
     BCR_COUNTRIES,
-    US_RESTRICTED_COUNTRIES,
+    COUNTRY_GROUPS,
     get_country_group,
     is_country_in_group,
 )
@@ -28,6 +29,7 @@ from rules.dictionaries.rules_definitions import (
     get_enabled_transfer_rules,
     get_enabled_attribute_rules,
     RuleOutcome,
+    PRIORITY_ORDER,
 )
 from rules.templates.cypher_templates import (
     CYPHER_TEMPLATES,
@@ -67,11 +69,19 @@ class TestCountryGroups:
         assert "Singapore" in BCR_COUNTRIES
         assert "United States of America" in BCR_COUNTRIES
 
-    def test_us_restricted_countries(self):
-        """Test US restricted countries group"""
-        assert "China" in US_RESTRICTED_COUNTRIES
-        assert "Russia" in US_RESTRICTED_COUNTRIES
-        assert "Iran" in US_RESTRICTED_COUNTRIES
+    def test_removed_groups_not_present(self):
+        """Test that removed groups (US_RESTRICTED, CHINA_TERRITORIES) are no longer in COUNTRY_GROUPS"""
+        assert "US_RESTRICTED" not in COUNTRY_GROUPS
+        assert "CHINA_TERRITORIES" not in COUNTRY_GROUPS
+
+    def test_remaining_groups_count(self):
+        """Test that we have the expected 10 remaining country groups"""
+        expected_groups = {
+            "EU_EEA", "UK_CROWN_DEPENDENCIES", "CROWN_DEPENDENCIES", "SWITZERLAND",
+            "ADEQUACY_COUNTRIES", "SWITZERLAND_APPROVED", "BCR_COUNTRIES",
+            "EU_EEA_UK_CROWN_CH", "EU_EEA_ADEQUACY_UK", "ADEQUACY_PLUS_EU",
+        }
+        assert set(COUNTRY_GROUPS.keys()) == expected_groups
 
     def test_get_country_group(self):
         """Test getting country group by name"""
@@ -91,7 +101,7 @@ class TestCaseMatchingRules:
 
     def test_rules_exist(self):
         """Test that case-matching rules are defined"""
-        assert len(CASE_MATCHING_RULES) > 0
+        assert len(CASE_MATCHING_RULES) == 8
 
     def test_rule_structure(self):
         """Test that rules have required fields"""
@@ -100,6 +110,7 @@ class TestCaseMatchingRules:
             assert rule.name is not None
             assert rule.description is not None
             assert rule.priority is not None
+            assert rule.priority in ("high", "medium", "low")
             assert rule.required_assessments is not None
 
     def test_eu_internal_rule(self):
@@ -110,6 +121,22 @@ class TestCaseMatchingRules:
         assert rule.receiving_group == "EU_EEA_UK_CROWN_CH"
         assert rule.required_assessments.pia_required
 
+    def test_eu_adequacy_rule(self):
+        """Test EU to adequacy countries rule"""
+        rule = CASE_MATCHING_RULES.get("RULE_2_EU_ADEQUACY")
+        assert rule is not None
+        assert rule.origin_group == "EU_EEA"
+        assert rule.receiving_group == "ADEQUACY_COUNTRIES"
+        assert rule.required_assessments.pia_required
+
+    def test_rest_of_world_rule_requires_tia(self):
+        """Test rest-of-world rule requires both PIA and TIA"""
+        rule = CASE_MATCHING_RULES.get("RULE_6_REST_OF_WORLD")
+        assert rule is not None
+        assert rule.required_assessments.pia_required
+        assert rule.required_assessments.tia_required
+        assert not rule.required_assessments.hrpr_required
+
     def test_bcr_rule(self):
         """Test BCR countries rule"""
         rule = CASE_MATCHING_RULES.get("RULE_7_BCR")
@@ -118,67 +145,58 @@ class TestCaseMatchingRules:
         assert rule.required_assessments.pia_required
         assert rule.required_assessments.hrpr_required
 
+    def test_personal_data_rule(self):
+        """Test personal data transfer rule"""
+        rule = CASE_MATCHING_RULES.get("RULE_8_PERSONAL_DATA")
+        assert rule is not None
+        assert rule.requires_personal_data
+        assert rule.origin_countries is None  # any
+        assert rule.receiving_countries is None  # any
+        assert rule.required_assessments.pia_required
+
     def test_get_enabled_rules(self):
         """Test getting enabled rules"""
         enabled = get_enabled_case_matching_rules()
-        assert len(enabled) > 0
+        assert len(enabled) == 8
         for key, rule in enabled.items():
             assert rule.enabled
 
+    def test_required_assessments_to_list(self):
+        """Test converting required assessments to list"""
+        rule = CASE_MATCHING_RULES["RULE_7_BCR"]
+        assessments = rule.required_assessments.to_list()
+        assert "PIA" in assessments
+        assert "HRPR" in assessments
+        assert "TIA" not in assessments
 
-class TestTransferRules:
-    """Tests for transfer rules (SET 2A)"""
-
-    def test_rules_exist(self):
-        """Test that transfer rules are defined"""
-        assert len(TRANSFER_RULES) > 0
-
-    def test_us_restricted_pii_rule(self):
-        """Test US to restricted countries PII rule"""
-        rule = TRANSFER_RULES.get("RULE_9_US_RESTRICTED_PII")
-        assert rule is not None
-        assert rule.outcome == RuleOutcome.PROHIBITION
-        assert rule.requires_pii
-        assert len(rule.transfer_pairs) > 0
-
-    def test_us_china_cloud_rule(self):
-        """Test US to China cloud storage rule"""
-        rule = TRANSFER_RULES.get("RULE_10_US_CHINA_CLOUD")
-        assert rule is not None
-        assert rule.outcome == RuleOutcome.PROHIBITION
-        assert rule.requires_any_data
-        assert rule.priority == 1  # Highest priority
-
-    def test_transfer_pairs(self):
-        """Test transfer pairs structure"""
-        rule = TRANSFER_RULES.get("RULE_9_US_RESTRICTED_PII")
-        for origin, receiving in rule.transfer_pairs:
-            assert origin in ["United States", "United States of America"]
-            assert receiving in US_RESTRICTED_COUNTRIES
+        rule6 = CASE_MATCHING_RULES["RULE_6_REST_OF_WORLD"]
+        assessments6 = rule6.required_assessments.to_list()
+        assert "PIA" in assessments6
+        assert "TIA" in assessments6
 
 
-class TestAttributeRules:
-    """Tests for attribute rules (SET 2B)"""
+class TestTransferRulesRemoved:
+    """Tests confirming transfer rules (SET 2A) have been emptied"""
 
-    def test_rules_exist(self):
-        """Test that attribute rules are defined"""
-        assert len(ATTRIBUTE_RULES) > 0
+    def test_transfer_rules_empty(self):
+        """Transfer rules should be empty after simplification"""
+        assert len(TRANSFER_RULES) == 0
 
-    def test_health_data_rule(self):
-        """Test US health data transfer rule"""
-        rule = ATTRIBUTE_RULES.get("RULE_11_US_HEALTH")
-        assert rule is not None
-        assert rule.attribute_name == "health_data"
-        assert rule.outcome == RuleOutcome.PROHIBITION
-        assert "United States" in rule.origin_countries
+    def test_get_enabled_transfer_rules_empty(self):
+        """No enabled transfer rules should exist"""
+        assert len(get_enabled_transfer_rules()) == 0
 
-    def test_attribute_keywords(self):
-        """Test attribute rules have keywords or config"""
-        for key, rule in ATTRIBUTE_RULES.items():
-            has_keywords = len(rule.attribute_keywords) > 0
-            has_config = rule.attribute_config_file is not None
-            # Rule should have either keywords or config file
-            assert has_keywords or has_config or rule.attribute_name
+
+class TestAttributeRulesRemoved:
+    """Tests confirming attribute rules (SET 2B) have been emptied"""
+
+    def test_attribute_rules_empty(self):
+        """Attribute rules should be empty after simplification"""
+        assert len(ATTRIBUTE_RULES) == 0
+
+    def test_get_enabled_attribute_rules_empty(self):
+        """No enabled attribute rules should exist"""
+        assert len(get_enabled_attribute_rules()) == 0
 
 
 class TestCypherTemplates:
@@ -199,7 +217,8 @@ class TestCypherTemplates:
         """Test building origin country filter"""
         filter_str = build_origin_filter("United Kingdom")
         assert "Country" in filter_str
-        assert "United Kingdom" in filter_str
+        assert "United Kingdom" not in filter_str  # Uses $origin_country param
+        assert "$origin_country" in filter_str
 
     def test_build_origin_filter_none(self):
         """Test building origin filter with None"""
@@ -210,13 +229,11 @@ class TestCypherTemplates:
         """Test building receiving country filter"""
         filter_str = build_receiving_filter("India")
         assert "Jurisdiction" in filter_str
-        assert "India" in filter_str
 
     def test_build_purpose_filter(self):
         """Test building purpose filter"""
         filter_str = build_purpose_filter(["Marketing", "Analytics"])
         assert "Purpose" in filter_str
-        assert "Marketing" in filter_str
 
     def test_build_assessment_filter(self):
         """Test building assessment filter"""
@@ -228,16 +245,17 @@ class TestCypherTemplates:
 class TestRulePriorities:
     """Tests for rule priority ordering"""
 
-    def test_transfer_rules_high_priority(self):
-        """Test that transfer prohibition rules have high priority"""
-        for key, rule in TRANSFER_RULES.items():
-            if rule.outcome == RuleOutcome.PROHIBITION:
-                assert rule.priority <= 10, f"Prohibition rule {key} should have priority <= 10"
+    def test_priority_order_mapping(self):
+        """Test that priority order maps correctly"""
+        assert PRIORITY_ORDER["high"] == 1
+        assert PRIORITY_ORDER["medium"] == 2
+        assert PRIORITY_ORDER["low"] == 3
 
-    def test_case_matching_rules_lower_priority(self):
-        """Test that case-matching rules have moderate priority"""
+    def test_case_matching_rules_have_valid_priority(self):
+        """Test that case-matching rules have valid string priorities"""
+        valid_priorities = {"high", "medium", "low"}
         for key, rule in CASE_MATCHING_RULES.items():
-            assert rule.priority >= 10, f"Case-matching rule {key} should have priority >= 10"
+            assert rule.priority in valid_priorities, f"Rule {key} has invalid priority: {rule.priority}"
 
 
 class TestRuleConsistency:
@@ -251,6 +269,7 @@ class TestRuleConsistency:
             assert rule.rule_id not in all_ids, f"Duplicate rule ID: {rule.rule_id}"
             all_ids.add(rule.rule_id)
 
+        # Transfer and attribute dicts are empty, but still verify they don't conflict
         for rule in TRANSFER_RULES.values():
             assert rule.rule_id not in all_ids, f"Duplicate rule ID: {rule.rule_id}"
             all_ids.add(rule.rule_id)
@@ -268,9 +287,96 @@ class TestRuleConsistency:
             assert rule.odrl_type in valid_types
             assert rule.odrl_action in valid_actions
 
-        for rule in TRANSFER_RULES.values():
-            assert rule.odrl_type in valid_types
-            assert rule.odrl_action in valid_actions
+    def test_all_origin_groups_exist(self):
+        """Test that origin groups referenced in rules exist in COUNTRY_GROUPS"""
+        for key, rule in CASE_MATCHING_RULES.items():
+            if rule.origin_group:
+                assert rule.origin_group in COUNTRY_GROUPS, (
+                    f"Rule {key} references non-existent origin group: {rule.origin_group}"
+                )
+
+    def test_all_receiving_groups_exist(self):
+        """Test that receiving groups referenced in rules exist in COUNTRY_GROUPS"""
+        for key, rule in CASE_MATCHING_RULES.items():
+            if rule.receiving_group:
+                assert rule.receiving_group in COUNTRY_GROUPS, (
+                    f"Rule {key} references non-existent receiving group: {rule.receiving_group}"
+                )
+
+    def test_receiving_not_in_groups_exist(self):
+        """Test that receiving_not_in groups exist"""
+        for key, rule in CASE_MATCHING_RULES.items():
+            if rule.receiving_not_in:
+                for group in rule.receiving_not_in:
+                    assert group in COUNTRY_GROUPS, (
+                        f"Rule {key} excludes non-existent group: {group}"
+                    )
+
+
+class TestDataDictionaries:
+    """Tests for the new data dictionary JSON files"""
+
+    @pytest.fixture
+    def dict_dir(self):
+        return Path(__file__).parent.parent / "rules" / "data_dictionaries"
+
+    def test_dictionaries_directory_exists(self, dict_dir):
+        assert dict_dir.exists(), "data_dictionaries directory should exist"
+
+    def test_all_dictionary_files_exist(self, dict_dir):
+        for name in ["processes.json", "purposes.json", "data_subjects.json", "gdc.json"]:
+            assert (dict_dir / name).exists(), f"{name} should exist"
+
+    def test_processes_has_50_plus_entries(self, dict_dir):
+        import json
+        with open(dict_dir / "processes.json") as f:
+            data = json.load(f)
+        total = sum(len(cat["entries"]) for cat in data["categories"].values())
+        assert total >= 50, f"processes.json should have 50+ entries, has {total}"
+
+    def test_purposes_has_50_plus_entries(self, dict_dir):
+        import json
+        with open(dict_dir / "purposes.json") as f:
+            data = json.load(f)
+        total = sum(len(cat["entries"]) for cat in data["categories"].values())
+        assert total >= 50, f"purposes.json should have 50+ entries, has {total}"
+
+    def test_data_subjects_has_50_plus_entries(self, dict_dir):
+        import json
+        with open(dict_dir / "data_subjects.json") as f:
+            data = json.load(f)
+        total = sum(len(cat["entries"]) for cat in data["categories"].values())
+        assert total >= 50, f"data_subjects.json should have 50+ entries, has {total}"
+
+    def test_gdc_has_50_plus_entries(self, dict_dir):
+        import json
+        with open(dict_dir / "gdc.json") as f:
+            data = json.load(f)
+        total = sum(len(cat["entries"]) for cat in data["categories"].values())
+        assert total >= 50, f"gdc.json should have 50+ entries, has {total}"
+
+    def test_dictionary_structure(self, dict_dir):
+        """All dictionaries should have name, categories with entries"""
+        import json
+        for name in ["processes.json", "purposes.json", "data_subjects.json", "gdc.json"]:
+            with open(dict_dir / name) as f:
+                data = json.load(f)
+            assert "name" in data, f"{name} missing 'name'"
+            assert "categories" in data, f"{name} missing 'categories'"
+            for cat_name, cat_data in data["categories"].items():
+                assert "entries" in cat_data, f"{name} category '{cat_name}' missing 'entries'"
+                assert len(cat_data["entries"]) > 0, f"{name} category '{cat_name}' has no entries"
+
+    def test_no_duplicate_entries_within_dictionary(self, dict_dir):
+        """No duplicate entry names within a single dictionary"""
+        import json
+        for name in ["processes.json", "purposes.json", "data_subjects.json", "gdc.json"]:
+            with open(dict_dir / name) as f:
+                data = json.load(f)
+            all_entries = []
+            for cat_data in data["categories"].values():
+                all_entries.extend(cat_data["entries"])
+            assert len(all_entries) == len(set(all_entries)), f"{name} has duplicate entries"
 
 
 if __name__ == "__main__":

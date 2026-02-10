@@ -64,6 +64,11 @@ export interface RulesEvaluationResponse {
   evaluation_time_ms: number;
 }
 
+export interface DictionaryEntry {
+  name: string;
+  category: string;
+}
+
 export interface DropdownValues {
   countries: string[];
   purposes: string[];
@@ -72,6 +77,10 @@ export interface DropdownValues {
     l2: string[];
     l3: string[];
   };
+  processes_dict: DictionaryEntry[];
+  purposes_dict: DictionaryEntry[];
+  data_subjects: DictionaryEntry[];
+  gdc: DictionaryEntry[];
 }
 
 export interface HealthCheck {

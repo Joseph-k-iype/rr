@@ -6,6 +6,7 @@ import { HomePage } from './pages/HomePage';
 import { EvaluatorPage } from './pages/EvaluatorPage';
 import { WizardPage } from './pages/WizardPage';
 import { NotFoundPage } from './pages/NotFoundPage';
+import { AdminPage } from './pages/AdminPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -26,6 +27,7 @@ function App() {
               <Route path="/" element={<HomePage />} />
               <Route path="/evaluator" element={<EvaluatorPage />} />
               <Route path="/wizard" element={<WizardPage />} />
+              <Route path="/admin" element={<AdminPage />} />
               <Route path="*" element={<NotFoundPage />} />
             </Route>
           </Routes>

@@ -9,12 +9,15 @@ RulesGraph Schema:
 - Rule: rule_id, rule_type, name, description, priority, priority_order,
         origin_match_type, receiving_match_type, outcome,
         odrl_type, odrl_action, odrl_target,
-        has_pii_required, requires_any_data, requires_personal_data,
-        attribute_name, attribute_keywords, required_actions, enabled
+        has_pii_required, requires_any_data, requires_personal_data, enabled
 - Action: name
 - Permission: name
 - Prohibition: name
 - Duty: name, module, value
+- Process: name, category
+- Purpose: name, category
+- DataSubject: name, category
+- GDC: name, category
 
 Relationships:
 - Country -[:BELONGS_TO]-> CountryGroup
@@ -28,6 +31,7 @@ Relationships:
 - Prohibition -[:CAN_HAVE_DUTY]-> Duty
 """
 
+import json
 import logging
 from typing import Set, Dict, Any
 
@@ -39,9 +43,6 @@ from services.database import get_db_service
 from rules.dictionaries.country_groups import COUNTRY_GROUPS, get_all_countries
 from rules.dictionaries.rules_definitions import (
     get_enabled_case_matching_rules,
-    get_enabled_transfer_rules,
-    get_enabled_attribute_rules,
-    RuleOutcome,
     PRIORITY_ORDER,
 )
 from config.settings import settings
@@ -74,8 +75,7 @@ class RulesGraphBuilder:
         self._build_countries()
         self._build_actions()
         self._build_case_matching_rules()
-        self._build_transfer_rules()
-        self._build_attribute_rules()
+        self._ingest_data_dictionaries()
 
         logger.info("RulesGraph build complete!")
         self._print_stats()
@@ -96,6 +96,10 @@ class RulesGraphBuilder:
             "CREATE INDEX IF NOT EXISTS FOR (n:Permission) ON (n.name)",
             "CREATE INDEX IF NOT EXISTS FOR (n:Prohibition) ON (n.name)",
             "CREATE INDEX IF NOT EXISTS FOR (n:Duty) ON (n.name)",
+            "CREATE INDEX IF NOT EXISTS FOR (n:Process) ON (n.name)",
+            "CREATE INDEX IF NOT EXISTS FOR (n:Purpose) ON (n.name)",
+            "CREATE INDEX IF NOT EXISTS FOR (n:DataSubject) ON (n.name)",
+            "CREATE INDEX IF NOT EXISTS FOR (n:GDC) ON (n.name)",
         ]
         for index in indexes:
             try:
@@ -146,7 +150,7 @@ class RulesGraphBuilder:
             self._created_duties.add(duty_key)
 
     # -------------------------------------------------------------------------
-    # SET 1: Case-Matching Rules
+    # Case-Matching Rules
     # -------------------------------------------------------------------------
 
     def _build_case_matching_rules(self):
@@ -265,250 +269,55 @@ class RulesGraphBuilder:
         logger.info(f"Created {len(rules)} case-matching rules")
 
     # -------------------------------------------------------------------------
-    # SET 2A: Transfer Rules
+    # Data Dictionary Ingestion
     # -------------------------------------------------------------------------
 
-    def _build_transfer_rules(self):
-        logger.info("Building transfer rules...")
-        rules = get_enabled_transfer_rules()
+    def _ingest_data_dictionaries(self):
+        """Load data dictionary JSON files and create graph nodes."""
+        dict_dir = Path(__file__).parent.parent / "rules" / "data_dictionaries"
+        if not dict_dir.exists():
+            logger.warning(f"Data dictionaries directory not found: {dict_dir}")
+            return
 
-        for rule_key, rule in rules.items():
-            # Determine origin match type from transfer pairs or groups
-            has_origin_group = bool(rule.origin_group)
-            has_origin_countries = bool(rule.transfer_pairs)
-            origin_match_type = "group" if has_origin_group else ("specific" if has_origin_countries else "any")
+        node_type_map = {
+            "processes": "Process",
+            "purposes": "Purpose",
+            "data_subjects": "DataSubject",
+            "gdc": "GDC",
+        }
 
-            has_receiving_group = bool(rule.receiving_group)
-            has_receiving_countries = bool(rule.receiving_countries) or bool(rule.transfer_pairs)
-            receiving_match_type = "group" if has_receiving_group else ("specific" if has_receiving_countries else "any")
+        for json_file in dict_dir.glob("*.json"):
+            try:
+                with open(json_file) as f:
+                    data = json.load(f)
 
-            outcome_str = "prohibition" if rule.outcome == RuleOutcome.PROHIBITION else "permission"
+                dict_name = data.get("name", json_file.stem)
+                node_type = node_type_map.get(dict_name)
+                if not node_type:
+                    continue
 
-            self.graph.query("""
-            CREATE (r:Rule {
-                rule_id: $rule_id,
-                rule_type: 'transfer',
-                name: $name,
-                description: $description,
-                priority: $priority,
-                priority_order: $priority_order,
-                origin_match_type: $origin_match_type,
-                receiving_match_type: $receiving_match_type,
-                outcome: $outcome,
-                odrl_type: $odrl_type,
-                odrl_action: $odrl_action,
-                odrl_target: $odrl_target,
-                has_pii_required: $has_pii_required,
-                requires_any_data: $requires_any_data,
-                requires_personal_data: false,
-                required_actions: $required_actions,
-                enabled: true
-            })
-            """, {
-                "rule_id": rule.rule_id,
-                "name": rule.name,
-                "description": rule.description,
-                "priority": rule.priority,
-                "priority_order": _priority_order(rule.priority),
-                "origin_match_type": origin_match_type,
-                "receiving_match_type": receiving_match_type,
-                "outcome": outcome_str,
-                "odrl_type": rule.odrl_type,
-                "odrl_action": rule.odrl_action,
-                "odrl_target": rule.odrl_target,
-                "has_pii_required": rule.requires_pii,
-                "requires_any_data": rule.requires_any_data,
-                "required_actions": list(rule.required_actions),
-            })
+                count = 0
+                for category_name, category_data in data.get("categories", {}).items():
+                    for entry in category_data.get("entries", []):
+                        self.graph.query(
+                            f"MERGE (n:{node_type} {{name: $name}}) "
+                            f"SET n.category = $category",
+                            {"name": entry, "category": category_name}
+                        )
+                        count += 1
 
-            # Permission/Prohibition
-            if rule.outcome == RuleOutcome.PROHIBITION:
-                self.graph.query("""
-                MATCH (r:Rule {rule_id: $rule_id})
-                CREATE (pb:Prohibition {name: $name})
-                CREATE (r)-[:HAS_PROHIBITION]->(pb)
-                """, {"rule_id": rule.rule_id, "name": rule.name})
-                for action in rule.required_actions:
-                    self._create_duty(action, "action", "required")
-                    self.graph.query("""
-                    MATCH (pb:Prohibition {name: $prohib_name})
-                    MATCH (d:Duty {name: $duty_name})
-                    CREATE (pb)-[:CAN_HAVE_DUTY]->(d)
-                    """, {"prohib_name": rule.name, "duty_name": action})
-            else:
-                self.graph.query("""
-                MATCH (r:Rule {rule_id: $rule_id})
-                CREATE (p:Permission {name: $name})
-                CREATE (r)-[:HAS_PERMISSION]->(p)
-                """, {"rule_id": rule.rule_id, "name": rule.name})
-
-            # Origin group
-            if rule.origin_group:
-                self.graph.query("""
-                MATCH (r:Rule {rule_id: $rule_id})
-                MATCH (g:CountryGroup {name: $group})
-                CREATE (r)-[:TRIGGERED_BY_ORIGIN]->(g)
-                """, {"rule_id": rule.rule_id, "group": rule.origin_group})
-
-            # Receiving group
-            if rule.receiving_group:
-                self.graph.query("""
-                MATCH (r:Rule {rule_id: $rule_id})
-                MATCH (g:CountryGroup {name: $group})
-                CREATE (r)-[:TRIGGERED_BY_RECEIVING]->(g)
-                """, {"rule_id": rule.rule_id, "group": rule.receiving_group})
-
-            # Specific receiving countries
-            if rule.receiving_countries:
-                for country in rule.receiving_countries:
-                    self._ensure_country(country)
-                    self.graph.query("""
-                    MATCH (r:Rule {rule_id: $rule_id})
-                    MATCH (c:Country {name: $country})
-                    CREATE (r)-[:TRIGGERED_BY_RECEIVING]->(c)
-                    """, {"rule_id": rule.rule_id, "country": country})
-
-            # Transfer pairs → Country-level relationships
-            if rule.transfer_pairs:
-                origins = set()
-                destinations = set()
-                for origin, receiving in rule.transfer_pairs:
-                    origins.add(origin)
-                    destinations.add(receiving)
-                for country in origins:
-                    self._ensure_country(country)
-                    self.graph.query("""
-                    MATCH (r:Rule {rule_id: $rule_id})
-                    MATCH (c:Country {name: $country})
-                    MERGE (r)-[:TRIGGERED_BY_ORIGIN]->(c)
-                    """, {"rule_id": rule.rule_id, "country": country})
-                for country in destinations:
-                    self._ensure_country(country)
-                    self.graph.query("""
-                    MATCH (r:Rule {rule_id: $rule_id})
-                    MATCH (c:Country {name: $country})
-                    MERGE (r)-[:TRIGGERED_BY_RECEIVING]->(c)
-                    """, {"rule_id": rule.rule_id, "country": country})
-
-            # Link to Action
-            action_name = "Transfer PII" if rule.requires_pii else "Transfer Data"
-            self.graph.query("""
-            MATCH (r:Rule {rule_id: $rule_id})
-            MATCH (a:Action {name: $action_name})
-            CREATE (r)-[:HAS_ACTION]->(a)
-            """, {"rule_id": rule.rule_id, "action_name": action_name})
-
-        logger.info(f"Created {len(rules)} transfer rules")
+                logger.info(f"Ingested {count} {node_type} nodes from {json_file.name}")
+            except Exception as e:
+                logger.error(f"Failed to ingest {json_file}: {e}")
 
     # -------------------------------------------------------------------------
-    # SET 2B: Attribute Rules
+    # Dynamic rule addition (wizard/sandbox) — unified method
     # -------------------------------------------------------------------------
 
-    def _build_attribute_rules(self):
-        logger.info("Building attribute rules...")
-        rules = get_enabled_attribute_rules()
-
-        for rule_key, rule in rules.items():
-            origin_match_type = "group" if rule.origin_group else ("specific" if rule.origin_countries else "any")
-            receiving_match_type = "group" if rule.receiving_group else ("specific" if rule.receiving_countries else "any")
-            outcome_str = "prohibition" if rule.outcome == RuleOutcome.PROHIBITION else "permission"
-
-            self.graph.query("""
-            CREATE (r:Rule {
-                rule_id: $rule_id,
-                rule_type: 'attribute',
-                name: $name,
-                description: $description,
-                priority: $priority,
-                priority_order: $priority_order,
-                origin_match_type: $origin_match_type,
-                receiving_match_type: $receiving_match_type,
-                outcome: $outcome,
-                odrl_type: $odrl_type,
-                odrl_action: $odrl_action,
-                odrl_target: $odrl_target,
-                has_pii_required: $has_pii_required,
-                requires_any_data: false,
-                requires_personal_data: false,
-                attribute_name: $attribute_name,
-                attribute_keywords: $attribute_keywords,
-                enabled: true
-            })
-            """, {
-                "rule_id": rule.rule_id,
-                "name": rule.name,
-                "description": rule.description,
-                "priority": rule.priority,
-                "priority_order": _priority_order(rule.priority),
-                "origin_match_type": origin_match_type,
-                "receiving_match_type": receiving_match_type,
-                "outcome": outcome_str,
-                "odrl_type": rule.odrl_type,
-                "odrl_action": rule.odrl_action,
-                "odrl_target": rule.odrl_target,
-                "has_pii_required": rule.requires_pii,
-                "attribute_name": rule.attribute_name,
-                "attribute_keywords": list(rule.attribute_keywords),
-            })
-
-            # Prohibition/Permission
-            if rule.outcome == RuleOutcome.PROHIBITION:
-                self.graph.query("""
-                MATCH (r:Rule {rule_id: $rule_id})
-                CREATE (pb:Prohibition {name: $name})
-                CREATE (r)-[:HAS_PROHIBITION]->(pb)
-                """, {"rule_id": rule.rule_id, "name": rule.name})
-
-            # Origin relationships
-            if rule.origin_group:
-                self.graph.query("""
-                MATCH (r:Rule {rule_id: $rule_id})
-                MATCH (g:CountryGroup {name: $group})
-                CREATE (r)-[:TRIGGERED_BY_ORIGIN]->(g)
-                """, {"rule_id": rule.rule_id, "group": rule.origin_group})
-
-            if rule.origin_countries:
-                for country in rule.origin_countries:
-                    self._ensure_country(country)
-                    self.graph.query("""
-                    MATCH (r:Rule {rule_id: $rule_id})
-                    MATCH (c:Country {name: $country})
-                    CREATE (r)-[:TRIGGERED_BY_ORIGIN]->(c)
-                    """, {"rule_id": rule.rule_id, "country": country})
-
-            # Receiving relationships
-            if rule.receiving_group:
-                self.graph.query("""
-                MATCH (r:Rule {rule_id: $rule_id})
-                MATCH (g:CountryGroup {name: $group})
-                CREATE (r)-[:TRIGGERED_BY_RECEIVING]->(g)
-                """, {"rule_id": rule.rule_id, "group": rule.receiving_group})
-
-            if rule.receiving_countries:
-                for country in rule.receiving_countries:
-                    self._ensure_country(country)
-                    self.graph.query("""
-                    MATCH (r:Rule {rule_id: $rule_id})
-                    MATCH (c:Country {name: $country})
-                    CREATE (r)-[:TRIGGERED_BY_RECEIVING]->(c)
-                    """, {"rule_id": rule.rule_id, "country": country})
-
-            # Link to Action
-            self.graph.query("""
-            MATCH (r:Rule {rule_id: $rule_id})
-            MATCH (a:Action {name: 'Transfer Data'})
-            CREATE (r)-[:HAS_ACTION]->(a)
-            """, {"rule_id": rule.rule_id})
-
-        logger.info(f"Created {len(rules)} attribute rules")
-
-    # -------------------------------------------------------------------------
-    # Dynamic rule addition (wizard/sandbox)
-    # -------------------------------------------------------------------------
-
-    def add_transfer_rule(self, rule_def: dict) -> bool:
-        """Add a single transfer rule to the graph from AI-generated definition."""
+    def add_rule(self, rule_def: dict) -> bool:
+        """Add any rule type to the graph from AI-generated definition."""
         try:
+            rule_type = rule_def.get('rule_type', 'case_matching')
             origin_match_type = "group" if rule_def.get('origin_group') else (
                 "specific" if rule_def.get('origin_countries') else "any"
             )
@@ -516,11 +325,11 @@ class RulesGraphBuilder:
                 "specific" if rule_def.get('receiving_countries') else "any"
             )
             priority = rule_def.get('priority', 'medium')
-            outcome = rule_def.get('outcome', 'prohibition')
+            outcome = rule_def.get('outcome', 'permission')
 
             self.graph.query("""
             MERGE (r:Rule {rule_id: $rule_id})
-            SET r.rule_type = 'transfer',
+            SET r.rule_type = $rule_type,
                 r.name = $name,
                 r.description = $description,
                 r.priority = $priority,
@@ -533,11 +342,12 @@ class RulesGraphBuilder:
                 r.odrl_target = $odrl_target,
                 r.has_pii_required = $has_pii_required,
                 r.requires_any_data = $requires_any_data,
-                r.requires_personal_data = false,
+                r.requires_personal_data = $requires_personal_data,
                 r.required_actions = $required_actions,
                 r.enabled = true
             """, {
                 "rule_id": rule_def.get('rule_id'),
+                "rule_type": rule_type,
                 "name": rule_def.get('name', ''),
                 "description": rule_def.get('description', ''),
                 "priority": priority,
@@ -550,6 +360,7 @@ class RulesGraphBuilder:
                 "odrl_target": rule_def.get('odrl_target', 'Data'),
                 "has_pii_required": rule_def.get('requires_pii', False),
                 "requires_any_data": rule_def.get('requires_any_data', False),
+                "requires_personal_data": rule_def.get('requires_personal_data', False),
                 "required_actions": rule_def.get('required_actions', []),
             })
 
@@ -615,118 +426,10 @@ class RulesGraphBuilder:
             MERGE (r)-[:HAS_ACTION]->(a)
             """, {"rule_id": rule_def.get('rule_id'), "action_name": action_name})
 
-            logger.info(f"Added transfer rule: {rule_def.get('rule_id')}")
+            logger.info(f"Added rule: {rule_def.get('rule_id')} (type={rule_type})")
             return True
         except Exception as e:
-            logger.error(f"Failed to add transfer rule: {e}")
-            return False
-
-    def add_attribute_rule(self, rule_def: dict) -> bool:
-        """Add a single attribute rule to the graph from AI-generated definition."""
-        try:
-            origin_match_type = "group" if rule_def.get('origin_group') else (
-                "specific" if rule_def.get('origin_countries') else "any"
-            )
-            receiving_match_type = "group" if rule_def.get('receiving_group') else (
-                "specific" if rule_def.get('receiving_countries') else "any"
-            )
-            priority = rule_def.get('priority', 'medium')
-            outcome = rule_def.get('outcome', 'prohibition')
-
-            self.graph.query("""
-            MERGE (r:Rule {rule_id: $rule_id})
-            SET r.rule_type = 'attribute',
-                r.name = $name,
-                r.description = $description,
-                r.priority = $priority,
-                r.priority_order = $priority_order,
-                r.origin_match_type = $origin_match_type,
-                r.receiving_match_type = $receiving_match_type,
-                r.outcome = $outcome,
-                r.odrl_type = $odrl_type,
-                r.odrl_action = $odrl_action,
-                r.odrl_target = $odrl_target,
-                r.has_pii_required = $has_pii_required,
-                r.requires_any_data = false,
-                r.requires_personal_data = false,
-                r.attribute_name = $attribute_name,
-                r.attribute_keywords = $attribute_keywords,
-                r.enabled = true
-            """, {
-                "rule_id": rule_def.get('rule_id'),
-                "name": rule_def.get('name', ''),
-                "description": rule_def.get('description', ''),
-                "priority": priority,
-                "priority_order": _priority_order(priority),
-                "origin_match_type": origin_match_type,
-                "receiving_match_type": receiving_match_type,
-                "outcome": outcome,
-                "odrl_type": rule_def.get('odrl_type', 'Prohibition' if outcome == 'prohibition' else 'Permission'),
-                "odrl_action": rule_def.get('odrl_action', 'transfer'),
-                "odrl_target": rule_def.get('odrl_target', 'Data'),
-                "has_pii_required": rule_def.get('requires_pii', False),
-                "attribute_name": rule_def.get('attribute_name', ''),
-                "attribute_keywords": rule_def.get('attribute_keywords', []),
-            })
-
-            # Prohibition
-            rule_name = rule_def.get('name', rule_def.get('rule_id'))
-            if outcome == 'prohibition':
-                self.graph.query("""
-                MATCH (r:Rule {rule_id: $rule_id})
-                MERGE (pb:Prohibition {name: $name})
-                MERGE (r)-[:HAS_PROHIBITION]->(pb)
-                """, {"rule_id": rule_def.get('rule_id'), "name": rule_name})
-            else:
-                self.graph.query("""
-                MATCH (r:Rule {rule_id: $rule_id})
-                MERGE (p:Permission {name: $name})
-                MERGE (r)-[:HAS_PERMISSION]->(p)
-                """, {"rule_id": rule_def.get('rule_id'), "name": rule_name})
-
-            # Origin
-            if rule_def.get('origin_group'):
-                self.graph.query("""
-                MATCH (r:Rule {rule_id: $rule_id})
-                MATCH (g:CountryGroup {name: $group})
-                MERGE (r)-[:TRIGGERED_BY_ORIGIN]->(g)
-                """, {"rule_id": rule_def.get('rule_id'), "group": rule_def['origin_group']})
-            if rule_def.get('origin_countries'):
-                for country in rule_def['origin_countries']:
-                    self._ensure_country(country)
-                    self.graph.query("""
-                    MATCH (r:Rule {rule_id: $rule_id})
-                    MATCH (c:Country {name: $country})
-                    MERGE (r)-[:TRIGGERED_BY_ORIGIN]->(c)
-                    """, {"rule_id": rule_def.get('rule_id'), "country": country})
-
-            # Receiving
-            if rule_def.get('receiving_group'):
-                self.graph.query("""
-                MATCH (r:Rule {rule_id: $rule_id})
-                MATCH (g:CountryGroup {name: $group})
-                MERGE (r)-[:TRIGGERED_BY_RECEIVING]->(g)
-                """, {"rule_id": rule_def.get('rule_id'), "group": rule_def['receiving_group']})
-            if rule_def.get('receiving_countries'):
-                for country in rule_def['receiving_countries']:
-                    self._ensure_country(country)
-                    self.graph.query("""
-                    MATCH (r:Rule {rule_id: $rule_id})
-                    MATCH (c:Country {name: $country})
-                    MERGE (r)-[:TRIGGERED_BY_RECEIVING]->(c)
-                    """, {"rule_id": rule_def.get('rule_id'), "country": country})
-
-            # Action
-            self.graph.query("""
-            MATCH (r:Rule {rule_id: $rule_id})
-            MATCH (a:Action {name: 'Transfer Data'})
-            MERGE (r)-[:HAS_ACTION]->(a)
-            """, {"rule_id": rule_def.get('rule_id')})
-
-            logger.info(f"Added attribute rule: {rule_def.get('rule_id')}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to add attribute rule: {e}")
+            logger.error(f"Failed to add rule: {e}")
             return False
 
     def _print_stats(self):

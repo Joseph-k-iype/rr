@@ -64,17 +64,6 @@ BCR_COUNTRIES: FrozenSet[str] = frozenset({
     "United States", "Uruguay", "Vietnam"
 })
 
-# US Restricted Countries (for data transfer prohibitions)
-US_RESTRICTED_COUNTRIES: FrozenSet[str] = frozenset({
-    "China", "Hong Kong", "Macao", "Cuba", "Iran", "North Korea",
-    "Russia", "Venezuela", "Syria"
-})
-
-# China and Related Territories
-CHINA_TERRITORIES: FrozenSet[str] = frozenset({
-    "China", "Hong Kong", "Macao"
-})
-
 # Combined Groups (computed)
 EU_EEA_UK_CROWN_CH: FrozenSet[str] = EU_EEA_COUNTRIES | UK_CROWN_DEPENDENCIES | SWITZERLAND
 EU_EEA_ADEQUACY_UK: FrozenSet[str] = EU_EEA_COUNTRIES | ADEQUACY_COUNTRIES
@@ -92,8 +81,6 @@ COUNTRY_GROUPS: Dict[str, FrozenSet[str]] = {
     "ADEQUACY_COUNTRIES": ADEQUACY_COUNTRIES,
     "SWITZERLAND_APPROVED": SWITZERLAND_APPROVED,
     "BCR_COUNTRIES": BCR_COUNTRIES,
-    "US_RESTRICTED": US_RESTRICTED_COUNTRIES,
-    "CHINA_TERRITORIES": CHINA_TERRITORIES,
     "EU_EEA_UK_CROWN_CH": EU_EEA_UK_CROWN_CH,
     "EU_EEA_ADEQUACY_UK": EU_EEA_ADEQUACY_UK,
     "ADEQUACY_PLUS_EU": ADEQUACY_PLUS_EU,

@@ -4,6 +4,7 @@ const navItems = [
   { to: '/', label: 'Network' },
   { to: '/evaluator', label: 'Evaluator' },
   { to: '/wizard', label: 'Wizard' },
+  { to: '/admin', label: 'Admin' },
 ];
 
 export function Sidebar() {

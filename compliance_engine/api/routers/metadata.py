@@ -108,5 +108,16 @@ async def get_all_dropdown_values(db=Depends(get_db)):
             "processes": {"l1": [], "l2": [], "l3": []}
         }
 
+    # Fetch dictionary-based values from the rules graph
+    for node_type, key in [("Process", "processes_dict"), ("Purpose", "purposes_dict"),
+                            ("DataSubject", "data_subjects"), ("GDC", "gdc")]:
+        try:
+            query = f"MATCH (n:{node_type}) RETURN n.name as name, n.category as category ORDER BY n.category, n.name"
+            raw = db.execute_rules_query(query)
+            values = [{"name": r["name"], "category": r.get("category", "")} for r in raw if r.get("name")]
+        except Exception:
+            values = []
+        result[key] = values
+
     cache.set("all_dropdown_values", result, "metadata", ttl=600)
     return result
