@@ -1,7 +1,7 @@
 """
 Wizard Models
 =============
-Pydantic models for the rule ingestion wizard.
+Pydantic models for the 6-step rule ingestion wizard.
 """
 
 from typing import Dict, List, Optional, Any
@@ -11,23 +11,13 @@ from datetime import datetime
 
 
 class WizardStep(str, Enum):
-    """Wizard step identifiers"""
-    COUNTRY_SELECTION = "country_selection"
-    SCENARIO_TYPE = "scenario_type"
-    RULE_INPUT = "rule_input"
-    AI_ANALYSIS = "ai_analysis"
-    AI_DICTIONARY = "ai_dictionary"
+    """Wizard step identifiers (6-step flow)"""
+    COUNTRY = "country"
+    METADATA = "metadata"
+    RULE = "rule"
     REVIEW = "review"
-    EDIT = "edit"
-    SANDBOX_LOAD = "sandbox_load"
     SANDBOX_TEST = "sandbox_test"
-    APPROVAL = "approval"
-
-
-class ScenarioType(str, Enum):
-    """Types of compliance scenarios"""
-    TRANSFER = "transfer"
-    ATTRIBUTE = "attribute"
+    APPROVE = "approve"
 
 
 class WizardSessionStatus(str, Enum):
@@ -39,17 +29,11 @@ class WizardSessionStatus(str, Enum):
     APPROVED = "approved"
     CANCELLED = "cancelled"
     FAILED = "failed"
+    SAVED = "saved"
 
 
 class WizardStartRequest(BaseModel):
     """Request to start a new wizard session"""
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "user_id": "analyst_01"
-            }
-        }
-    )
     user_id: str = Field(default="anonymous", description="User starting the session")
 
 
@@ -63,18 +47,7 @@ class WizardStartResponse(BaseModel):
 
 class WizardStepSubmission(BaseModel):
     """Data submitted at each wizard step"""
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "step": 1,
-                "data": {
-                    "origin_country": "United Kingdom",
-                    "receiving_countries": ["India", "China"]
-                }
-            }
-        }
-    )
-    step: int = Field(..., ge=1, le=10, description="Step number (1-10)")
+    step: int = Field(..., ge=1, le=6, description="Step number (1-6)")
     data: Dict[str, Any] = Field(..., description="Step-specific data")
 
 
@@ -87,42 +60,48 @@ class WizardSessionState(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
-    # Step 1: Country selection
+    # Step 1: Country
     origin_country: Optional[str] = None
     receiving_countries: List[str] = Field(default_factory=list)
+    origin_legal_entity: Optional[str] = None
+    receiving_legal_entity: Optional[str] = None
 
-    # Step 2: Scenario type
-    scenario_type: Optional[ScenarioType] = None
+    # Step 2: Metadata
     data_categories: List[str] = Field(default_factory=list)
+    purposes_of_processing: List[str] = Field(default_factory=list)
+    process_l1: List[str] = Field(default_factory=list)
+    process_l2: List[str] = Field(default_factory=list)
+    process_l3: List[str] = Field(default_factory=list)
+    group_data_categories: List[str] = Field(default_factory=list)
+    valid_until: Optional[str] = None
 
     # Step 3: Rule text input
     rule_text: Optional[str] = None
     is_pii_related: bool = False
 
-    # Steps 4-5: AI-generated results
+    # AI-generated results (from step 3 processing)
     analysis_result: Optional[Dict[str, Any]] = None
     dictionary_result: Optional[Dict[str, Any]] = None
 
-    # Step 6: Review snapshot
-    review_snapshot: Optional[Dict[str, Any]] = None
-
-    # Step 7: User edits
+    # Step 4: Review (editable AI output)
     edited_rule_definition: Optional[Dict[str, Any]] = None
     edited_terms_dictionary: Optional[Dict[str, Any]] = None
+    review_snapshot: Optional[Dict[str, Any]] = None
 
-    # Step 8: Sandbox
+    # Step 5: Sandbox
     sandbox_graph_name: Optional[str] = None
-
-    # Step 9: Sandbox test results
     sandbox_test_results: List[Dict[str, Any]] = Field(default_factory=list)
 
-    # Step 10: Approval
+    # Step 6: Approval
     approved: bool = False
     approved_by: Optional[str] = None
     approved_at: Optional[str] = None
 
     # Error tracking
     error_message: Optional[str] = None
+
+    # Saved state
+    saved_session_id: Optional[str] = None
 
 
 class WizardSessionResponse(BaseModel):
@@ -132,8 +111,15 @@ class WizardSessionResponse(BaseModel):
     current_step: int
     origin_country: Optional[str] = None
     receiving_countries: List[str] = Field(default_factory=list)
-    scenario_type: Optional[str] = None
+    origin_legal_entity: Optional[str] = None
+    receiving_legal_entity: Optional[str] = None
     data_categories: List[str] = Field(default_factory=list)
+    purposes_of_processing: List[str] = Field(default_factory=list)
+    process_l1: List[str] = Field(default_factory=list)
+    process_l2: List[str] = Field(default_factory=list)
+    process_l3: List[str] = Field(default_factory=list)
+    group_data_categories: List[str] = Field(default_factory=list)
+    valid_until: Optional[str] = None
     rule_text: Optional[str] = None
     analysis_result: Optional[Dict[str, Any]] = None
     dictionary_result: Optional[Dict[str, Any]] = None
@@ -148,27 +134,17 @@ class WizardSessionResponse(BaseModel):
 
 
 class RuleEditRequest(BaseModel):
-    """Request to edit a rule definition in step 7"""
+    """Request to edit a rule definition in step 4"""
     rule_definition: Dict[str, Any] = Field(..., description="Edited rule definition")
 
 
 class TermsEditRequest(BaseModel):
-    """Request to edit terms dictionary in step 7"""
+    """Request to edit terms dictionary in step 4"""
     terms_dictionary: Dict[str, Any] = Field(..., description="Edited terms dictionary")
 
 
 class SandboxEvaluationRequest(BaseModel):
     """Request to evaluate rules in the sandbox"""
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "origin_country": "United Kingdom",
-                "receiving_country": "India",
-                "pii": True,
-                "purposes": ["Marketing"],
-            }
-        }
-    )
     origin_country: str
     receiving_country: str
     pii: bool = False
@@ -178,9 +154,24 @@ class SandboxEvaluationRequest(BaseModel):
     process_l3: Optional[List[str]] = None
     personal_data_names: Optional[List[str]] = None
     metadata: Optional[Dict[str, Any]] = None
+    origin_legal_entity: Optional[str] = None
+    receiving_legal_entity: Optional[str] = None
 
 
 class WizardApprovalRequest(BaseModel):
     """Request to approve the wizard output and load to main graph"""
     approved_by: str = Field(default="admin", description="Who is approving")
     notes: Optional[str] = None
+
+
+class SavedSessionSummary(BaseModel):
+    """Summary of a saved wizard session"""
+    session_id: str
+    user_id: str
+    origin_country: Optional[str] = None
+    receiving_countries: List[str] = Field(default_factory=list)
+    rule_text: Optional[str] = None
+    current_step: int = 1
+    status: str = "saved"
+    saved_at: str = ""
+    updated_at: str = ""

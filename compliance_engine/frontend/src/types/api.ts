@@ -1,6 +1,6 @@
 export interface RulesEvaluationRequest {
   origin_country: string;
-  receiving_country: string;
+  receiving_country: string | string[];
   pii: boolean;
   purposes?: string[];
   process_l1?: string[];
@@ -8,18 +8,31 @@ export interface RulesEvaluationRequest {
   process_l3?: string[];
   personal_data_names?: string[];
   metadata?: Record<string, unknown>;
+  origin_legal_entity?: string;
+  receiving_legal_entity?: string[];
 }
 
 export interface TriggeredRule {
   rule_id: string;
   rule_name: string;
   rule_type: string;
-  priority: number;
+  priority: string;
   odrl_type: string;
   outcome: string;
   description?: string;
   required_assessments: string[];
   required_actions: string[];
+  permissions: {
+    permission_id: string;
+    name: string;
+    description?: string;
+    duties: { duty_id: string; name: string; module: string; value: string; description?: string }[];
+  }[];
+  prohibitions: {
+    prohibition_id: string;
+    name: string;
+    description?: string;
+  }[];
 }
 
 export interface CaseMatch {
@@ -81,6 +94,27 @@ export interface DropdownValues {
   purposes_dict: DictionaryEntry[];
   data_subjects: DictionaryEntry[];
   gdc: DictionaryEntry[];
+  legal_entities: Record<string, string[]>;
+  purpose_of_processing: string[];
+  group_data_categories: DictionaryEntry[];
+}
+
+export interface RuleTableRow {
+  rule_id: string;
+  sending_country: string;
+  receiving_country: string;
+  rule_name: string;
+  rule_details: string;
+  permission_prohibition: string;
+  duty: string;
+  priority: string;
+}
+
+export interface RulesOverviewTableResponse {
+  total_rules: number;
+  total_countries: number;
+  rows: RuleTableRow[];
+  filters: Record<string, string[]>;
 }
 
 export interface HealthCheck {
@@ -97,7 +131,7 @@ export interface RuleOverview {
   name: string;
   description: string;
   rule_type: string;
-  priority: number;
+  priority: string;
   origin_scope: string;
   receiving_scope: string;
   outcome: string;

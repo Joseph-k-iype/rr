@@ -6,10 +6,12 @@ Builds the RulesGraph from rule definitions — the single source of truth.
 RulesGraph Schema:
 - Country: name
 - CountryGroup: name
+- LegalEntity: name, country
 - Rule: rule_id, rule_type, name, description, priority, priority_order,
         origin_match_type, receiving_match_type, outcome,
         odrl_type, odrl_action, odrl_target,
-        has_pii_required, requires_any_data, requires_personal_data, enabled
+        has_pii_required, requires_any_data, requires_personal_data,
+        valid_until, enabled
 - Action: name
 - Permission: name
 - Prohibition: name
@@ -18,17 +20,19 @@ RulesGraph Schema:
 - Purpose: name, category
 - DataSubject: name, category
 - GDC: name, category
+- DataCategory: name
 
 Relationships:
 - Country -[:BELONGS_TO]-> CountryGroup
-- Rule -[:TRIGGERED_BY_ORIGIN]-> CountryGroup | Country
-- Rule -[:TRIGGERED_BY_RECEIVING]-> CountryGroup | Country
+- Country -[:HAS_LEGAL_ENTITY]-> LegalEntity
+- Rule -[:TRIGGERED_BY_ORIGIN]-> CountryGroup | Country | LegalEntity
+- Rule -[:TRIGGERED_BY_RECEIVING]-> CountryGroup | Country | LegalEntity
 - Rule -[:EXCLUDES_RECEIVING]-> CountryGroup
 - Rule -[:HAS_ACTION]-> Action
 - Rule -[:HAS_PERMISSION]-> Permission
 - Rule -[:HAS_PROHIBITION]-> Prohibition
 - Permission -[:CAN_HAVE_DUTY]-> Duty
-- Prohibition -[:CAN_HAVE_DUTY]-> Duty
+  (Prohibitions do NOT have duties)
 """
 
 import json
@@ -62,6 +66,7 @@ class RulesGraphBuilder:
         self.graph = graph if graph is not None else self.db.get_rules_graph()
         self._created_duties: Set[str] = set()
         self._created_countries: Set[str] = set()
+        self._created_legal_entities: Set[str] = set()
 
     def build(self, clear_existing: bool = True):
         """Build the complete RulesGraph."""
@@ -73,6 +78,7 @@ class RulesGraphBuilder:
         self._create_indexes()
         self._build_country_groups()
         self._build_countries()
+        self._build_legal_entities()
         self._build_actions()
         self._build_case_matching_rules()
         self._ingest_data_dictionaries()
@@ -91,6 +97,7 @@ class RulesGraphBuilder:
         indexes = [
             "CREATE INDEX IF NOT EXISTS FOR (n:Country) ON (n.name)",
             "CREATE INDEX IF NOT EXISTS FOR (n:CountryGroup) ON (n.name)",
+            "CREATE INDEX IF NOT EXISTS FOR (n:LegalEntity) ON (n.name)",
             "CREATE INDEX IF NOT EXISTS FOR (n:Rule) ON (n.rule_id)",
             "CREATE INDEX IF NOT EXISTS FOR (n:Action) ON (n.name)",
             "CREATE INDEX IF NOT EXISTS FOR (n:Permission) ON (n.name)",
@@ -100,6 +107,7 @@ class RulesGraphBuilder:
             "CREATE INDEX IF NOT EXISTS FOR (n:Purpose) ON (n.name)",
             "CREATE INDEX IF NOT EXISTS FOR (n:DataSubject) ON (n.name)",
             "CREATE INDEX IF NOT EXISTS FOR (n:GDC) ON (n.name)",
+            "CREATE INDEX IF NOT EXISTS FOR (n:DataCategory) ON (n.name)",
         ]
         for index in indexes:
             try:
@@ -134,9 +142,52 @@ class RulesGraphBuilder:
             self.graph.query("MERGE (c:Country {name: $name})", {"name": country_name})
             self._created_countries.add(country_name)
 
+    def _build_legal_entities(self):
+        """Load legal entities from data dictionary and create graph nodes."""
+        logger.info("Building legal entities...")
+        le_file = Path(__file__).parent.parent / "rules" / "data_dictionaries" / "legal_entities.json"
+        if not le_file.exists():
+            logger.warning("Legal entities file not found")
+            return
+
+        try:
+            with open(le_file) as f:
+                data = json.load(f)
+
+            count = 0
+            for country_name, entities in data.get("entities", {}).items():
+                self._ensure_country(country_name)
+                for entity_name in entities:
+                    entity_key = f"{entity_name}:{country_name}"
+                    if entity_key not in self._created_legal_entities:
+                        self.graph.query("""
+                        CREATE (le:LegalEntity {name: $name, country: $country})
+                        """, {"name": entity_name, "country": country_name})
+                        self._created_legal_entities.add(entity_key)
+                        count += 1
+
+                    # Link country to legal entity
+                    self.graph.query("""
+                    MATCH (c:Country {name: $country})
+                    MATCH (le:LegalEntity {name: $entity_name, country: $country})
+                    MERGE (c)-[:HAS_LEGAL_ENTITY]->(le)
+                    """, {"country": country_name, "entity_name": entity_name})
+
+            logger.info(f"Created {count} legal entity nodes")
+        except Exception as e:
+            logger.error(f"Failed to build legal entities: {e}")
+
     def _build_actions(self):
         logger.info("Building actions...")
-        actions = ["Transfer Data", "Transfer PII", "Store in Cloud", "Process Data"]
+        actions = [
+            "Transfer Data", "Transfer PII", "Store in Cloud", "Process Data",
+            "Anonymisation", "Consent", "Consult/Approve Legal",
+            "Consult/Approve Risk and Compliance", "Notification to Regulator",
+            "Privacy Notice", "Local Authority/Regulatory Approval",
+            "Enhanced Technical and Organisational Security Measures",
+            "Public Availability", "Services Agreement", "Storage Limitation",
+            "Outsourcing Agreement", "Explicit Consent",
+        ]
         for name in actions:
             self.graph.query("CREATE (a:Action {name: $name})", {"name": name})
         logger.info(f"Created {len(actions)} action nodes")
@@ -292,6 +343,11 @@ class RulesGraphBuilder:
                     data = json.load(f)
 
                 dict_name = data.get("name", json_file.stem)
+
+                # Skip non-dictionary files
+                if dict_name in ("legal_entities", "purpose_of_processing"):
+                    continue
+
                 node_type = node_type_map.get(dict_name)
                 if not node_type:
                     continue
@@ -326,6 +382,7 @@ class RulesGraphBuilder:
             )
             priority = rule_def.get('priority', 'medium')
             outcome = rule_def.get('outcome', 'permission')
+            valid_until = rule_def.get('valid_until')
 
             self.graph.query("""
             MERGE (r:Rule {rule_id: $rule_id})
@@ -344,6 +401,7 @@ class RulesGraphBuilder:
                 r.requires_any_data = $requires_any_data,
                 r.requires_personal_data = $requires_personal_data,
                 r.required_actions = $required_actions,
+                r.valid_until = $valid_until,
                 r.enabled = true
             """, {
                 "rule_id": rule_def.get('rule_id'),
@@ -362,29 +420,33 @@ class RulesGraphBuilder:
                 "requires_any_data": rule_def.get('requires_any_data', False),
                 "requires_personal_data": rule_def.get('requires_personal_data', False),
                 "required_actions": rule_def.get('required_actions', []),
+                "valid_until": valid_until,
             })
 
             # Permission/Prohibition
             rule_name = rule_def.get('name', rule_def.get('rule_id'))
             if outcome == 'prohibition':
+                # Prohibitions have NO duties - just create the prohibition node
                 self.graph.query("""
                 MATCH (r:Rule {rule_id: $rule_id})
                 MERGE (pb:Prohibition {name: $name})
                 MERGE (r)-[:HAS_PROHIBITION]->(pb)
                 """, {"rule_id": rule_def.get('rule_id'), "name": rule_name})
-                for action in rule_def.get('required_actions', []):
-                    self._create_duty(action, "action", "required")
-                    self.graph.query("""
-                    MATCH (pb:Prohibition {name: $prohib_name})
-                    MATCH (d:Duty {name: $duty_name})
-                    MERGE (pb)-[:CAN_HAVE_DUTY]->(d)
-                    """, {"prohib_name": rule_name, "duty_name": action})
             else:
                 self.graph.query("""
                 MATCH (r:Rule {rule_id: $rule_id})
                 MERGE (p:Permission {name: $name})
                 MERGE (r)-[:HAS_PERMISSION]->(p)
                 """, {"rule_id": rule_def.get('rule_id'), "name": rule_name})
+
+                # Only permissions can have duties
+                for action in rule_def.get('required_actions', []):
+                    self._create_duty(action, "action", "required")
+                    self.graph.query("""
+                    MATCH (p:Permission {name: $perm_name})
+                    MATCH (d:Duty {name: $duty_name})
+                    MERGE (p)-[:CAN_HAVE_DUTY]->(d)
+                    """, {"perm_name": rule_name, "duty_name": action})
 
             # Origin
             if rule_def.get('origin_group'):
@@ -401,6 +463,13 @@ class RulesGraphBuilder:
                     MATCH (c:Country {name: $country})
                     MERGE (r)-[:TRIGGERED_BY_ORIGIN]->(c)
                     """, {"rule_id": rule_def.get('rule_id'), "country": country})
+            if rule_def.get('origin_legal_entities'):
+                for entity in rule_def['origin_legal_entities']:
+                    self.graph.query("""
+                    MATCH (r:Rule {rule_id: $rule_id})
+                    MATCH (le:LegalEntity {name: $entity})
+                    MERGE (r)-[:TRIGGERED_BY_ORIGIN]->(le)
+                    """, {"rule_id": rule_def.get('rule_id'), "entity": entity})
 
             # Receiving
             if rule_def.get('receiving_group'):
@@ -417,6 +486,13 @@ class RulesGraphBuilder:
                     MATCH (c:Country {name: $country})
                     MERGE (r)-[:TRIGGERED_BY_RECEIVING]->(c)
                     """, {"rule_id": rule_def.get('rule_id'), "country": country})
+            if rule_def.get('receiving_legal_entities'):
+                for entity in rule_def['receiving_legal_entities']:
+                    self.graph.query("""
+                    MATCH (r:Rule {rule_id: $rule_id})
+                    MATCH (le:LegalEntity {name: $entity})
+                    MERGE (r)-[:TRIGGERED_BY_RECEIVING]->(le)
+                    """, {"rule_id": rule_def.get('rule_id'), "entity": entity})
 
             # Action
             action_name = "Transfer PII" if rule_def.get('requires_pii') else "Transfer Data"

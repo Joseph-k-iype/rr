@@ -5,12 +5,15 @@ Core engine for evaluating rules via FalkorDB graph queries.
 The RulesGraph is the single source of truth.
 
 Evaluates case-matching rules (precedent-based) against the graph.
+Supports legal entity matching, case-insensitive country matching,
+prohibition logic (any prohibition → overall PROHIBITION), and rule expiration.
 """
 
 import logging
 import time
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
+from datetime import date
 
 from services.database import get_db_service
 from services.cache import get_cache_service
@@ -40,33 +43,44 @@ logger = logging.getLogger(__name__)
 # ── FalkorDB-compatible Cypher queries ──────────────────────────────────────
 
 # Case-matching rules: origin/receiving matching + assessment duties
+# Uses case-insensitive CONTAINS matching for country names
+# Checks rule expiration via valid_until property
 CASE_MATCHING_RULES_QUERY = """
 MATCH (r:Rule)
 WHERE r.rule_type = 'case_matching' AND r.enabled = true
-OPTIONAL MATCH (r)-[:TRIGGERED_BY_ORIGIN]->(og:CountryGroup)<-[:BELONGS_TO]-(:Country {name: $origin})
-OPTIONAL MATCH (r)-[:TRIGGERED_BY_ORIGIN]->(odc:Country {name: $origin})
+  AND (r.valid_until IS NULL OR r.valid_until >= $today)
+OPTIONAL MATCH (r)-[:TRIGGERED_BY_ORIGIN]->(og:CountryGroup)<-[:BELONGS_TO]-(oc:Country)
+  WHERE toLower(oc.name) CONTAINS toLower($origin)
+OPTIONAL MATCH (r)-[:TRIGGERED_BY_ORIGIN]->(odc:Country)
+  WHERE toLower(odc.name) CONTAINS toLower($origin)
 WITH r, og, odc
 WHERE r.origin_match_type = 'any' OR og IS NOT NULL OR odc IS NOT NULL
-OPTIONAL MATCH (r)-[:TRIGGERED_BY_RECEIVING]->(rg:CountryGroup)<-[:BELONGS_TO]-(:Country {name: $receiving})
-OPTIONAL MATCH (r)-[:TRIGGERED_BY_RECEIVING]->(rdc:Country {name: $receiving})
+OPTIONAL MATCH (r)-[:TRIGGERED_BY_RECEIVING]->(rg:CountryGroup)<-[:BELONGS_TO]-(rc:Country)
+  WHERE toLower(rc.name) CONTAINS toLower($receiving)
+OPTIONAL MATCH (r)-[:TRIGGERED_BY_RECEIVING]->(rdc:Country)
+  WHERE toLower(rdc.name) CONTAINS toLower($receiving)
 WITH r, rg, rdc
 WHERE r.receiving_match_type = 'any' OR rg IS NOT NULL OR rdc IS NOT NULL
-OPTIONAL MATCH (r)-[:EXCLUDES_RECEIVING]->(eg:CountryGroup)<-[:BELONGS_TO]-(:Country {name: $receiving})
+OPTIONAL MATCH (r)-[:EXCLUDES_RECEIVING]->(eg:CountryGroup)<-[:BELONGS_TO]-(ec:Country)
+  WHERE toLower(ec.name) CONTAINS toLower($receiving)
 WITH DISTINCT r, eg
 WHERE r.receiving_match_type <> 'not_in' OR eg IS NULL
 WITH DISTINCT r
 WHERE (r.requires_personal_data = false OR $has_personal_data = true)
   AND (r.has_pii_required = false OR $pii = true)
 OPTIONAL MATCH (r)-[:HAS_PERMISSION]->(p:Permission)-[:CAN_HAVE_DUTY]->(d:Duty)
+OPTIONAL MATCH (r)-[:HAS_PROHIBITION]->(pb:Prohibition)
 RETURN DISTINCT
     r.rule_id AS rule_id, r.name AS name, r.description AS description,
     r.priority AS priority, r.priority_order AS priority_order,
-    r.odrl_type AS odrl_type,
+    r.odrl_type AS odrl_type, r.outcome AS outcome,
     r.has_pii_required AS requires_pii,
     r.requires_personal_data AS requires_personal_data,
     r.origin_match_type AS origin_match_type,
     r.receiving_match_type AS receiving_match_type,
-    collect(DISTINCT d.module) AS required_assessments
+    r.required_actions AS required_actions,
+    collect(DISTINCT d.module) AS required_assessments,
+    collect(DISTINCT pb.name) AS prohibition_names
 ORDER BY r.priority_order
 """
 
@@ -84,6 +98,8 @@ class EvaluationContext:
     personal_data_names: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     detected_attributes: List[DetectedAttribute] = field(default_factory=list)
+    origin_legal_entity: Optional[str] = None
+    receiving_legal_entity: Optional[str] = None
 
 
 class RulesEvaluator:
@@ -102,7 +118,6 @@ class RulesEvaluator:
         """Execute a Cypher query against the rules graph."""
         try:
             result = self._rules_graph.query(query, params)
-            # Convert FalkorDB result to list of dicts
             if not hasattr(result, 'result_set') or not result.result_set:
                 return []
             headers = result.header
@@ -131,6 +146,8 @@ class RulesEvaluator:
         process_l3: Optional[List[str]] = None,
         personal_data_names: Optional[List[str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        origin_legal_entity: Optional[str] = None,
+        receiving_legal_entity: Optional[str] = None,
     ) -> RulesEvaluationResponse:
         """Evaluate all applicable rules for a data transfer via graph queries."""
         start_time = time.time()
@@ -145,6 +162,8 @@ class RulesEvaluator:
             process_l3=process_l3 or [],
             personal_data_names=personal_data_names or [],
             metadata=metadata or {},
+            origin_legal_entity=origin_legal_entity,
+            receiving_legal_entity=receiving_legal_entity,
         )
 
         # Detect attributes for informational enrichment
@@ -169,6 +188,18 @@ class RulesEvaluator:
                 evaluation_time_ms=(time.time() - start_time) * 1000,
             )
 
+        # ── Check for prohibition rules ──────────────────────────────
+        has_prohibition = False
+        prohibition_reasons = []
+        for rule_row in case_rules:
+            outcome = rule_row.get('outcome', 'permission')
+            prohibition_names = rule_row.get('prohibition_names', [])
+            if outcome == 'prohibition' or (prohibition_names and any(p for p in prohibition_names)):
+                has_prohibition = True
+                prohibition_reasons.append(
+                    f"Rule '{rule_row.get('name', '')}' is a prohibition: {rule_row.get('description', '')}"
+                )
+
         # ── PHASE 2: Search for precedent cases ───────────────────────
         required_assessments = self._get_required_assessments_from_graph(case_rules)
         precedent_result = self._search_precedent_cases(context, required_assessments)
@@ -180,6 +211,24 @@ class RulesEvaluator:
                     consolidated_duties.append(module)
 
         # ── PHASE 3: Determine final status ───────────────────────────
+        # If ANY triggered rule is a prohibition → overall PROHIBITION
+        if has_prohibition:
+            context_info = self._build_context_info(context)
+            return RulesEvaluationResponse(
+                transfer_status=TransferStatus.PROHIBITED,
+                origin_country=origin_country,
+                receiving_country=receiving_country,
+                pii=pii,
+                triggered_rules=triggered_rules,
+                precedent_validation=precedent_result,
+                detected_attributes=self._format_detected(context),
+                consolidated_duties=list(set(consolidated_duties)),
+                prohibition_reasons=prohibition_reasons,
+                evidence_summary=precedent_result.evidence_summary if precedent_result else None,
+                message=f"Transfer PROHIBITED [{context_info}]: One or more rules prohibit this transfer.",
+                evaluation_time_ms=(time.time() - start_time) * 1000,
+            )
+
         assessment_compliance = AssessmentCompliance(
             pia_required=required_assessments.get('pia', False),
             tia_required=required_assessments.get('tia', False),
@@ -247,11 +296,13 @@ class RulesEvaluator:
 
     def _evaluate_case_matching_rules(self, context: EvaluationContext) -> list:
         """Query the RulesGraph for applicable case-matching rules."""
+        today_str = date.today().isoformat()
         return self._graph_query(CASE_MATCHING_RULES_QUERY, {
             "origin": context.origin_country,
             "receiving": context.receiving_country,
             "pii": context.pii,
             "has_personal_data": bool(context.personal_data_names),
+            "today": today_str,
         })
 
     # ─── Helpers ────────────────────────────────────────────────────────
@@ -282,6 +333,10 @@ class RulesEvaluator:
         parts = [f"{context.origin_country} → {context.receiving_country}"]
         if context.pii:
             parts.append("PII=Yes")
+        if context.origin_legal_entity:
+            parts.append(f"Origin LE: {context.origin_legal_entity}")
+        if context.receiving_legal_entity:
+            parts.append(f"Receiving LE: {context.receiving_legal_entity}")
         if context.purposes:
             parts.append(f"Purposes: {', '.join(context.purposes)}")
         if context.process_l1:
@@ -314,6 +369,9 @@ class RulesEvaluator:
         duties = []
         req_actions = row.get('required_actions') or []
 
+        if isinstance(req_actions, str):
+            req_actions = [req_actions] if req_actions else []
+
         for action in req_actions:
             duties.append(DutyInfo(
                 duty_id=f"DUTY_{str(action).replace(' ', '_')}",
@@ -335,16 +393,16 @@ class RulesEvaluator:
                     ))
 
         if outcome_str == 'prohibition':
+            # Prohibitions have NO duties
             prohibitions.append(ProhibitionInfo(
                 prohibition_id=f"PROHIB_{row.get('rule_id')}",
-                name=row.get('prohibition_name') or row.get('name', ''),
+                name=row.get('name', ''),
                 description=row.get('description', ''),
-                duties=duties,
             ))
         else:
             permissions.append(PermissionInfo(
                 permission_id=f"PERM_{row.get('rule_id')}",
-                name=row.get('permission_name') or row.get('name', ''),
+                name=row.get('name', ''),
                 description=row.get('description', ''),
                 duties=duties,
             ))

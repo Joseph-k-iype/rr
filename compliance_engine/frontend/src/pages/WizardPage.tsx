@@ -1,47 +1,44 @@
-import { useState } from 'react';
-import { WizardContainer } from '../components/wizard/WizardContainer';
+import { useEffect, useRef } from 'react';
 import { useWizardStore } from '../stores/wizardStore';
-import { cancelWizard } from '../services/wizardApi';
+import { WizardStepper } from '../components/wizard/WizardStepper';
+import { WizardContainer } from '../components/wizard/WizardContainer';
+import { saveWizardSession } from '../services/wizardApi';
+import gsap from 'gsap';
 
 export function WizardPage() {
-  const { sessionId, currentStep, reset } = useWizardStore();
-  const [confirming, setConfirming] = useState(false);
+  const { currentStep, sessionId } = useWizardStore();
+  const pageRef = useRef<HTMLDivElement>(null);
 
-  const handleReset = async () => {
-    if (currentStep > 1 && !confirming) {
-      setConfirming(true);
-      return;
+  useEffect(() => {
+    if (pageRef.current) {
+      gsap.fromTo(pageRef.current, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4 });
     }
-    // Cancel backend session to clean up sandbox graphs
+  }, []);
+
+  const handleSave = async () => {
     if (sessionId) {
-      try { await cancelWizard(sessionId); } catch { /* ignore cleanup errors */ }
+      try {
+        await saveWizardSession(sessionId);
+        useWizardStore.getState().saveToLocalStorage();
+        alert('Session saved successfully');
+      } catch {
+        alert('Failed to save session');
+      }
     }
-    reset();
-    setConfirming(false);
   };
 
   return (
-    <div>
+    <div ref={pageRef}>
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold text-gray-900">Rule Ingestion Wizard</h1>
-        <div className="flex items-center gap-2">
-          {confirming && (
-            <span className="text-xs text-amber-600">Are you sure? Progress will be lost.</span>
-          )}
-          <button
-            onClick={handleReset}
-            className={`text-sm border px-3 py-1 rounded-md ${confirming ? 'text-red-600 border-red-300 hover:bg-red-50' : 'text-gray-500 hover:text-gray-700 border-gray-300'}`}
-          >
-            {confirming ? 'Confirm Reset' : 'Start Over'}
-          </button>
-          {confirming && (
-            <button onClick={() => setConfirming(false)} className="text-xs text-gray-400 hover:text-gray-600">
-              Cancel
-            </button>
-          )}
-        </div>
+        <h1 className="text-3xl font-bold text-gray-900">Policy Generator</h1>
+        {currentStep >= 4 && sessionId && (
+          <button onClick={handleSave} className="btn-red">Save</button>
+        )}
       </div>
-      <WizardContainer />
+      <WizardStepper currentStep={currentStep} />
+      <div className="mt-4">
+        <WizardContainer />
+      </div>
     </div>
   );
 }

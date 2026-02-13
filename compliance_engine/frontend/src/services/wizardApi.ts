@@ -1,5 +1,5 @@
 import api from './api';
-import type { WizardSession, WizardStepData } from '../types/wizard';
+import type { WizardSession, WizardStepData, SavedSession } from '../types/wizard';
 
 export async function startWizardSession(userId = 'anonymous'): Promise<{ session_id: string }> {
   const { data } = await api.post('/wizard/start-session', { user_id: userId });
@@ -43,5 +43,26 @@ export async function approveWizard(sessionId: string, approvedBy = 'admin') {
 
 export async function cancelWizard(sessionId: string) {
   const { data } = await api.delete(`/wizard/session/${sessionId}`);
+  return data;
+}
+
+export async function saveWizardSession(sessionId: string) {
+  const { data } = await api.post(`/wizard/save-session?session_id=${sessionId}`);
+  return data;
+}
+
+export async function listSavedSessions(userId?: string): Promise<SavedSession[]> {
+  const params = userId ? { user_id: userId } : {};
+  const { data } = await api.get<SavedSession[]>('/wizard/saved-sessions', { params });
+  return data;
+}
+
+export async function resumeWizardSession(sessionId: string): Promise<WizardSession> {
+  const { data } = await api.get<WizardSession>(`/wizard/resume-session/${sessionId}`);
+  return data;
+}
+
+export async function deleteSavedSession(sessionId: string) {
+  const { data } = await api.delete(`/wizard/saved-session/${sessionId}`);
   return data;
 }

@@ -2,6 +2,7 @@
 Evaluation Router
 ==================
 Endpoints for rule evaluation and case search.
+Supports legal entity parameters, multi-select, case-insensitive matching.
 """
 
 import logging
@@ -36,20 +37,78 @@ async def evaluate_rules(
     request: RulesEvaluationRequest,
     evaluator=Depends(get_evaluator),
 ):
-    """Evaluate compliance rules for a data transfer."""
+    """Evaluate compliance rules for a data transfer.
+    Supports multi-select receiving countries - evaluates each and merges results.
+    If ANY rule is a prohibition, overall result is PROHIBITION.
+    """
     try:
-        result = evaluator.evaluate(
+        receiving_countries = request.get_receiving_countries()
+
+        if len(receiving_countries) <= 1:
+            receiving = receiving_countries[0] if receiving_countries else ""
+            result = evaluator.evaluate(
+                origin_country=request.origin_country,
+                receiving_country=receiving,
+                pii=request.pii,
+                purposes=request.purposes,
+                process_l1=request.process_l1,
+                process_l2=request.process_l2,
+                process_l3=request.process_l3,
+                personal_data_names=request.personal_data_names,
+                metadata=request.metadata,
+                origin_legal_entity=request.origin_legal_entity,
+                receiving_legal_entity=request.receiving_legal_entity[0] if request.receiving_legal_entity else None,
+            )
+            return result
+
+        # Multi-select: evaluate each receiving country
+        all_results = []
+        for rc in receiving_countries:
+            r = evaluator.evaluate(
+                origin_country=request.origin_country,
+                receiving_country=rc,
+                pii=request.pii,
+                purposes=request.purposes,
+                process_l1=request.process_l1,
+                process_l2=request.process_l2,
+                process_l3=request.process_l3,
+                personal_data_names=request.personal_data_names,
+                metadata=request.metadata,
+                origin_legal_entity=request.origin_legal_entity,
+            )
+            all_results.append(r)
+
+        # Merge: if any is PROHIBITED, overall is PROHIBITED
+        merged_triggered = []
+        merged_duties = []
+        merged_prohibition_reasons = []
+        has_prohibition = False
+
+        for r in all_results:
+            merged_triggered.extend(r.triggered_rules)
+            merged_duties.extend(r.consolidated_duties)
+            merged_prohibition_reasons.extend(r.prohibition_reasons)
+            if r.transfer_status.value == "PROHIBITED":
+                has_prohibition = True
+
+        from models.schemas import TransferStatus
+        final_status = TransferStatus.PROHIBITED if has_prohibition else all_results[0].transfer_status
+
+        return RulesEvaluationResponse(
+            transfer_status=final_status,
             origin_country=request.origin_country,
-            receiving_country=request.receiving_country,
+            receiving_country=", ".join(receiving_countries),
             pii=request.pii,
-            purposes=request.purposes,
-            process_l1=request.process_l1,
-            process_l2=request.process_l2,
-            process_l3=request.process_l3,
-            personal_data_names=request.personal_data_names,
-            metadata=request.metadata,
+            triggered_rules=merged_triggered,
+            precedent_validation=all_results[0].precedent_validation if all_results else None,
+            assessment_compliance=all_results[0].assessment_compliance if all_results else None,
+            detected_attributes=all_results[0].detected_attributes if all_results else [],
+            consolidated_duties=list(set(merged_duties)),
+            prohibition_reasons=merged_prohibition_reasons,
+            evidence_summary=all_results[0].evidence_summary if all_results else None,
+            message=f"Evaluated {len(receiving_countries)} receiving countries. Status: {final_status.value}",
+            evaluation_time_ms=sum(r.evaluation_time_ms for r in all_results),
         )
-        return result
 
     except Exception as e:
         logger.error(f"Error evaluating rules: {e}")

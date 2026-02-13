@@ -1,24 +1,50 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
+import { useAuthStore } from '../../stores/authStore';
+
+const NAV_ITEMS = [
+  { path: '/', label: 'Policy Overview', roles: ['admin', 'user'] },
+  { path: '/evaluator', label: 'Policy Evaluator', roles: ['admin', 'user'] },
+  { path: '/generator', label: 'Policy Generator', roles: ['admin'] },
+  { path: '/editor', label: 'Policy Editor', roles: ['admin'] },
+];
 
 export function Navbar() {
+  const location = useLocation();
+  const { isAuthenticated, role, username, logout } = useAuthStore();
+
+  if (!isAuthenticated) return null;
+
   return (
-    <nav className="bg-blue-900 text-white shadow-lg">
-      <div className="max-w-full mx-auto px-4">
-        <div className="flex justify-between h-14 items-center">
-          <Link to="/" className="text-lg font-bold tracking-wide">
-            Compliance Engine v6.0
-          </Link>
-          <div className="flex items-center gap-4 text-sm">
-            <Link to="/" className="hover:text-blue-200 transition-colors">
-              Rules Network
+    <nav className="w-full py-4 px-8">
+      <div className="flex items-center justify-between">
+        <Link to="/" className="border border-gray-300 rounded-full px-5 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50">
+          Logo
+        </Link>
+
+        <div className="flex items-center gap-1 bg-white rounded-full border border-gray-200 px-1 py-1">
+          {NAV_ITEMS.filter(item => role && item.roles.includes(role)).map(item => (
+            <Link
+              key={item.path}
+              to={item.path}
+              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                location.pathname === item.path
+                  ? 'bg-gray-900 text-white'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              {item.label}
             </Link>
-            <Link to="/evaluator" className="hover:text-blue-200 transition-colors">
-              Evaluator
-            </Link>
-            <Link to="/wizard" className="hover:text-blue-200 transition-colors">
-              Rule Wizard
-            </Link>
-          </div>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-500">{username} ({role})</span>
+          <button
+            onClick={logout}
+            className="text-xs text-gray-500 hover:text-gray-700 border border-gray-300 rounded-full px-3 py-1"
+          >
+            Logout
+          </button>
         </div>
       </div>
     </nav>

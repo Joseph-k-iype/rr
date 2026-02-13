@@ -1,7 +1,4 @@
-const steps = [
-  'Country', 'Scenario', 'Rule', 'Analysis', 'Dictionary',
-  'Review', 'Edit', 'Sandbox', 'Test', 'Approve',
-];
+const steps = ['Country', 'Metadata', 'Rule', 'Review', 'Sandbox Test', 'Approve'];
 
 export function WizardStepper({ currentStep }: { currentStep: number }) {
   return (
@@ -12,20 +9,20 @@ export function WizardStepper({ currentStep }: { currentStep: number }) {
         const isDone = stepNum < currentStep;
         return (
           <div key={i} className="flex items-center">
-            <div className={`flex items-center gap-1 px-2.5 py-1 text-[11px] tracking-wide ${
-              isActive ? 'text-gray-900 font-medium' :
-              isDone ? 'text-gray-400' :
+            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs tracking-wide ${
+              isActive ? 'step-pill-active' :
+              isDone ? 'text-gray-500' :
               'text-gray-300'
             }`}>
-              <span className={`w-4 h-4 flex items-center justify-center rounded-full text-[9px] font-medium ${
-                isActive ? 'bg-gray-900 text-white' :
-                isDone ? 'bg-gray-200 text-gray-500' :
+              <span className={`w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-semibold ${
+                isActive ? 'bg-white text-gray-900' :
+                isDone ? 'bg-gray-300 text-white' :
                 'bg-gray-100 text-gray-400'
               }`}>{stepNum}</span>
-              <span className="hidden sm:inline">{label}</span>
+              <span className="hidden sm:inline font-medium">{label}</span>
             </div>
             {i < steps.length - 1 && (
-              <div className={`w-3 h-px ${isDone ? 'bg-gray-300' : 'bg-gray-100'}`} />
+              <div className={`w-6 h-px ${isDone ? 'bg-gray-400' : 'bg-gray-200'}`} />
             )}
           </div>
         );

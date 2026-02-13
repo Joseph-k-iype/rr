@@ -4,8 +4,15 @@ export interface WizardSession {
   current_step: number;
   origin_country?: string;
   receiving_countries: string[];
-  scenario_type?: string;
+  origin_legal_entity?: string;
+  receiving_legal_entity?: string;
   data_categories: string[];
+  purposes_of_processing: string[];
+  process_l1: string[];
+  process_l2: string[];
+  process_l3: string[];
+  group_data_categories: string[];
+  valid_until?: string;
   rule_text?: string;
   analysis_result?: Record<string, unknown>;
   dictionary_result?: Record<string, unknown>;
@@ -22,4 +29,16 @@ export interface WizardSession {
 export interface WizardStepData {
   step: number;
   data: Record<string, unknown>;
+}
+
+export interface SavedSession {
+  session_id: string;
+  user_id: string;
+  origin_country?: string;
+  receiving_countries: string[];
+  rule_text?: string;
+  current_step: number;
+  status: string;
+  saved_at: string;
+  updated_at: string;
 }

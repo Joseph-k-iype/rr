@@ -47,7 +47,7 @@ class RulesEvaluationRequest(BaseModel):
         json_schema_extra={
             "example": {
                 "origin_country": "United Kingdom",
-                "receiving_country": "India",
+                "receiving_country": ["India"],
                 "pii": True,
                 "purposes": ["Marketing", "Analytics"],
                 "process_l1": ["Customer Management"],
@@ -56,7 +56,7 @@ class RulesEvaluationRequest(BaseModel):
     )
 
     origin_country: str = Field(..., description="Country where data originates")
-    receiving_country: str = Field(..., description="Country receiving the data")
+    receiving_country: Any = Field(..., description="Country/countries receiving the data (string or list)")
     pii: bool = Field(default=False, description="Whether the transfer involves PII")
     purposes: Optional[List[str]] = Field(default=None, description="Processing purposes")
     process_l1: Optional[List[str]] = Field(default=None, description="Level 1 processes")
@@ -65,21 +65,18 @@ class RulesEvaluationRequest(BaseModel):
     personal_data_names: Optional[List[str]] = Field(default=None, description="Types of personal data")
     metadata: Optional[Dict[str, Any]] = Field(default=None, description="Additional metadata for attribute detection")
     use_ai: bool = Field(default=False, description="Whether to use AI for rule interpretation")
+    origin_legal_entity: Optional[str] = Field(default=None, description="Legal entity in the origin country")
+    receiving_legal_entity: Optional[List[str]] = Field(default=None, description="Legal entities in receiving countries")
+
+    def get_receiving_countries(self) -> List[str]:
+        """Normalize receiving_country to a list."""
+        if isinstance(self.receiving_country, list):
+            return self.receiving_country
+        return [self.receiving_country] if self.receiving_country else []
 
 
 class SearchCasesRequest(BaseModel):
     """Request model for searching historical cases"""
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "origin_country": "United Kingdom",
-                "receiving_country": "India",
-                "pii": True,
-                "limit": 50
-            }
-        }
-    )
-
     origin_country: Optional[str] = Field(default=None, description="Filter by origin country")
     receiving_country: Optional[str] = Field(default=None, description="Filter by receiving country")
     purposes: Optional[List[str]] = Field(default=None, description="Filter by purposes")
@@ -93,18 +90,6 @@ class SearchCasesRequest(BaseModel):
 
 class AIRuleGenerationRequest(BaseModel):
     """Request model for AI-powered rule generation"""
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "rule_text": "Personal health data from the United States should not be transferred to China",
-                "rule_country": "United States",
-                "rule_type": "attribute",
-                "test_in_temp_graph": True,
-                "agentic_mode": True
-            }
-        }
-    )
-
     rule_text: str = Field(..., description="Natural language description of the rule")
     rule_country: str = Field(..., description="Primary country the rule relates to")
     rule_type: Optional[str] = Field(default=None, description="Hint: 'transfer' or 'attribute'")
@@ -146,15 +131,14 @@ class ProhibitionInfo(BaseModel):
     prohibition_id: str
     name: str
     description: Optional[str] = None
-    duties: List[DutyInfo] = Field(default_factory=list)
 
 
 class TriggeredRule(BaseModel):
     """Information about a triggered rule"""
     rule_id: str
     rule_name: str
-    rule_type: str  # case_matching, transfer, attribute
-    priority: str  # high, medium, low
+    rule_type: str
+    priority: str
     origin_match_type: str = "group"
     receiving_match_type: str = "group"
     odrl_type: str = "Permission"
@@ -172,7 +156,7 @@ class FieldMatch(BaseModel):
     field_name: str
     query_values: List[str] = Field(default_factory=list)
     case_values: List[str] = Field(default_factory=list)
-    match_type: str = "exact"  # exact, partial, superset, none
+    match_type: str = "exact"
     match_percentage: float = 0.0
 
 
@@ -191,14 +175,12 @@ class CaseMatch(BaseModel):
     process_l1: List[str] = Field(default_factory=list)
     process_l2: List[str] = Field(default_factory=list)
     process_l3: List[str] = Field(default_factory=list)
-    # Additional evidence fields
     personal_data_names: List[str] = Field(default_factory=list)
     data_categories: List[str] = Field(default_factory=list)
     legal_basis: Optional[str] = None
     created_date: Optional[str] = None
     last_updated: Optional[str] = None
     match_score: float = Field(default=1.0, description="How well this case matches the query (0-1)")
-    # Detailed field-level match evidence
     field_matches: List[FieldMatch] = Field(default_factory=list, description="Field-by-field match analysis")
     relevance_explanation: Optional[str] = Field(default=None, description="Why this case is relevant as precedent")
 
@@ -211,8 +193,8 @@ class EvidenceSummary(BaseModel):
     strongest_match_case_id: Optional[str] = None
     common_purposes: List[str] = Field(default_factory=list)
     common_data_categories: List[str] = Field(default_factory=list)
-    assessment_coverage: Dict[str, str] = Field(default_factory=dict, description="Assessment type -> status across matching cases")
-    confidence_level: str = "low"  # low, medium, high
+    assessment_coverage: Dict[str, str] = Field(default_factory=dict)
+    confidence_level: str = "low"
     evidence_narrative: str = ""
 
 
@@ -241,7 +223,7 @@ class AssessmentCompliance(BaseModel):
 class DetectedAttribute(BaseModel):
     """Information about a detected attribute"""
     attribute_name: str
-    detection_method: str  # keyword, pattern, config
+    detection_method: str
     matched_terms: List[str] = Field(default_factory=list)
     confidence: float = 1.0
 
@@ -252,19 +234,6 @@ class DetectedAttribute(BaseModel):
 
 class RulesEvaluationResponse(BaseModel):
     """Response model for rules evaluation"""
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "transfer_status": "ALLOWED",
-                "origin_country": "United Kingdom",
-                "receiving_country": "Germany",
-                "pii": True,
-                "triggered_rules": [],
-                "message": "Transfer is allowed based on precedent with completed assessments"
-            }
-        }
-    )
-
     transfer_status: TransferStatus
     origin_country: str
     receiving_country: str
@@ -276,27 +245,38 @@ class RulesEvaluationResponse(BaseModel):
     consolidated_duties: List[str] = Field(default_factory=list)
     required_actions: List[str] = Field(default_factory=list)
     prohibition_reasons: List[str] = Field(default_factory=list)
-    evidence_summary: Optional[EvidenceSummary] = Field(default=None, description="Consolidated evidence narrative")
+    evidence_summary: Optional[EvidenceSummary] = Field(default=None)
     message: str
     evaluation_time_ms: float = 0.0
 
 
 class SearchCasesResponse(BaseModel):
     """Response model for case search"""
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "total_count": 150,
-                "returned_count": 50,
-                "cases": []
-            }
-        }
-    )
-
     total_count: int
     returned_count: int
     cases: List[CaseMatch]
     query_time_ms: float = 0.0
+
+
+# Rules Overview - Table-friendly format for homepage
+class RuleTableRow(BaseModel):
+    """Single row in the rules overview table"""
+    rule_id: str
+    sending_country: str
+    receiving_country: str
+    rule_name: str
+    rule_details: str
+    permission_prohibition: str
+    duty: str
+    priority: str = "low"
+
+
+class RulesOverviewTableResponse(BaseModel):
+    """Table-friendly rules overview for homepage"""
+    total_rules: int
+    total_countries: int
+    rows: List[RuleTableRow]
+    filters: Dict[str, List[str]] = Field(default_factory=dict)
 
 
 class RuleOverview(BaseModel):
@@ -305,9 +285,9 @@ class RuleOverview(BaseModel):
     name: str
     description: str
     rule_type: str
-    priority: str  # high, medium, low
-    origin_scope: str  # Human-readable origin description
-    receiving_scope: str  # Human-readable receiving description
+    priority: str
+    origin_scope: str
+    receiving_scope: str
     origin_match_type: str = "group"
     receiving_match_type: str = "group"
     outcome: str
@@ -367,7 +347,7 @@ class AgentSessionSummary(BaseModel):
 class ReferenceDataResult(BaseModel):
     """Result of agentic reference data creation"""
     created: bool = False
-    data_type: str = ""  # country_group, attribute_config, keyword_dictionary
+    data_type: str = ""
     name: str = ""
     details: Dict[str, Any] = Field(default_factory=dict)
     requires_approval: bool = True
@@ -388,7 +368,6 @@ class AIRuleGenerationResponse(BaseModel):
     validation_errors: List[str] = Field(default_factory=list)
     message: str
     review_required: bool = True
-    # Agentic mode outputs
     agentic_mode: bool = False
     reference_data_created: List[ReferenceDataResult] = Field(default_factory=list)
     agent_session: Optional[AgentSessionSummary] = None
