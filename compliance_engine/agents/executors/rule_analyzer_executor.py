@@ -115,6 +115,19 @@ class RuleAnalyzerExecutor(ComplianceAgentExecutor):
                     )
                     logger.info(f"Rule analyzed: {rule_def.get('rule_id')}")
 
+                    # Populate shared_reasoning
+                    state.setdefault("shared_reasoning", []).append({
+                        "agent": self.agent_name,
+                        "summary": f"Analyzed rule '{rule_def.get('name', '')}' ({rule_def.get('rule_id', '')})",
+                        "key_findings": [
+                            f"Rule type: {rule_def.get('rule_type', 'unknown')}",
+                            f"Outcome: {rule_def.get('outcome', 'unknown')}",
+                            f"Origin: {rule_def.get('origin_group', '') or ', '.join(rule_def.get('origin_countries', []) or [])}",
+                            f"Requires PII: {rule_def.get('requires_pii', False)}",
+                            f"Confidence: {parsed.get('confidence', 'N/A')}",
+                        ],
+                    })
+
                 except ValidationError as ve:
                     errors = [str(e) for e in ve.errors()]
                     state["current_phase"] = "supervisor"

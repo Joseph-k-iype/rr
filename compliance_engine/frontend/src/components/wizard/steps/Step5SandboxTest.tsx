@@ -17,8 +17,11 @@ export function Step5SandboxTest() {
     process_l1: [] as string[],
     process_l2: [] as string[],
     process_l3: [] as string[],
+    personal_data_names: '' as string,
+    metadata_json: '' as string,
   });
   const [evaluating, setEvaluating] = useState(false);
+  const [metadataError, setMetadataError] = useState('');
   const [latestResult, setLatestResult] = useState<RulesEvaluationResponse | null>(null);
 
   if (isProcessing && !sandboxGraphName) {
@@ -45,11 +48,37 @@ export function Step5SandboxTest() {
 
   const handleEvaluate = async () => {
     if (!sessionId) return;
+    setMetadataError('');
     setEvaluating(true);
     clearSandboxTestResults();
     setLatestResult(null);
     try {
-      const result = await sandboxEvaluate(sessionId, evalForm);
+      // Parse personal_data_names from comma-separated string
+      const personalDataNames = evalForm.personal_data_names
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      // Parse metadata JSON
+      let metadata: Record<string, unknown> = {};
+      if (evalForm.metadata_json.trim()) {
+        try {
+          metadata = JSON.parse(evalForm.metadata_json);
+        } catch {
+          setMetadataError('Invalid JSON');
+          setEvaluating(false);
+          return;
+        }
+      }
+
+      const payload = {
+        ...evalForm,
+        personal_data_names: personalDataNames,
+        metadata,
+      };
+      delete (payload as Record<string, unknown>).metadata_json;
+
+      const result = await sandboxEvaluate(sessionId, payload);
       setLatestResult(result as RulesEvaluationResponse);
       addSandboxTestResult(result);
     } catch {
@@ -129,6 +158,30 @@ export function Step5SandboxTest() {
             </div>
           </div>
 
+          <div>
+            <label className="block text-xs font-semibold text-white mb-1">Personal Data Names</label>
+            <input
+              value={evalForm.personal_data_names}
+              onChange={(e) => setEvalForm(f => ({ ...f, personal_data_names: e.target.value }))}
+              placeholder="e.g. medical records, health data, biometric"
+              className="input-dark text-sm"
+            />
+            <p className="text-[10px] text-gray-500 mt-0.5">Comma-separated. Used for attribute keyword matching.</p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-white mb-1">Metadata (JSON)</label>
+            <textarea
+              value={evalForm.metadata_json}
+              onChange={(e) => { setEvalForm(f => ({ ...f, metadata_json: e.target.value })); setMetadataError(''); }}
+              placeholder='{"data_type": "financial", "sensitivity": "high"}'
+              rows={3}
+              className={`input-dark text-sm font-mono resize-y ${metadataError ? 'border-red-500' : ''}`}
+            />
+            {metadataError && <p className="text-[10px] text-red-400 mt-0.5">{metadataError}</p>}
+            <p className="text-[10px] text-gray-500 mt-0.5">Free-form JSON metadata for attribute detection.</p>
+          </div>
+
           <button
             type="button"
             onClick={handleEvaluate}
@@ -161,6 +214,27 @@ export function Step5SandboxTest() {
                   {rule.description && <p className="text-xs text-gray-500 mt-1">{rule.description}</p>}
                 </div>
               ))}
+
+              {(latestResult as Record<string, unknown>).detected_attributes &&
+                Array.isArray((latestResult as Record<string, unknown>).detected_attributes) &&
+                ((latestResult as Record<string, unknown>).detected_attributes as Array<Record<string, unknown>>).length > 0 && (
+                <div className="border-t pt-3">
+                  <span className="text-xs font-medium text-gray-500">Detected Attributes</span>
+                  <div className="mt-1 space-y-1">
+                    {((latestResult as Record<string, unknown>).detected_attributes as Array<Record<string, unknown>>).map((attr, i) => (
+                      <div key={i} className="flex items-center gap-2 text-xs">
+                        <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium">
+                          {String(attr.attribute_name)}
+                        </span>
+                        <span className="text-gray-400">{String(attr.detection_method)}</span>
+                        {attr.confidence != null && (
+                          <span className="text-gray-400">({(Number(attr.confidence) * 100).toFixed(0)}%)</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="border-t pt-3">
                 <div className="flex items-center justify-between">

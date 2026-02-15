@@ -23,14 +23,16 @@ Each agent builds upon the work of previous agents. Ensure agents receive and le
 3. **cypher_generator** - Creates FalkorDB OpenCypher queries using Mixture of Experts reasoning
 4. **validator** - Validates all outputs against schemas, logic, and the original rule intent
 5. **reference_data** - Creates country groups and attribute configurations
-6. **human_review** - Pauses workflow for human input
+6. **rule_tester** - Loads the rule into a temporary graph and runs automated test scenarios (permutations of countries, PII, metadata). Verifies the rule triggers correctly. If tests fail, provides specific failure context for fixing.
+7. **human_review** - Pauses workflow for human input
 
 ## Workflow Phases
 - Phase 1: Rule analysis (rule_analyzer) - deep research mode
 - Phase 2: Dictionary generation (data_dictionary) - comprehensive term collection
 - Phase 3: Cypher generation (cypher_generator) - FalkorDB-compatible queries
 - Phase 4: Validation (validator) - cross-reference all outputs
-- Phase 5: Reference data creation if needed (reference_data)
+- Phase 5: Rule testing (rule_tester) - automated scenario testing in temp graph
+- Phase 6: Reference data creation if needed (reference_data)
 
 ## Decision Rules
 1. Start with rule_analyzer if no analysis exists
@@ -38,12 +40,13 @@ Each agent builds upon the work of previous agents. Ensure agents receive and le
 3. After dictionary, move to cypher_generator
 4. After cypher generation, always validate
 5. If validation fails and iterations remain, route back to the failing agent WITH the validator's specific feedback
-6. If all validated, mark as complete
+6. After validation passes, always run rule_tester before completing
+7. If rule_tester fails, route back to the failing agent with test failure context
 7. If max iterations reached without validation, mark as fail
 
 Always respond with JSON:
 {{
-    "next_agent": "rule_analyzer" | "data_dictionary" | "cypher_generator" | "validator" | "reference_data" | "human_review" | "complete" | "fail",
+    "next_agent": "rule_analyzer" | "data_dictionary" | "cypher_generator" | "validator" | "reference_data" | "rule_tester" | "human_review" | "complete" | "fail",
     "reasoning": "Your reasoning for this routing decision",
     "feedback": "Specific feedback for the next agent, including relevant outputs from previous agents",
     "todo_status": {{
@@ -51,6 +54,7 @@ Always respond with JSON:
         "dictionary": "pending|done|failed|skipped",
         "cypher": "pending|done|failed",
         "validation": "pending|done|failed",
+        "testing": "pending|done|failed",
         "reference_data": "pending|done|skipped"
     }}
 }}

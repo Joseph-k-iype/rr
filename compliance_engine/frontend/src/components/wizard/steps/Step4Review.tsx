@@ -281,7 +281,10 @@ export function Step4Review() {
         <div className="grid grid-cols-3 gap-4">
           <div>
             <label className="block text-xs font-semibold text-gray-300 mb-1">ODRL Type</label>
-            <input value={odrlType} onChange={e => setOdrlType(e.target.value)} className="input-dark text-sm" />
+            <select value={odrlType} onChange={e => { setOdrlType(e.target.value); setOutcome(e.target.value === 'Prohibition' ? 'prohibition' : 'permission'); }} className="input-dark text-sm">
+              <option value="Permission">Permission</option>
+              <option value="Prohibition">Prohibition</option>
+            </select>
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-300 mb-1">ODRL Action</label>

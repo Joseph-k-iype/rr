@@ -95,6 +95,17 @@ class CypherGeneratorExecutor(ComplianceAgentExecutor):
                     )
                     logger.info("Cypher queries generated successfully")
 
+                    # Populate shared_reasoning
+                    query_names = list(validated.model_dump().keys())
+                    state.setdefault("shared_reasoning", []).append({
+                        "agent": self.agent_name,
+                        "summary": f"Generated {len(query_names)} Cypher queries",
+                        "key_findings": [
+                            f"Queries: {', '.join(query_names)}",
+                            f"Optimization notes: {len(parsed.get('optimization_notes', []))} notes",
+                        ],
+                    })
+
                 except ValidationError as ve:
                     errors = [str(e) for e in ve.errors()]
                     state["current_phase"] = "supervisor"

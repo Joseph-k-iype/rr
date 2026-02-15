@@ -62,7 +62,7 @@ class ValidatorExecutor(ComplianceAgentExecutor):
                 f"Validation failed {retry_count} times consecutively — "
                 f"skipping validation and proceeding to complete"
             )
-            state["current_phase"] = "complete"
+            state["current_phase"] = "rule_tester"
             state["success"] = True
             state["validation_result"] = {
                 "overall_valid": True,
@@ -176,9 +176,9 @@ class ValidatorExecutor(ComplianceAgentExecutor):
             is_acceptable = (validated.overall_valid or not has_blocking_errors) and validated.confidence_score >= 0.4
 
             if is_acceptable:
-                # Validation passed — reset retry counter
+                # Validation passed — reset retry counter, route to rule_tester
                 state["validation_retry_count"] = 0
-                state["current_phase"] = "complete"
+                state["current_phase"] = "rule_tester"
                 state["success"] = True
                 self.event_store.append(
                     session_id=session_id,
@@ -188,6 +188,17 @@ class ValidatorExecutor(ComplianceAgentExecutor):
                     duration_ms=duration,
                 )
                 logger.info(f"Validation passed with confidence {validated.confidence_score}")
+
+                # Populate shared_reasoning
+                state.setdefault("shared_reasoning", []).append({
+                    "agent": self.agent_name,
+                    "summary": f"Validation passed with confidence {validated.confidence_score}",
+                    "key_findings": [
+                        f"Overall valid: {validated.overall_valid}",
+                        f"Confidence: {validated.confidence_score}",
+                        f"Warnings: {len(validated.warnings)}",
+                    ],
+                })
             else:
                 # Validation failed — increment retry counter
                 state["validation_retry_count"] = retry_count + 1

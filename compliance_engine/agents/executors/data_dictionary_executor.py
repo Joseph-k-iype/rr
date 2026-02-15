@@ -81,6 +81,22 @@ class DataDictionaryExecutor(ComplianceAgentExecutor):
                     duration_ms=duration,
                 )
                 logger.info("Dictionary generated successfully")
+
+                # Populate shared_reasoning
+                categories = list(parsed.get("dictionaries", {}).keys())
+                total_keywords = sum(
+                    len(v.get("keywords", []))
+                    for v in parsed.get("dictionaries", {}).values()
+                    if isinstance(v, dict)
+                )
+                state.setdefault("shared_reasoning", []).append({
+                    "agent": self.agent_name,
+                    "summary": f"Generated dictionaries for {len(categories)} categories with ~{total_keywords} keywords",
+                    "key_findings": [
+                        f"Categories: {', '.join(categories[:5])}",
+                        f"Total keyword entries: ~{total_keywords}",
+                    ],
+                })
             else:
                 state["current_phase"] = "supervisor"
                 self.event_store.append(

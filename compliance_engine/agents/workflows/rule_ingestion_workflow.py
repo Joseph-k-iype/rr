@@ -37,6 +37,7 @@ from agents.nodes.cypher_generator import cypher_generator_node
 from agents.nodes.validator import validator_node
 from agents.nodes.data_dictionary import data_dictionary_node
 from agents.nodes.reference_data import reference_data_node
+from agents.nodes.rule_tester import rule_tester_node
 from agents.audit.event_store import get_event_store
 from agents.audit.event_types import AuditEventType
 
@@ -121,7 +122,7 @@ def route_from_supervisor(state: WizardAgentState) -> str:
 
     valid_routes = {
         "rule_analyzer", "data_dictionary", "cypher_generator",
-        "validator", "reference_data", "human_review", "complete", "fail"
+        "validator", "reference_data", "rule_tester", "human_review", "complete", "fail"
     }
 
     if phase in valid_routes:
@@ -131,6 +132,18 @@ def route_from_supervisor(state: WizardAgentState) -> str:
 
 def route_after_validation(state: WizardAgentState) -> str:
     """Route after validation."""
+    phase = state.get("current_phase", "supervisor")
+    if phase == "rule_tester":
+        return "rule_tester"
+    elif phase == "complete":
+        return "complete"
+    elif phase == "fail":
+        return "fail"
+    return "supervisor"
+
+
+def route_after_rule_tester(state: WizardAgentState) -> str:
+    """Route after rule tester."""
     phase = state.get("current_phase", "supervisor")
     if phase == "complete":
         return "complete"
@@ -158,6 +171,7 @@ def build_rule_ingestion_graph(with_interrupt: bool = True) -> tuple:
     workflow.add_node("cypher_generator", cypher_generator_node)
     workflow.add_node("validator", validator_node)
     workflow.add_node("reference_data", reference_data_node)
+    workflow.add_node("rule_tester", rule_tester_node)
     workflow.add_node("human_review", human_review_node)
     workflow.add_node("complete", complete_node)
     workflow.add_node("fail", fail_node)
@@ -175,6 +189,7 @@ def build_rule_ingestion_graph(with_interrupt: bool = True) -> tuple:
             "cypher_generator": "cypher_generator",
             "validator": "validator",
             "reference_data": "reference_data",
+            "rule_tester": "rule_tester",
             "human_review": "human_review",
             "complete": "complete",
             "fail": "fail",
@@ -193,6 +208,7 @@ def build_rule_ingestion_graph(with_interrupt: bool = True) -> tuple:
         "cypher_generator": "cypher_generator",
         "validator": "validator",
         "reference_data": "reference_data",
+        "rule_tester": "rule_tester",
         "human_review": "human_review",
         "complete": "complete",
         "fail": "fail",
@@ -200,10 +216,22 @@ def build_rule_ingestion_graph(with_interrupt: bool = True) -> tuple:
     for agent in ["rule_analyzer", "data_dictionary", "cypher_generator", "reference_data"]:
         workflow.add_conditional_edges(agent, _route_agent, agent_route_map)
 
-    # Validator has special routing
+    # Validator has special routing (can go to rule_tester)
     workflow.add_conditional_edges(
         "validator",
         route_after_validation,
+        {
+            "rule_tester": "rule_tester",
+            "complete": "complete",
+            "fail": "fail",
+            "supervisor": "supervisor",
+        }
+    )
+
+    # Rule tester routing
+    workflow.add_conditional_edges(
+        "rule_tester",
+        route_after_rule_tester,
         {
             "complete": "complete",
             "fail": "fail",
@@ -255,6 +283,7 @@ class RuleIngestionResult:
         self.dictionary_result = state.get("dictionary_result")
         self.analysis_result = state.get("analysis_result")
         self.validation_result = state.get("validation_result")
+        self.test_results = state.get("test_results")
         self.error_message = state.get("error_message")
         self.iterations = state.get("iteration", 0)
         self.events = state.get("events", [])

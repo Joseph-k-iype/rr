@@ -28,6 +28,7 @@ class WizardAgentState(TypedDict):
     rule_definition: Optional[Dict[str, Any]]
     cypher_queries: Optional[Dict[str, Any]]
     validation_result: Optional[Dict[str, Any]]
+    test_results: Optional[Dict[str, Any]]
 
     # Workflow control
     current_phase: str
@@ -76,6 +77,7 @@ def create_initial_state(
         rule_definition=None,
         cypher_queries=None,
         validation_result=None,
+        test_results=None,
         current_phase="supervisor",
         iteration=0,
         max_iterations=max_iterations,

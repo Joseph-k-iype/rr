@@ -83,7 +83,7 @@ class SupervisorExecutor(ComplianceAgentExecutor):
                 # Validate the next agent is a known route
                 valid_agents = {
                     "rule_analyzer", "data_dictionary", "cypher_generator",
-                    "validator", "reference_data", "human_review", "complete", "fail"
+                    "validator", "reference_data", "rule_tester", "human_review", "complete", "fail"
                 }
                 if next_agent not in valid_agents:
                     logger.warning(f"Supervisor returned unknown agent '{next_agent}', defaulting to 'fail'")

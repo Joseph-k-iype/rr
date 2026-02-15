@@ -126,6 +126,26 @@ def build_dictionary_prompt(
     )
 
 
+def build_tester_prompt(
+    template: str,
+    rule_definition: Dict[str, Any],
+    rule_text: str,
+    dictionary_result: Optional[Dict[str, Any]],
+    origin_country: str,
+    receiving_countries: List[str],
+    data_categories: List[str],
+) -> str:
+    """Build a fully-assembled tester user prompt."""
+    return template.format(
+        rule_definition=json.dumps(rule_definition, indent=2),
+        rule_text=rule_text,
+        dictionary_result=json.dumps(dictionary_result, indent=2) if dictionary_result else "None",
+        origin_country=origin_country,
+        receiving_countries=", ".join(receiving_countries),
+        data_categories=", ".join(data_categories) if data_categories else "None",
+    )
+
+
 def build_reference_prompt(
     template: str,
     rule_definition: Dict[str, Any],
