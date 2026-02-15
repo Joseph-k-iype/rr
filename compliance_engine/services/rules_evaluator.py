@@ -158,6 +158,14 @@ OPTIONAL MATCH (r)-[:HAS_DATA_CATEGORY]->(dc:DataCategory)
 WITH r, required_assessments, duty_names, prohibition_names, linked_attributes,
      collect(DISTINCT dc.name) AS linked_data_categories
 OPTIONAL MATCH (r)-[:HAS_PURPOSE]->(purp:Purpose)
+WITH r, required_assessments, duty_names, prohibition_names, linked_attributes,
+     linked_data_categories,
+     collect(DISTINCT purp.name) AS linked_purposes
+OPTIONAL MATCH (r)-[:HAS_PROCESS]->(proc:Process)
+WITH r, required_assessments, duty_names, prohibition_names, linked_attributes,
+     linked_data_categories, linked_purposes,
+     collect(DISTINCT proc.name) AS linked_processes
+OPTIONAL MATCH (r)-[:HAS_GDC]->(gdc:GDC)
 RETURN DISTINCT
     r.rule_id AS rule_id, r.name AS name, r.description AS description,
     r.rule_type AS rule_type,
@@ -176,27 +184,9 @@ RETURN DISTINCT
     prohibition_names,
     linked_attributes,
     linked_data_categories,
-    collect(DISTINCT purp.name) AS linked_purposes
-ORDER BY r.priority_order
-"""
-
-# Graph-stored attribute rules (AI-generated via wizard/sandbox)
-GRAPH_ATTRIBUTE_RULES_QUERY = """
-MATCH (r:Rule)
-WHERE r.rule_type = 'attribute' AND r.enabled = true
-  AND (r.valid_until IS NULL OR r.valid_until >= $today)
-  AND r.attribute_keywords IS NOT NULL
-  AND r.attribute_keywords <> '[]'
-RETURN r.rule_id AS rule_id,
-       r.name AS name,
-       r.description AS description,
-       r.priority AS priority,
-       r.attribute_name AS attribute_name,
-       r.attribute_keywords AS attribute_keywords,
-       r.attribute_patterns AS attribute_patterns,
-       r.outcome AS outcome,
-       r.has_pii_required AS requires_pii,
-       r.odrl_type AS odrl_type
+    linked_purposes,
+    linked_processes,
+    collect(DISTINCT gdc.name) AS linked_gdcs
 ORDER BY r.priority_order
 """
 
@@ -357,11 +347,13 @@ class RulesEvaluator:
             has_keywords = keywords_json and keywords_json != '[]'
             has_patterns = patterns_json and patterns_json != '[]'
 
-            # Check if rule has graph-linked attributes/categories/purposes
+            # Check if rule has graph-linked attributes/categories/purposes/processes/gdcs
             has_linked = bool(
                 rule_row.get('linked_attributes')
                 or rule_row.get('linked_data_categories')
                 or rule_row.get('linked_purposes')
+                or rule_row.get('linked_processes')
+                or rule_row.get('linked_gdcs')
             )
 
             # Determine if this rule requires content matching
@@ -636,9 +628,13 @@ class RulesEvaluator:
     MIN_KEYWORD_SUBSTRING_LEN = 4
 
     def _match_attribute_keywords(self, context: EvaluationContext, keywords: list, patterns: list) -> bool:
-        """Check ALL input dimensions against keywords/patterns.
+        """Check FREE-TEXT input fields only against keywords/patterns.
 
-        Matching logic (per user requirement):
+        Structured fields (purposes, data_categories, process_l1/l2/l3) are
+        handled by Tier 1 exact matching in _match_graph_linked_attributes().
+        Keywords only match against: personal_data_names + metadata values.
+
+        Matching logic:
         - Keywords >= 4 chars: substring match (keyword found inside input value)
         - Keywords < 4 chars: exact whole-word match only
         - Metadata: only VALUES are checked, not dict keys
@@ -649,13 +645,8 @@ class RulesEvaluator:
         if not valid_keywords and not patterns:
             return False
 
-        # Collect all discrete input texts (NOT metadata keys)
+        # Collect only free-text input fields (NOT structured dropdown fields)
         input_texts = list(context.personal_data_names)
-        input_texts.extend(context.purposes)
-        input_texts.extend(context.data_categories)
-        input_texts.extend(context.process_l1)
-        input_texts.extend(context.process_l2)
-        input_texts.extend(context.process_l3)
 
         # Add metadata VALUES only (not keys)
         if context.metadata:
@@ -671,7 +662,7 @@ class RulesEvaluator:
                     logger.debug(f"Keyword match: '{kw}' in input '{text}'")
                     return True
 
-        # Check regex patterns against input texts
+        # Check regex patterns against free-text inputs
         for text in input_texts:
             text_str = str(text)
             for pattern in patterns:
@@ -711,97 +702,111 @@ class RulesEvaluator:
             values.append(str(obj))
         return values
 
+    # Minimum keyword hits for fuzzy matching in Tier 2 (or 1 keyword >= this length)
+    MIN_FUZZY_KEYWORD_LEN = 6
+    MIN_FUZZY_HIT_COUNT = 2
+
     def _match_graph_linked_attributes(
         self, context: EvaluationContext, rule_row: dict
     ) -> bool:
-        """Check if input data overlaps with rule's graph-linked nodes.
+        """Two-tiered matching of input data against rule's graph-linked nodes.
 
-        Uses linked_attributes, linked_data_categories, and linked_purposes
-        returned by ALL_RULES_QUERY for graph-native matching.
-        Same minimum-length rules apply as keyword matching.
+        Tier 1 — Exact match for structured/dropdown fields:
+          - linked_data_categories vs context.data_categories
+          - linked_purposes vs context.purposes
+          - linked_processes vs context.process_l1/l2/l3
+          - linked_gdcs vs context.data_categories (GDC = Group Data Category)
+          Case-insensitive set intersection. Any overlap → match.
+
+        Tier 2 — Fuzzy/keyword match for free-text fields only:
+          - linked_attributes vs personal_data_names + metadata values
+          - Requires threshold: 2+ keyword hits OR 1 keyword >= 6 chars
+          - Does NOT match linked_attributes against structured fields.
         """
         linked_attrs = rule_row.get('linked_attributes') or []
         linked_cats = rule_row.get('linked_data_categories') or []
         linked_purposes = rule_row.get('linked_purposes') or []
+        linked_processes = rule_row.get('linked_processes') or []
+        linked_gdcs = rule_row.get('linked_gdcs') or []
 
-        if not linked_attrs and not linked_cats and not linked_purposes:
+        if not linked_attrs and not linked_cats and not linked_purposes and not linked_processes and not linked_gdcs:
             return False
 
-        # Build input values (not metadata keys)
-        input_texts = []
-        input_texts.extend(context.personal_data_names)
-        input_texts.extend(context.data_categories)
-        input_texts.extend(context.purposes)
-        input_texts.extend(context.process_l1)
-        input_texts.extend(context.process_l2)
-        input_texts.extend(context.process_l3)
-        if context.metadata:
-            input_texts.extend(self._extract_metadata_values(context.metadata))
+        # ── Tier 1: Exact match on structured fields ──
+        # Data categories (exact, case-insensitive)
+        if linked_cats and context.data_categories:
+            rule_cats_lower = {str(c).lower().strip() for c in linked_cats if c}
+            ctx_cats_lower = {str(c).lower().strip() for c in context.data_categories if c}
+            overlap = rule_cats_lower & ctx_cats_lower
+            if overlap:
+                logger.debug(f"Tier 1 exact match: data_categories overlap={overlap}")
+                return True
 
-        input_lower = [str(t).lower().strip() for t in input_texts if str(t).strip()]
-        if not input_lower:
-            return False
+        # GDCs match against data_categories too (GDC = Group Data Category)
+        if linked_gdcs and context.data_categories:
+            rule_gdcs_lower = {str(g).lower().strip() for g in linked_gdcs if g}
+            ctx_cats_lower = {str(c).lower().strip() for c in context.data_categories if c}
+            overlap = rule_gdcs_lower & ctx_cats_lower
+            if overlap:
+                logger.debug(f"Tier 1 exact match: GDC overlap={overlap}")
+                return True
 
-        # Check all linked graph terms against input values
-        all_linked = [(a, 'attribute') for a in linked_attrs]
-        all_linked += [(c, 'category') for c in linked_cats]
-        all_linked += [(p, 'purpose') for p in linked_purposes]
+        # Purposes (exact, case-insensitive)
+        if linked_purposes and context.purposes:
+            rule_purp_lower = {str(p).lower().strip() for p in linked_purposes if p}
+            ctx_purp_lower = {str(p).lower().strip() for p in context.purposes if p}
+            overlap = rule_purp_lower & ctx_purp_lower
+            if overlap:
+                logger.debug(f"Tier 1 exact match: purposes overlap={overlap}")
+                return True
 
-        for linked_term, link_type in all_linked:
-            linked_lower = str(linked_term).lower().strip()
-            if not linked_lower:
-                continue
-            for text in input_lower:
-                # Only check: linked_term found in input text (not reverse)
-                if self._keyword_matches(linked_lower, text):
-                    logger.debug(f"Graph {link_type} match: '{linked_term}' in input '{text}'")
+        # Processes (exact, case-insensitive)
+        if linked_processes:
+            ctx_processes = set()
+            for proc_list in [context.process_l1, context.process_l2, context.process_l3]:
+                for p in proc_list:
+                    if p:
+                        ctx_processes.add(str(p).lower().strip())
+            if ctx_processes:
+                rule_proc_lower = {str(p).lower().strip() for p in linked_processes if p}
+                overlap = rule_proc_lower & ctx_processes
+                if overlap:
+                    logger.debug(f"Tier 1 exact match: processes overlap={overlap}")
                     return True
 
+        # ── Tier 2: Fuzzy match on free-text fields only ──
+        if not linked_attrs:
+            return False
+
+        # Only match against free-text inputs: personal_data_names + metadata values
+        free_text_inputs = list(context.personal_data_names)
+        if context.metadata:
+            free_text_inputs.extend(self._extract_metadata_values(context.metadata))
+
+        free_text_lower = [str(t).lower().strip() for t in free_text_inputs if str(t).strip()]
+        if not free_text_lower:
+            return False
+
+        # Count keyword hits with threshold enforcement
+        hit_count = 0
+        has_long_hit = False
+        for attr in linked_attrs:
+            attr_lower = str(attr).lower().strip()
+            if not attr_lower:
+                continue
+            for text in free_text_lower:
+                if self._keyword_matches(attr_lower, text):
+                    hit_count += 1
+                    if len(attr_lower) >= self.MIN_FUZZY_KEYWORD_LEN:
+                        has_long_hit = True
+                    logger.debug(f"Tier 2 fuzzy hit: '{attr}' in free-text '{text}'")
+                    break  # Count each attribute only once
+
+        if has_long_hit or hit_count >= self.MIN_FUZZY_HIT_COUNT:
+            logger.debug(f"Tier 2 matched: {hit_count} hit(s), has_long_hit={has_long_hit}")
+            return True
+
         return False
-
-    def _flatten_metadata(self, obj) -> list:
-        """Flatten a metadata dict/list into a list of string values."""
-        parts = []
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                parts.append(str(k))
-                parts.extend(self._flatten_metadata(v))
-        elif isinstance(obj, list):
-            for item in obj:
-                parts.extend(self._flatten_metadata(item))
-        elif obj is not None:
-            parts.append(str(obj))
-        return parts
-
-    def _build_attribute_triggered_rule(self, row: dict, outcome: RuleOutcomeType) -> TriggeredRule:
-        """Build a TriggeredRule from a graph attribute rule row."""
-        rule_id = str(row.get('rule_id', ''))
-        name = str(row.get('name', ''))
-        description = str(row.get('description', ''))
-        permissions = []
-        prohibitions = []
-
-        if outcome == RuleOutcomeType.PROHIBITION:
-            prohibitions.append(ProhibitionInfo(
-                prohibition_id=f"PROHIB_{rule_id}",
-                name=name, description=description,
-            ))
-        else:
-            permissions.append(PermissionInfo(
-                permission_id=f"PERM_{rule_id}",
-                name=name, description=description, duties=[],
-            ))
-
-        return TriggeredRule(
-            rule_id=rule_id, rule_name=name, rule_type="attribute",
-            priority=str(row.get('priority', 'medium')),
-            origin_match_type="any", receiving_match_type="any",
-            odrl_type=str(row.get('odrl_type', 'Permission')),
-            has_pii_required=bool(row.get('requires_pii', False)),
-            description=description, outcome=outcome,
-            permissions=permissions, prohibitions=prohibitions,
-            required_actions=[], required_assessments=[],
-        )
 
     # ─── Helpers ────────────────────────────────────────────────────────
 
