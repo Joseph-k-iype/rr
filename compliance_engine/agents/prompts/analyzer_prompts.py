@@ -35,9 +35,9 @@ Work through the rule step by step:
 - Who are the data subjects? What is the data controller's obligation?
 
 **Step 4: Rule Classification**
-- Data TRANSFER between countries? → "transfer" rule
-- Specific data ATTRIBUTES (domain-specific category)? → "attribute" rule
-- Both? → Determine primary focus
+- DEFAULT is "attribute" — most rules are attribute-based (data categories, data types, jurisdictions)
+- ONLY use "case_matching" if the rule EXPLICITLY mentions PIA, TIA, or HRPR assessments/modules
+- If unsure, always use "attribute"
 
 **Step 5: Country Extraction**
 - ORIGIN (source) country or region
@@ -105,7 +105,7 @@ Respond with a JSON object:
         "synthesis": "How expert perspectives were reconciled"
     }},
     "rule_definition": {{
-        "rule_type": "case_matching" | "attribute",
+        "rule_type": "attribute" | "case_matching",
         "rule_id": "RULE_<SHORT_UPPERCASE_SLUG>",
         "name": "<descriptive name>",
         "description": "<full description including regulatory context>",

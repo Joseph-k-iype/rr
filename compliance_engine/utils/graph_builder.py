@@ -514,7 +514,7 @@ class RulesGraphBuilder:
     def add_rule(self, rule_def: dict) -> bool:
         """Add any rule type to the graph from AI-generated definition."""
         try:
-            rule_type = rule_def.get('rule_type') or 'case_matching'
+            rule_type = rule_def.get('rule_type') or 'attribute'
             origin_match_type = "group" if rule_def.get('origin_group') else (
                 "specific" if rule_def.get('origin_countries') else "any"
             )
@@ -561,7 +561,7 @@ class RulesGraphBuilder:
                 "has_pii_required": rule_def.get('requires_pii', False),
                 "requires_any_data": rule_def.get('requires_any_data', False),
                 "requires_personal_data": rule_def.get('requires_personal_data', False),
-                "required_actions": rule_def.get('required_actions') or [],
+                "required_actions": ",".join(rule_def.get('required_actions') or []),
                 "valid_until": valid_until,
                 "case_matching_module": rule_def.get('case_matching_module') or None,
             })

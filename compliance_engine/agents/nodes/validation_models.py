@@ -18,7 +18,7 @@ class RuleDefinitionModel(BaseModel):
     formatting differences.  Structural issues are caught here; semantic
     correctness is left to the validator agent.
     """
-    rule_type: str = "case_matching"  # attribute or case_matching
+    rule_type: str = "attribute"  # attribute or case_matching
     rule_id: str = Field(..., min_length=1)
     name: str = Field(..., min_length=1, max_length=300)
     description: str = Field(default="", min_length=0)

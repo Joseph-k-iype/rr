@@ -100,7 +100,7 @@ async def submit_step(session_id: str, submission: WizardStepSubmission):
         try:
             result = run_rule_ingestion(
                 origin_country=session.origin_country,
-                scenario_type="case_matching",
+                scenario_type="attribute",
                 receiving_countries=session.receiving_countries,
                 rule_text=session.rule_text,
                 data_categories=session.data_categories,
@@ -275,24 +275,38 @@ async def sandbox_evaluate(session_id: str, request: dict):
     sandbox = get_sandbox_service()
 
     try:
-        result = sandbox.evaluate_in_sandbox(
-            graph_name=session.sandbox_graph_name,
-            origin_country=request.get("origin_country", ""),
-            receiving_country=request.get("receiving_country", ""),
-            pii=request.get("pii", False),
-            purposes=request.get("purposes"),
-            process_l1=request.get("process_l1"),
-            process_l2=request.get("process_l2"),
-            process_l3=request.get("process_l3"),
-            personal_data_names=request.get("personal_data_names"),
-            metadata=request.get("metadata"),
-        )
+        # Normalize receiving_country: frontend sends list, evaluator expects string
+        raw_receiving = request.get("receiving_country", "")
+        if isinstance(raw_receiving, list):
+            receiving_list = raw_receiving
+        elif isinstance(raw_receiving, str) and raw_receiving:
+            receiving_list = [raw_receiving]
+        else:
+            receiving_list = []
 
-        # Clear previous results and set new one (fresh run each time)
-        session.sandbox_test_results = [result]
+        # Evaluate for each receiving country (or once with empty string)
+        all_results = []
+        targets = receiving_list if receiving_list else [""]
+        for rc in targets:
+            result = sandbox.evaluate_in_sandbox(
+                graph_name=session.sandbox_graph_name,
+                origin_country=request.get("origin_country", ""),
+                receiving_country=rc,
+                pii=request.get("pii", False),
+                purposes=request.get("purposes"),
+                process_l1=request.get("process_l1"),
+                process_l2=request.get("process_l2"),
+                process_l3=request.get("process_l3"),
+                personal_data_names=request.get("personal_data_names"),
+                metadata=request.get("metadata"),
+            )
+            all_results.append(result)
+
+        # Clear previous results and set new ones
+        session.sandbox_test_results = all_results
         session.updated_at = datetime.now().isoformat()
 
-        return {"result": result, "test_number": 1}
+        return {"result": all_results[0] if all_results else {}, "results": all_results, "test_number": len(all_results)}
 
     except Exception as e:
         logger.error(f"Sandbox evaluation error: {e}")

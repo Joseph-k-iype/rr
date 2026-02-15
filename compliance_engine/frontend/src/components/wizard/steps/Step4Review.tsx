@@ -38,7 +38,7 @@ export function Step4Review() {
   const [ruleName, setRuleName] = useState('');
   const [ruleDescription, setRuleDescription] = useState('');
   const [outcome, setOutcome] = useState('permission');
-  const [ruleType, setRuleType] = useState('case_matching');
+  const [ruleType, setRuleType] = useState('attribute');
   const [caseMatchingModule, setCaseMatchingModule] = useState('');
   const [priority, setPriority] = useState('medium');
   const [actions, setActions] = useState('');
@@ -65,7 +65,7 @@ export function Step4Review() {
     setRuleName((rule.name as string) || '');
     setRuleDescription((rule.description as string) || '');
     setOutcome((rule.outcome as string) || 'permission');
-    setRuleType((rule.rule_type as string) || 'case_matching');
+    setRuleType((rule.rule_type as string) || 'attribute');
     setCaseMatchingModule((rule.case_matching_module as string) || '');
     setPriority((rule.priority as string) || 'medium');
     setOdrlType((rule.odrl_type as string) || 'Permission');
@@ -261,8 +261,8 @@ export function Step4Review() {
           <div>
             <label className="block text-xs font-semibold text-gray-300 mb-1">Rule Type</label>
             <select value={ruleType} onChange={e => { setRuleType(e.target.value); if (e.target.value !== 'case_matching') setCaseMatchingModule(''); }} className="input-dark text-sm">
-              <option value="case_matching">Case Matching</option>
               <option value="attribute">Attribute</option>
+              <option value="case_matching">Case Matching</option>
             </select>
           </div>
           {ruleType === 'case_matching' && (
