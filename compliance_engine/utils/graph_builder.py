@@ -126,6 +126,7 @@ class RulesGraphBuilder:
             "CREATE INDEX IF NOT EXISTS FOR (n:DataSubject) ON (n.name)",
             "CREATE INDEX IF NOT EXISTS FOR (n:GDC) ON (n.name)",
             "CREATE INDEX IF NOT EXISTS FOR (n:DataCategory) ON (n.name)",
+            "CREATE INDEX IF NOT EXISTS FOR (n:Attribute) ON (n.name)",
         ]
         for index in indexes:
             try:
@@ -544,6 +545,9 @@ class RulesGraphBuilder:
                 r.required_actions = $required_actions,
                 r.valid_until = $valid_until,
                 r.case_matching_module = $case_matching_module,
+                r.attribute_name = $attribute_name,
+                r.attribute_keywords = $attribute_keywords,
+                r.attribute_patterns = $attribute_patterns,
                 r.enabled = true
             """, {
                 "rule_id": rule_def.get('rule_id'),
@@ -564,6 +568,9 @@ class RulesGraphBuilder:
                 "required_actions": ",".join(rule_def.get('required_actions') or []),
                 "valid_until": valid_until,
                 "case_matching_module": rule_def.get('case_matching_module') or None,
+                "attribute_name": rule_def.get('attribute_name', ''),
+                "attribute_keywords": json.dumps(rule_def.get('attribute_keywords') or []),
+                "attribute_patterns": json.dumps(rule_def.get('attribute_patterns') or []),
             })
 
             # Permission/Prohibition
@@ -664,6 +671,39 @@ class RulesGraphBuilder:
                     MATCH (p:Purpose {name: $name})
                     MERGE (r)-[:HAS_PURPOSE]->(p)
                     """, {"rule_id": rule_def.get('rule_id'), "name": purpose_name})
+
+            # Processes — MERGE nodes and link to rule
+            for proc in (rule_def.get('processes') or []):
+                proc_name = str(proc).strip()
+                if proc_name:
+                    self.graph.query("MERGE (p:Process {name: $name})", {"name": proc_name})
+                    self.graph.query("""
+                    MATCH (r:Rule {rule_id: $rule_id})
+                    MATCH (p:Process {name: $name})
+                    MERGE (r)-[:HAS_PROCESS]->(p)
+                    """, {"rule_id": rule_def.get('rule_id'), "name": proc_name})
+
+            # GDC — MERGE nodes and link to rule
+            for gdc in (rule_def.get('gdc') or []):
+                gdc_name = str(gdc).strip()
+                if gdc_name:
+                    self.graph.query("MERGE (g:GDC {name: $name})", {"name": gdc_name})
+                    self.graph.query("""
+                    MATCH (r:Rule {rule_id: $rule_id})
+                    MATCH (g:GDC {name: $name})
+                    MERGE (r)-[:HAS_GDC]->(g)
+                    """, {"rule_id": rule_def.get('rule_id'), "name": gdc_name})
+
+            # Attribute nodes from dictionary keywords — link to rule for graph-based discovery
+            for keyword in (rule_def.get('attribute_keywords') or [])[:50]:
+                kw_name = str(keyword).strip().lower()
+                if kw_name and len(kw_name) >= 3:
+                    self.graph.query("MERGE (a:Attribute {name: $name})", {"name": kw_name})
+                    self.graph.query("""
+                    MATCH (r:Rule {rule_id: $rule_id})
+                    MATCH (a:Attribute {name: $name})
+                    MERGE (r)-[:HAS_ATTRIBUTE]->(a)
+                    """, {"rule_id": rule_def.get('rule_id'), "name": kw_name})
 
             logger.info(f"Added rule: {rule_def.get('rule_id')} (type={rule_type})")
             return True

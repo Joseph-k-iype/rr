@@ -9,7 +9,9 @@ Supports legal entity matching, case-insensitive country matching,
 prohibition logic (any prohibition → overall PROHIBITION), and rule expiration.
 """
 
+import json
 import logging
+import re
 import time
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
@@ -85,6 +87,26 @@ RETURN DISTINCT
     r.required_actions AS required_actions,
     collect(DISTINCT d.module) AS required_assessments,
     collect(DISTINCT pb.name) AS prohibition_names
+ORDER BY r.priority_order
+"""
+
+# Graph-stored attribute rules (AI-generated via wizard/sandbox)
+GRAPH_ATTRIBUTE_RULES_QUERY = """
+MATCH (r:Rule)
+WHERE r.rule_type = 'attribute' AND r.enabled = true
+  AND (r.valid_until IS NULL OR r.valid_until >= $today)
+  AND r.attribute_keywords IS NOT NULL
+  AND r.attribute_keywords <> '[]'
+RETURN r.rule_id AS rule_id,
+       r.name AS name,
+       r.description AS description,
+       r.priority AS priority,
+       r.attribute_name AS attribute_name,
+       r.attribute_keywords AS attribute_keywords,
+       r.attribute_patterns AS attribute_patterns,
+       r.outcome AS outcome,
+       r.has_pii_required AS requires_pii,
+       r.odrl_type AS odrl_type
 ORDER BY r.priority_order
 """
 
@@ -332,45 +354,63 @@ class RulesEvaluator:
     # ─── Attribute rule evaluation ─────────────────────────────────────
 
     def _evaluate_attribute_rules(self, context: EvaluationContext) -> List[TriggeredRule]:
-        """Evaluate attribute-level rules from rules_definitions.py against detected attributes and personal data names."""
-        import re
-        attribute_rules = get_enabled_attribute_rules()
+        """Evaluate attribute-level rules from BOTH the graph AND rules_definitions.py."""
         triggered = []
+        evaluated_rule_ids = set()
 
-        for rule_key, rule in attribute_rules.items():
-            matched = False
+        # --- Phase A: Graph-stored attribute rules (AI-generated) ---
+        today_str = date.today().isoformat()
+        graph_rules = self._graph_query(GRAPH_ATTRIBUTE_RULES_QUERY, {"today": today_str})
 
-            # Check if any personal_data_names match attribute keywords
-            for pdn in context.personal_data_names:
-                pdn_lower = pdn.lower()
-                for keyword in rule.attribute_keywords:
-                    if keyword.lower() in pdn_lower:
-                        matched = True
-                        break
-                if matched:
-                    break
+        for row in graph_rules:
+            rule_id = row.get('rule_id', '')
+            if rule_id in evaluated_rule_ids:
+                continue
+            evaluated_rule_ids.add(rule_id)
 
-            # Check regex patterns against personal_data_names
+            # Parse JSON-stored keywords and patterns
+            try:
+                keywords = json.loads(row.get('attribute_keywords', '[]'))
+            except (json.JSONDecodeError, TypeError):
+                keywords = []
+            try:
+                patterns = json.loads(row.get('attribute_patterns', '[]'))
+            except (json.JSONDecodeError, TypeError):
+                patterns = []
+
+            if not keywords and not patterns:
+                continue
+
+            matched = self._match_attribute_keywords(context, keywords, patterns)
             if not matched:
-                for pdn in context.personal_data_names:
-                    for pattern in rule.attribute_patterns:
-                        if re.search(pattern, pdn):
-                            matched = True
-                            break
-                    if matched:
-                        break
+                continue
 
-            # Check detected attributes from AttributeDetector
+            # Check PII requirement
+            if row.get('requires_pii') and not context.pii:
+                continue
+
+            outcome_str = row.get('outcome', 'permission')
+            outcome = RuleOutcomeType.PROHIBITION if outcome_str == 'prohibition' else RuleOutcomeType.PERMISSION
+            triggered.append(self._build_attribute_triggered_rule(row, outcome))
+
+        # --- Phase B: Hard-coded attribute rules (backward compat) ---
+        attribute_rules = get_enabled_attribute_rules()
+        for rule_key, rule in attribute_rules.items():
+            if rule.rule_id in evaluated_rule_ids:
+                continue
+            evaluated_rule_ids.add(rule.rule_id)
+
+            matched = self._match_attribute_keywords(
+                context, rule.attribute_keywords, rule.attribute_patterns
+            )
+            # Also check detected attributes from AttributeDetector
             if not matched:
                 for detected in context.detected_attributes:
                     if detected.attribute_name == rule.attribute_name:
                         matched = True
                         break
-
             if not matched:
                 continue
-
-            # Check PII requirement
             if rule.requires_pii and not context.pii:
                 continue
 
@@ -410,6 +450,75 @@ class RulesEvaluator:
             ))
 
         return triggered
+
+    def _match_attribute_keywords(self, context: EvaluationContext, keywords: list, patterns: list) -> bool:
+        """Check if any personal_data_names or metadata match the given keywords/patterns."""
+        # Check personal_data_names against keywords
+        for pdn in context.personal_data_names:
+            pdn_lower = pdn.lower()
+            for keyword in keywords:
+                if str(keyword).lower() in pdn_lower:
+                    return True
+
+        # Check regex patterns against personal_data_names
+        for pdn in context.personal_data_names:
+            for pattern in patterns:
+                if re.search(pattern, pdn):
+                    return True
+
+        # Check metadata text against keywords (enables metadata-based triggering)
+        if context.metadata:
+            metadata_text = ' '.join(str(v) for v in self._flatten_metadata(context.metadata))
+            metadata_lower = metadata_text.lower()
+            for keyword in keywords:
+                if str(keyword).lower() in metadata_lower:
+                    return True
+
+        return False
+
+    def _flatten_metadata(self, obj) -> list:
+        """Flatten a metadata dict/list into a list of string values."""
+        parts = []
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                parts.append(str(k))
+                parts.extend(self._flatten_metadata(v))
+        elif isinstance(obj, list):
+            for item in obj:
+                parts.extend(self._flatten_metadata(item))
+        elif obj is not None:
+            parts.append(str(obj))
+        return parts
+
+    def _build_attribute_triggered_rule(self, row: dict, outcome: RuleOutcomeType) -> TriggeredRule:
+        """Build a TriggeredRule from a graph attribute rule row."""
+        rule_id = str(row.get('rule_id', ''))
+        name = str(row.get('name', ''))
+        description = str(row.get('description', ''))
+        permissions = []
+        prohibitions = []
+
+        if outcome == RuleOutcomeType.PROHIBITION:
+            prohibitions.append(ProhibitionInfo(
+                prohibition_id=f"PROHIB_{rule_id}",
+                name=name, description=description,
+            ))
+        else:
+            permissions.append(PermissionInfo(
+                permission_id=f"PERM_{rule_id}",
+                name=name, description=description, duties=[],
+            ))
+
+        return TriggeredRule(
+            rule_id=rule_id, rule_name=name, rule_type="attribute",
+            priority=str(row.get('priority', 'medium')),
+            origin_match_type="any", receiving_match_type="any",
+            odrl_type=str(row.get('odrl_type', 'Permission')),
+            has_pii_required=bool(row.get('requires_pii', False)),
+            description=description, outcome=outcome,
+            permissions=permissions, prohibitions=prohibitions,
+            required_actions=[], required_assessments=[],
+        )
 
     # ─── Helpers ────────────────────────────────────────────────────────
 
