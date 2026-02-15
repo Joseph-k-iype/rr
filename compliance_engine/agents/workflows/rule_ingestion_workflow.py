@@ -8,9 +8,7 @@ Uses SqliteSaver checkpointer (persistent) with MemorySaver fallback.
 """
 
 import logging
-import os
-from typing import Dict, Any, Optional, List
-from datetime import datetime
+from typing import Optional, List
 from pathlib import Path
 
 from langgraph.graph import StateGraph, END
@@ -26,9 +24,6 @@ except ImportError:
 
 # Persistent checkpoint directory (project-level, not temp)
 _CHECKPOINT_DIR = Path(__file__).parent.parent.parent / "data" / "checkpoints"
-
-# Module-level persistent connection (kept open for app lifetime)
-_sqlite_conn: "sqlite3.Connection | None" = None
 
 from agents.state.wizard_state import WizardAgentState, create_initial_state
 from agents.nodes.supervisor import supervisor_node
@@ -214,6 +209,54 @@ def route_after_rule_tester(state: WizardAgentState) -> str:
     return "supervisor"
 
 
+def _create_checkpointer():
+    """Create a LangGraph checkpointer with auto-recovery from SQLite corruption.
+
+    Uses a fresh connection per call (no module-level shared connection) to avoid
+    corruption from concurrent FastAPI threads. Enables WAL mode for safe
+    concurrent reads. If the DB is corrupted, deletes it and retries once.
+    Falls back to MemorySaver if SQLite is unavailable or fails.
+    """
+    if not _HAS_SQLITE_SAVER:
+        return MemorySaver()
+
+    _CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    db_path = _CHECKPOINT_DIR / "checkpoints.db"
+
+    for attempt in range(2):
+        try:
+            conn = sqlite3.connect(str(db_path), check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            # Quick integrity check — catches "database image is malformed"
+            result = conn.execute("PRAGMA integrity_check").fetchone()
+            if result and result[0] != "ok":
+                raise sqlite3.DatabaseError(f"integrity_check: {result[0]}")
+            checkpointer = SqliteSaver(conn)
+            logger.info(f"Using SqliteSaver checkpointer at {db_path}")
+            return checkpointer
+        except (sqlite3.DatabaseError, Exception) as e:
+            logger.warning(f"SqliteSaver attempt {attempt + 1} failed: {e}")
+            # First failure: delete corrupt DB and retry
+            if attempt == 0 and db_path.exists():
+                try:
+                    db_path.unlink()
+                    # Also remove WAL/SHM files if present
+                    for suffix in (".db-wal", ".db-shm"):
+                        wal = db_path.with_suffix(suffix)
+                        if wal.exists():
+                            wal.unlink()
+                    logger.info("Deleted corrupted checkpoint DB, retrying")
+                except OSError as del_err:
+                    logger.warning(f"Could not delete corrupt DB: {del_err}")
+                    break
+            else:
+                break
+
+    logger.warning("Falling back to MemorySaver checkpointer")
+    return MemorySaver()
+
+
 def build_rule_ingestion_graph(with_interrupt: bool = True) -> tuple:
     """
     Build the LangGraph workflow for rule ingestion.
@@ -309,21 +352,7 @@ def build_rule_ingestion_graph(with_interrupt: bool = True) -> tuple:
     workflow.add_edge("fail", END)
 
     # Compile with checkpointer — prefer SqliteSaver for persistent memory
-    if _HAS_SQLITE_SAVER:
-        global _sqlite_conn
-        _CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-        db_path = str(_CHECKPOINT_DIR / "checkpoints.db")
-        try:
-            # Create a persistent connection (reused across invocations)
-            if _sqlite_conn is None:
-                _sqlite_conn = sqlite3.connect(db_path, check_same_thread=False)
-            checkpointer = SqliteSaver(_sqlite_conn)
-            logger.info(f"Using SqliteSaver checkpointer at {db_path}")
-        except Exception as e:
-            logger.warning(f"SqliteSaver init failed, falling back to MemorySaver: {e}")
-            checkpointer = MemorySaver()
-    else:
-        checkpointer = MemorySaver()
+    checkpointer = _create_checkpointer()
 
     interrupt = ["human_review"] if with_interrupt else None
 
@@ -394,17 +423,52 @@ def run_rule_ingestion(
         data={"rule_text": rule_text[:200]},
     )
 
+    config = {
+        "configurable": {"thread_id": thread_id or "default"},
+        "recursion_limit": 50,
+    }
+
     try:
         graph, checkpointer = build_rule_ingestion_graph()
-        config = {
-            "configurable": {"thread_id": thread_id or "default"},
-            "recursion_limit": 50,
-        }
         final_state = graph.invoke(initial_state, config)
         return RuleIngestionResult(final_state)
 
     except Exception as e:
+        error_str = str(e)
         logger.error(f"Workflow execution failed: {e}", exc_info=True)
+
+        # If SQLite corruption caused the failure, retry with MemorySaver
+        is_sqlite_error = any(
+            phrase in error_str.lower()
+            for phrase in ("database image is malformed", "database disk image", "sqlite")
+        )
+        if is_sqlite_error:
+            logger.warning("SQLite corruption detected — retrying with MemorySaver")
+            # Delete corrupt DB
+            db_path = _CHECKPOINT_DIR / "checkpoints.db"
+            for path in (db_path, db_path.with_suffix(".db-wal"), db_path.with_suffix(".db-shm")):
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            try:
+                graph, _ = build_rule_ingestion_graph()
+                final_state = graph.invoke(
+                    create_initial_state(
+                        origin_country=origin_country,
+                        scenario_type=scenario_type,
+                        receiving_countries=receiving_countries,
+                        rule_text=rule_text,
+                        data_categories=data_categories,
+                        is_pii_related=is_pii_related,
+                        max_iterations=max_iterations,
+                    ),
+                    config,
+                )
+                return RuleIngestionResult(final_state)
+            except Exception as retry_err:
+                logger.error(f"Retry with MemorySaver also failed: {retry_err}")
+                error_str = str(retry_err)
 
         # Cleanup any stale temp graphs on workflow failure
         try:
@@ -418,5 +482,5 @@ def run_rule_ingestion(
 
         error_state = initial_state.copy()
         error_state["success"] = False
-        error_state["error_message"] = f"Workflow error: {str(e)}"
+        error_state["error_message"] = f"Workflow error: {error_str}"
         return RuleIngestionResult(error_state)
