@@ -284,6 +284,16 @@ async def sandbox_evaluate(session_id: str, request: dict):
         else:
             receiving_list = []
 
+        # Merge data_categories from request and session
+        req_categories = request.get("data_categories") or []
+        session_categories = session.data_categories or []
+        merged_categories = list(set(req_categories + session_categories)) if (req_categories or session_categories) else None
+
+        # Merge purposes from request and session
+        req_purposes = request.get("purposes") or []
+        session_purposes = session.purposes_of_processing or []
+        merged_purposes = list(set(req_purposes + session_purposes)) if (req_purposes or session_purposes) else None
+
         # Evaluate for each receiving country (or once with empty string)
         all_results = []
         targets = receiving_list if receiving_list else [""]
@@ -293,11 +303,12 @@ async def sandbox_evaluate(session_id: str, request: dict):
                 origin_country=request.get("origin_country", ""),
                 receiving_country=rc,
                 pii=request.get("pii", False),
-                purposes=request.get("purposes"),
+                purposes=merged_purposes,
                 process_l1=request.get("process_l1"),
                 process_l2=request.get("process_l2"),
                 process_l3=request.get("process_l3"),
                 personal_data_names=request.get("personal_data_names"),
+                data_categories=merged_categories,
                 metadata=request.get("metadata"),
             )
             all_results.append(result)

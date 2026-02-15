@@ -172,6 +172,7 @@ class SandboxEvaluationRequest(BaseModel):
     receiving_country: str
     pii: bool = False
     purposes: Optional[List[str]] = None
+    data_categories: Optional[List[str]] = None
     process_l1: Optional[List[str]] = None
     process_l2: Optional[List[str]] = None
     process_l3: Optional[List[str]] = None

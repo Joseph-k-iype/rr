@@ -14,6 +14,7 @@ export function Step5SandboxTest() {
     receiving_country: [] as string[],
     pii: false,
     purposes: [] as string[],
+    data_categories: [] as string[],
     process_l1: [] as string[],
     process_l2: [] as string[],
     process_l3: [] as string[],
@@ -127,16 +128,29 @@ export function Step5SandboxTest() {
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-white mb-1">Purpose Of Processing</label>
-            <select
-              multiple
-              value={evalForm.purposes}
-              onChange={(e) => setEvalForm(f => ({ ...f, purposes: Array.from(e.target.selectedOptions, o => o.value) }))}
-              className="input-dark text-sm h-16"
-            >
-              {purposes.map(p => <option key={p} value={p}>{p}</option>)}
-            </select>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-white mb-1">Purpose Of Processing</label>
+              <select
+                multiple
+                value={evalForm.purposes}
+                onChange={(e) => setEvalForm(f => ({ ...f, purposes: Array.from(e.target.selectedOptions, o => o.value) }))}
+                className="input-dark text-sm h-16"
+              >
+                {purposes.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-white mb-1">Data Categories</label>
+              <select
+                multiple
+                value={evalForm.data_categories}
+                onChange={(e) => setEvalForm(f => ({ ...f, data_categories: Array.from(e.target.selectedOptions, o => o.value) }))}
+                className="input-dark text-sm h-16"
+              >
+                {(dropdowns?.data_categories || dropdowns?.group_data_categories || []).map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
           </div>
 
           <div className="grid grid-cols-3 gap-3">

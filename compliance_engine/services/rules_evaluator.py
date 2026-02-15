@@ -19,10 +19,7 @@ from datetime import date
 
 from services.database import get_db_service
 from services.cache import get_cache_service
-from services.attribute_detector import (
-    get_attribute_detector,
-    AttributeDetectionConfig,
-)
+from services.attribute_detector import get_attribute_detector
 from rules.dictionaries.rules_definitions import (
     get_enabled_attribute_rules,
     RuleOutcome,
@@ -150,6 +147,17 @@ WHERE (r.requires_personal_data = false OR $has_personal_data = true)
   AND (r.has_pii_required = false OR $pii = true)
 OPTIONAL MATCH (r)-[:HAS_PERMISSION]->(p:Permission)-[:CAN_HAVE_DUTY]->(d:Duty)
 OPTIONAL MATCH (r)-[:HAS_PROHIBITION]->(pb:Prohibition)
+WITH r,
+     collect(DISTINCT d.module) AS required_assessments,
+     collect(DISTINCT d.name) AS duty_names,
+     collect(DISTINCT pb.name) AS prohibition_names
+OPTIONAL MATCH (r)-[:HAS_ATTRIBUTE]->(attr:Attribute)
+WITH r, required_assessments, duty_names, prohibition_names,
+     collect(DISTINCT attr.name) AS linked_attributes
+OPTIONAL MATCH (r)-[:HAS_DATA_CATEGORY]->(dc:DataCategory)
+WITH r, required_assessments, duty_names, prohibition_names, linked_attributes,
+     collect(DISTINCT dc.name) AS linked_data_categories
+OPTIONAL MATCH (r)-[:HAS_PURPOSE]->(purp:Purpose)
 RETURN DISTINCT
     r.rule_id AS rule_id, r.name AS name, r.description AS description,
     r.rule_type AS rule_type,
@@ -163,9 +171,12 @@ RETURN DISTINCT
     r.attribute_name AS attribute_name,
     r.attribute_keywords AS attribute_keywords,
     r.attribute_patterns AS attribute_patterns,
-    collect(DISTINCT d.module) AS required_assessments,
-    collect(DISTINCT d.name) AS duty_names,
-    collect(DISTINCT pb.name) AS prohibition_names
+    required_assessments,
+    duty_names,
+    prohibition_names,
+    linked_attributes,
+    linked_data_categories,
+    collect(DISTINCT purp.name) AS linked_purposes
 ORDER BY r.priority_order
 """
 
@@ -201,6 +212,7 @@ class EvaluationContext:
     process_l2: List[str] = field(default_factory=list)
     process_l3: List[str] = field(default_factory=list)
     personal_data_names: List[str] = field(default_factory=list)
+    data_categories: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     detected_attributes: List[DetectedAttribute] = field(default_factory=list)
     origin_legal_entity: Optional[str] = None
@@ -253,6 +265,7 @@ class RulesEvaluator:
         process_l2: Optional[List[str]] = None,
         process_l3: Optional[List[str]] = None,
         personal_data_names: Optional[List[str]] = None,
+        data_categories: Optional[List[str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         origin_legal_entity: Optional[str] = None,
         receiving_legal_entity: Optional[str] = None,
@@ -277,6 +290,7 @@ class RulesEvaluator:
             process_l2=process_l2 or [],
             process_l3=process_l3 or [],
             personal_data_names=personal_data_names or [],
+            data_categories=data_categories or [],
             metadata=metadata or {},
             origin_legal_entity=origin_legal_entity,
             receiving_legal_entity=receiving_legal_entity,
@@ -343,7 +357,17 @@ class RulesEvaluator:
             has_keywords = keywords_json and keywords_json != '[]'
             has_patterns = patterns_json and patterns_json != '[]'
 
+            # Check if rule has graph-linked attributes/categories/purposes
+            has_linked = bool(
+                rule_row.get('linked_attributes')
+                or rule_row.get('linked_data_categories')
+                or rule_row.get('linked_purposes')
+            )
+
             if rule_type == 'attribute' or (has_keywords and rule_type in ('transfer', 'case_matching')):
+                matched = False
+
+                # Method 1: JSON keyword/pattern matching against all input dimensions
                 if has_keywords or has_patterns:
                     try:
                         keywords = json.loads(keywords_json) if isinstance(keywords_json, str) else (keywords_json or [])
@@ -355,14 +379,26 @@ class RulesEvaluator:
                         patterns = []
 
                     if keywords or patterns:
-                        if not self._match_attribute_keywords(context, keywords, patterns):
-                            # For pure attribute rules, skip entirely
-                            if rule_type == 'attribute':
-                                continue
-                            # For transfer/case_matching rules with keywords,
-                            # they still match on country — keywords are optional enrichment
-                elif rule_type == 'attribute':
-                    continue  # Attribute rule with no keywords — skip
+                        matched = self._match_attribute_keywords(context, keywords, patterns)
+
+                # Method 2: Graph-linked attribute/category/purpose overlap
+                if not matched and has_linked:
+                    matched = self._match_graph_linked_attributes(context, rule_row)
+
+                if not matched:
+                    if rule_type == 'attribute':
+                        logger.debug(
+                            f"Attribute rule {rule_id} skipped: no keyword or graph match"
+                        )
+                        continue
+                    # transfer/case_matching rules still match on country alone
+                else:
+                    logger.info(
+                        f"Rule {rule_id} ({rule_type}) matched via attribute/keyword/graph"
+                    )
+
+            elif rule_type == 'attribute' and not has_keywords and not has_patterns and not has_linked:
+                continue  # Attribute rule with no keywords and no graph links — skip
 
             country_matched_rules.append(rule_row)
             evaluated_rule_ids.add(rule_id)
@@ -592,26 +628,107 @@ class RulesEvaluator:
         return triggered
 
     def _match_attribute_keywords(self, context: EvaluationContext, keywords: list, patterns: list) -> bool:
-        """Check if any personal_data_names or metadata match the given keywords/patterns."""
-        # Check personal_data_names against keywords
-        for pdn in context.personal_data_names:
-            pdn_lower = pdn.lower()
+        """Check ALL input dimensions against keywords/patterns.
+
+        Checks: personal_data_names, metadata (keys+values), purposes,
+        data_categories, process_l1/l2/l3 — any match triggers the rule.
+        """
+        # Collect all discrete input texts to check against keywords
+        input_texts = list(context.personal_data_names)
+        input_texts.extend(context.purposes)
+        input_texts.extend(context.data_categories)
+        input_texts.extend(context.process_l1)
+        input_texts.extend(context.process_l2)
+        input_texts.extend(context.process_l3)
+
+        # Check each input text against keywords (substring match)
+        for text in input_texts:
+            text_lower = str(text).lower()
             for keyword in keywords:
-                if str(keyword).lower() in pdn_lower:
+                kw_lower = str(keyword).lower()
+                if kw_lower in text_lower or text_lower in kw_lower:
+                    logger.debug(f"Keyword match: '{keyword}' ↔ input '{text}'")
                     return True
 
-        # Check regex patterns against personal_data_names
-        for pdn in context.personal_data_names:
+        # Check regex patterns against discrete input texts
+        for text in input_texts:
             for pattern in patterns:
-                if re.search(pattern, pdn):
-                    return True
+                try:
+                    if re.search(pattern, str(text), re.IGNORECASE):
+                        return True
+                except re.error:
+                    pass
 
-        # Check metadata text against keywords (enables metadata-based triggering)
+        # Check metadata (flattened keys and values) against keywords
         if context.metadata:
-            metadata_text = ' '.join(str(v) for v in self._flatten_metadata(context.metadata))
+            metadata_parts = self._flatten_metadata(context.metadata)
+            metadata_text = ' '.join(str(v) for v in metadata_parts)
             metadata_lower = metadata_text.lower()
             for keyword in keywords:
                 if str(keyword).lower() in metadata_lower:
+                    logger.debug(f"Keyword match in metadata: '{keyword}' in '{metadata_lower[:100]}'")
+                    return True
+            # Check patterns against individual metadata parts
+            for part in metadata_parts:
+                for pattern in patterns:
+                    try:
+                        if re.search(pattern, str(part), re.IGNORECASE):
+                            return True
+                    except re.error:
+                        pass
+
+        return False
+
+    def _match_graph_linked_attributes(
+        self, context: EvaluationContext, rule_row: dict
+    ) -> bool:
+        """Check if input data overlaps with rule's graph-linked nodes.
+
+        Uses linked_attributes, linked_data_categories, and linked_purposes
+        returned by ALL_RULES_QUERY for graph-native matching.
+        """
+        linked_attrs = rule_row.get('linked_attributes') or []
+        linked_cats = rule_row.get('linked_data_categories') or []
+        linked_purposes = rule_row.get('linked_purposes') or []
+
+        if not linked_attrs and not linked_cats and not linked_purposes:
+            return False
+
+        # Build input terms from all context dimensions
+        input_terms = []
+        input_terms.extend(context.personal_data_names)
+        input_terms.extend(context.data_categories)
+        input_terms.extend(context.purposes)
+        input_terms.extend(context.process_l1)
+        input_terms.extend(context.process_l2)
+        input_terms.extend(context.process_l3)
+        if context.metadata:
+            input_terms.extend(str(v) for v in self._flatten_metadata(context.metadata))
+
+        input_lower = {str(t).lower().strip() for t in input_terms if t}
+
+        # Check linked attributes (Attribute nodes from dictionary keywords)
+        for attr_name in linked_attrs:
+            attr_lower = str(attr_name).lower()
+            for term in input_lower:
+                if attr_lower in term or term in attr_lower:
+                    logger.debug(f"Graph attribute match: '{attr_name}' ↔ input '{term}'")
+                    return True
+
+        # Check linked data categories
+        for cat_name in linked_cats:
+            cat_lower = str(cat_name).lower()
+            for term in input_lower:
+                if cat_lower in term or term in cat_lower:
+                    logger.debug(f"Graph data category match: '{cat_name}' ↔ input '{term}'")
+                    return True
+
+        # Check linked purposes
+        for purp_name in linked_purposes:
+            purp_lower = str(purp_name).lower()
+            for term in input_lower:
+                if purp_lower in term or term in purp_lower:
+                    logger.debug(f"Graph purpose match: '{purp_name}' ↔ input '{term}'")
                     return True
 
         return False
@@ -667,6 +784,10 @@ class RulesEvaluator:
             **context.metadata,
             'personal_data_names': context.personal_data_names,
             'purposes': context.purposes,
+            'data_categories': context.data_categories,
+            'process_l1': context.process_l1,
+            'process_l2': context.process_l2,
+            'process_l3': context.process_l3,
         }
         if not combined_metadata:
             return []
@@ -694,6 +815,8 @@ class RulesEvaluator:
             parts.append(f"Receiving LE: {context.receiving_legal_entity}")
         if context.purposes:
             parts.append(f"Purposes: {', '.join(context.purposes)}")
+        if context.data_categories:
+            parts.append(f"Categories: {', '.join(context.data_categories)}")
         if context.process_l1:
             parts.append(f"L1: {', '.join(context.process_l1)}")
         if context.process_l2:

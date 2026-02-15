@@ -149,6 +149,7 @@ class SandboxService:
         process_l2: Optional[list] = None,
         process_l3: Optional[list] = None,
         personal_data_names: Optional[list] = None,
+        data_categories: Optional[list] = None,
         metadata: Optional[dict] = None,
     ) -> Dict[str, Any]:
         """
@@ -173,6 +174,7 @@ class SandboxService:
                 process_l2=process_l2,
                 process_l3=process_l3,
                 personal_data_names=personal_data_names,
+                data_categories=data_categories,
                 metadata=metadata,
             )
             return result if isinstance(result, dict) else result.model_dump() if hasattr(result, 'model_dump') else {"result": str(result)}
