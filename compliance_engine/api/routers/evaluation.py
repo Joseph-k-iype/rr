@@ -115,6 +115,26 @@ async def evaluate_rules(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/evaluate-rules-mock")
+async def evaluate_rules_mock(
+    evaluator=Depends(get_evaluator),
+):
+    """Mock test endpoint with sample data for attribute-level rule validation."""
+    try:
+        result = evaluator.evaluate(
+            origin_country="United Kingdom",
+            receiving_country="United States",
+            pii=True,
+            purposes=["Risk Management"],
+            personal_data_names=["Medical Records", "Credit Card Number"],
+            metadata={"test": True},
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Mock evaluation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/search-cases", response_model=SearchCasesResponse)
 async def search_cases(
     request: SearchCasesRequest,

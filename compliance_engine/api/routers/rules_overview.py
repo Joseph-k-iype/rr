@@ -76,6 +76,27 @@ async def get_rules_overview_table(
         logger.warning(f"Error querying rules graph: {e}")
         raw_rows = []
 
+    # Fallback: if graph query returns empty, build rows from predefined rules
+    if not raw_rows:
+        case_rules = get_enabled_case_matching_rules()
+        for rule_key, rule in case_rules.items():
+            origin = rule.origin_group or (", ".join(sorted(rule.origin_countries)[:3]) if rule.origin_countries else "Any")
+            receiving = rule.receiving_group or (", ".join(sorted(rule.receiving_countries)[:3]) if rule.receiving_countries else "Any")
+            if rule.receiving_not_in:
+                receiving = f"Not in {', '.join(rule.receiving_not_in)}"
+            duties = rule.required_assessments.to_list()
+            raw_rows.append({
+                'rule_id': rule.rule_id,
+                'name': rule.name,
+                'description': rule.description,
+                'priority': rule.priority,
+                'outcome': 'permission',
+                'origin_names': [origin],
+                'receiving_names': [receiving],
+                'duties': [f"Complete {a} Module" for a in duties],
+                'prohibitions': [],
+            })
+
     # Build table rows
     rows = []
     all_duties = set()

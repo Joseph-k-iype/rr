@@ -1,0 +1,52 @@
+name,category
+Employees,Internal
+Contractors,Internal
+Interns,Internal
+Board Members,Internal
+Executive Officers,Internal
+Temporary Staff,Internal
+Volunteers,Internal
+Former Employees,Internal
+Retirees,Internal
+Applicants,Internal
+Trainees,Internal
+Secondees,Internal
+Consultants,Internal
+Agency Workers,Internal
+Part-time Workers,Internal
+Remote Workers,Internal
+Expatriates,Internal
+Customers,External
+Prospects,External
+Beneficiaries,External
+Dependents,External
+Account Holders,External
+Cardholders,External
+Loan Applicants,External
+Policyholders,External
+Claimants,External
+Guarantors,External
+Patients,External
+Students,External
+Minors,External
+Vulnerable Persons,External
+Power of Attorney Holders,External
+Joint Account Holders,External
+Authorized Representatives,External
+Suppliers,Third Party
+Vendors,Third Party
+Agents,Third Party
+Brokers,Third Party
+Shareholders,Third Party
+Regulators,Third Party
+Auditors,Third Party
+Legal Representatives,Third Party
+Witnesses,Third Party
+Referees,Third Party
+Emergency Contacts,Third Party
+Next of Kin,Third Party
+Business Partners,Third Party
+Correspondent Banks,Third Party
+Intermediaries,Third Party
+Sub-processors,Third Party
+Service Providers,Third Party

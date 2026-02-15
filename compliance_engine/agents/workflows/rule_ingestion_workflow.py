@@ -4,15 +4,27 @@ Rule Ingestion Workflow
 LangGraph StateGraph for wizard steps 4-5.
 Entry -> Supervisor -> {agents} -> Supervisor -> ... -> complete/fail
 
-Uses MemorySaver checkpointer and interrupt_before for human-in-the-loop.
+Uses SqliteSaver checkpointer (persistent) with MemorySaver fallback.
 """
 
 import logging
+import os
 from typing import Dict, Any, Optional, List
 from datetime import datetime
+from pathlib import Path
 
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
+
+# Try to use SqliteSaver for persistent checkpointing; fall back to MemorySaver
+try:
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    _HAS_SQLITE_SAVER = True
+except ImportError:
+    _HAS_SQLITE_SAVER = False
+
+# Persistent checkpoint directory (project-level, not temp)
+_CHECKPOINT_DIR = Path(__file__).parent.parent.parent / "data" / "checkpoints"
 
 from agents.state.wizard_state import WizardAgentState, create_initial_state
 from agents.nodes.supervisor import supervisor_node
@@ -200,8 +212,19 @@ def build_rule_ingestion_graph(with_interrupt: bool = True) -> tuple:
     workflow.add_edge("complete", END)
     workflow.add_edge("fail", END)
 
-    # Compile with checkpointer
-    checkpointer = MemorySaver()
+    # Compile with checkpointer — prefer SqliteSaver for persistent memory
+    if _HAS_SQLITE_SAVER:
+        _CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+        db_path = str(_CHECKPOINT_DIR / "checkpoints.db")
+        try:
+            checkpointer = SqliteSaver.from_conn_string(db_path)
+            logger.info(f"Using SqliteSaver checkpointer at {db_path}")
+        except Exception as e:
+            logger.warning(f"SqliteSaver init failed, falling back to MemorySaver: {e}")
+            checkpointer = MemorySaver()
+    else:
+        checkpointer = MemorySaver()
+
     interrupt = ["human_review"] if with_interrupt else None
 
     compiled = workflow.compile(

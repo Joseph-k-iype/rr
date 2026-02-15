@@ -113,6 +113,9 @@ async def submit_step(session_id: str, submission: WizardStepSubmission):
 
             if result.success:
                 session.edited_rule_definition = result.rule_definition
+                # Set edited_terms_dictionary from dictionary_result if not already set
+                if result.dictionary_result and not session.edited_terms_dictionary:
+                    session.edited_terms_dictionary = result.dictionary_result
                 # Add valid_until to rule definition
                 if session.valid_until and session.edited_rule_definition:
                     session.edited_rule_definition['valid_until'] = session.valid_until
@@ -225,12 +228,21 @@ async def load_sandbox(session_id: str):
     sandbox = get_sandbox_service()
 
     try:
+        # Inject session metadata into rule definition for graph linking
+        rule_def = dict(session.edited_rule_definition)
+        if session.data_categories:
+            rule_def.setdefault('data_categories', session.data_categories)
+        if session.purposes_of_processing:
+            rule_def.setdefault('purposes_of_processing', session.purposes_of_processing)
+
         graph_name = sandbox.create_sandbox(session_id)
         success = sandbox.add_rule_to_sandbox(
             graph_name,
-            session.edited_rule_definition,
+            rule_def,
             dictionary_result=session.dictionary_result,
         )
+        # Update the stored rule def with the enriched version
+        session.edited_rule_definition = rule_def
 
         if success:
             session.sandbox_graph_name = graph_name
@@ -300,9 +312,16 @@ async def approve_rule(session_id: str, request: WizardApprovalRequest):
     sandbox = get_sandbox_service()
 
     try:
+        # Ensure session metadata is in rule definition for graph linking
+        rule_def = dict(session.edited_rule_definition)
+        if session.data_categories:
+            rule_def.setdefault('data_categories', session.data_categories)
+        if session.purposes_of_processing:
+            rule_def.setdefault('purposes_of_processing', session.purposes_of_processing)
+
         success = sandbox.promote_to_main(
             graph_name=session.sandbox_graph_name or "",
-            rule_def=session.edited_rule_definition,
+            rule_def=rule_def,
         )
 
         if success:

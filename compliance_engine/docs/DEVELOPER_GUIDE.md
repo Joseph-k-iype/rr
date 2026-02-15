@@ -23,30 +23,31 @@ The Compliance Engine is built on a two-graph architecture using FalkorDB, with 
 ### System Components
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                     React + TypeScript Frontend                       │
-│  ┌────────────┐   ┌──────────────┐   ┌────────────────────────────┐ │
-│  │ Rules Graph│   │  Evaluator   │   │  10-Step Wizard + SSE      │ │
-│  │ (ReactFlow)│   │              │   │  (Zustand + TanStack Query)│ │
-│  └────────────┘   └──────────────┘   └────────────────────────────┘ │
-├──────────────────────────────────────────────────────────────────────┤
-│                     FastAPI Server (Routers)                          │
-│  evaluation │ metadata │ wizard │ sandbox │ agent_events │ health    │
-├──────────────────────────────────────────────────────────────────────┤
-│  Services Layer            │  Multi-Agent Layer (LangGraph + A2A SDK)│
-│  - RulesEvaluator          │  - Supervisor → Analyzer → Dictionary  │
-│  - SandboxService          │  - → CypherGen → Validator → Complete  │
-│  - CacheService            │  - Google A2A SDK AgentExecutors        │
-│  - SSEManager              │  - Event-sourced audit trail            │
-├──────────────────────────────────────────────────────────────────────┤
-│                      FalkorDB (Graph Database)                        │
-│  ┌──────────────────────┐    ┌─────────────────────────────────┐     │
-│  │    RulesGraph        │    │     DataTransferGraph            │     │
-│  │  (Rule definitions,  │    │  (Historical cases, assessments, │     │
-│  │   country groups,    │    │   purposes, processes,           │     │
-│  │   permissions/duties)│    │   personal data categories)      │     │
-│  └──────────────────────┘    └─────────────────────────────────┘     │
-└──────────────────────────────────────────────────────────────────────┘
++---------------------------------------------------------------------------+
+|                     React + TypeScript Frontend                            |
+|  +----------------+  +----------------+  +-----------------------------+  |
+|  | Policy Overview|  | Policy         |  | Policy Generator            |  |
+|  | (Data Table)   |  | Evaluator      |  | (6-Step Wizard + SSE)       |  |
+|  +----------------+  +----------------+  +-----------------------------+  |
+|  Login (admin/admin, user/user) | Role-Based Access | GSAP Animations     |
++-------------------------------------------+-------------------------------+
+|                     FastAPI Server (Routers)                               |
+|  evaluation | metadata | wizard | sandbox | agent_events | health         |
++-------------------------------------------+-------------------------------+
+|  Services Layer            |  Multi-Agent Layer (LangGraph + A2A SDK)      |
+|  - RulesEvaluator          |  - Supervisor -> Analyzer -> Dictionary       |
+|  - SandboxService          |  - -> CypherGen -> Validator -> Complete      |
+|  - SessionStore            |  - Google A2A SDK AgentExecutors              |
+|  - CacheService            |  - Event-sourced audit trail                  |
++-------------------------------------------+-------------------------------+
+|                      FalkorDB (Graph Database)                             |
+|  +------------------------+    +----------------------------------+       |
+|  |    RulesGraph           |    |     DataTransferGraph             |       |
+|  |  (Rules, permissions,   |    |  (Historical cases, assessments,  |       |
+|  |   duties, legal entities|    |   purposes, processes,            |       |
+|  |   country groups)       |    |   personal data categories)       |       |
+|  +------------------------+    +----------------------------------+       |
++---------------------------------------------------------------------------+
 ```
 
 ### Key Directories
@@ -56,17 +57,18 @@ compliance_engine/
 ├── api/routers/         # 8 FastAPI router modules
 ├── agents/
 │   ├── executors/       # A2A SDK AgentExecutor implementations (business logic)
-│   ├── nodes/           # Thin LangGraph node shims (wrap executors via wrap_executor_as_node)
+│   ├── nodes/           # Thin LangGraph node shims (wrap executors)
 │   ├── prompts/         # 7 prompt files + builder
-│   ├── workflows/       # LangGraph StateGraph (unchanged)
-│   ├── protocol/        # A2A agent registry (AgentCard/AgentSkill via a2a-sdk)
+│   ├── workflows/       # LangGraph StateGraph
+│   ├── protocol/        # A2A agent registry (AgentCard/AgentSkill)
 │   ├── audit/           # Event store & event types
 │   └── state/           # WizardAgentState TypedDict
-├── services/            # Core business logic (evaluator, sandbox, SSE, cache, database)
+├── services/            # Core business logic (evaluator, sandbox, SSE, cache, session store)
 ├── rules/
 │   ├── dictionaries/    # Country groups & rule definitions
+│   ├── data_dictionaries/ # JSON reference data (legal entities, purposes)
 │   └── templates/       # Cypher query templates
-├── models/              # Pydantic models (schemas, wizard, AgentEvent for SSE)
+├── models/              # Pydantic models (schemas, wizard, AgentEvent)
 ├── frontend/            # Vite + React + TypeScript
 │   └── src/             # pages, components, stores, hooks, services
 ├── cli/                 # Rule generator CLI tool
@@ -77,7 +79,14 @@ compliance_engine/
 
 ## Rule System
 
-The engine uses a **three-set rule system** that is fully preserved from previous versions. Health rules, TIA/PIA/HRPR assessments, and real-time case searching all remain intact.
+The engine uses a **three-set rule system**. Health rules, TIA/PIA/HRPR assessments, and real-time case searching all remain intact.
+
+### Key Evaluation Logic
+
+- **Case-insensitive CONTAINS matching** on country names in Cypher queries
+- **Rule expiration**: Rules with `valid_until` date in the past are excluded from evaluation
+- **Prohibition override**: If ANY triggered rule is a prohibition, the overall transfer status is **PROHIBITED**
+- **Prohibition-duty separation**: Prohibitions do NOT have duties; only permissions can have duties
 
 ### SET 1: Case Matching Rules
 
@@ -100,73 +109,31 @@ class CaseMatchingRule:
     requires_personal_data: bool = False
     enabled: bool = True
     odrl_type: str = "Permission"
-    odrl_action: str = "transfer"
-    odrl_target: str = "Data"
 ```
-
-**Assessment compliance tracking** (TIA, PIA, HRPR) is handled in `services/rules_evaluator.py` lines 224-274. Each case match checks whether required assessments are completed.
 
 ### SET 2A: Transfer Rules
 
 Country-to-country transfer permissions/prohibitions with highest priority.
 
-```python
-@dataclass
-class TransferRule:
-    rule_id: str
-    name: str
-    description: str
-    priority: int
-    transfer_pairs: List[Tuple[str, str]] = field(default_factory=list)
-    origin_group: Optional[str] = None
-    receiving_group: Optional[str] = None
-    receiving_countries: Optional[FrozenSet[str]] = None
-    bidirectional: bool = False
-    outcome: RuleOutcome = RuleOutcome.PERMISSION
-    requires_pii: bool = False
-    required_actions: List[str] = field(default_factory=list)
-    enabled: bool = True
-    odrl_type: str = "Permission"
-    odrl_action: str = "transfer"
-    odrl_target: str = "Data"
-```
-
 ### SET 2B: Attribute Rules
 
 Rules based on data attributes (health, financial, biometric, etc.).
 
-```python
-@dataclass
-class AttributeRule:
-    rule_id: str
-    name: str
-    description: str
-    priority: int
-    attribute_name: str
-    attribute_keywords: List[str] = field(default_factory=list)
-    attribute_patterns: List[str] = field(default_factory=list)
-    attribute_config_file: Optional[str] = None
-    origin_countries: Optional[FrozenSet[str]] = None
-    origin_group: Optional[str] = None
-    receiving_countries: Optional[FrozenSet[str]] = None
-    receiving_group: Optional[str] = None
-    outcome: RuleOutcome = RuleOutcome.PROHIBITION
-    requires_pii: bool = False
-    enabled: bool = True
-    odrl_type: str = "Prohibition"
-    odrl_action: str = "transfer"
-    odrl_target: str = "Data"
-```
-
-### Evaluation Flow (Preserved)
+### Evaluation Flow
 
 The evaluation engine (`services/rules_evaluator.py`) processes rules in this order:
 
-1. **Phase 1 - Transfer Rules** (SET 2A): Check for direct prohibitions/permissions
-2. **Phase 2 - Attribute Rules** (SET 2B): Check for attribute-based restrictions (health data, financial data, biometric data)
-3. **Phase 3 - Case Matching** (SET 1): Search for historical precedent with assessment compliance
+1. **Phase 1 - Case Matching** (SET 1): Execute case-matching rules via Cypher query against RulesGraph. Uses case-insensitive CONTAINS matching, checks `valid_until` expiration, and collects prohibition flags.
+2. **Phase 2 - Prohibition Check**: If ANY triggered rule is a prohibition, return PROHIBITED immediately.
+3. **Phase 3 - Precedent Search**: Search for historical precedent cases in DataTransferGraph with assessment compliance checking.
 
-Health data detection uses `config/health_data_config.json` and `services/attribute_detector.py`.
+### Legal Entity Support
+
+Rules and evaluations support legal entity targeting:
+- `origin_legal_entity` - Specific legal entity in the origin country
+- `receiving_legal_entity` - Specific legal entities in receiving countries
+- Legal entities are linked to countries via `HAS_LEGAL_ENTITY` relationship in the graph
+- Mappings defined in `rules/data_dictionaries/legal_entities.json`
 
 ### Precedent Evidence System
 
@@ -182,8 +149,6 @@ When evaluating transfers, the engine computes field-level match analysis:
 | process_l3 | 7% |
 | personal_data_names | 10% |
 
-Evidence summaries include confidence levels (high/medium/low), strongest match scores, and assessment coverage.
-
 ---
 
 ## Creating New Rules
@@ -193,7 +158,6 @@ Evidence summaries include confidence levels (high/medium/low), strongest match 
 Edit `rules/dictionaries/rules_definitions.py`:
 
 ```python
-# Transfer Rule
 TRANSFER_RULES["RULE_UK_CHINA_TECH"] = TransferRule(
     rule_id="RULE_UK_CHINA_TECH",
     name="UK to China Technology Transfer",
@@ -202,55 +166,33 @@ TRANSFER_RULES["RULE_UK_CHINA_TECH"] = TransferRule(
     origin_countries=frozenset(["United Kingdom"]),
     receiving_countries=frozenset(["China"]),
     outcome=RuleOutcome.PROHIBITION,
-    requires_pii=False,
-    required_actions=["security_review", "management_approval"],
     odrl_type="Prohibition",
-    odrl_action="transfer",
-    odrl_target="TechnologyData",
-    enabled=True,
-)
-
-# Attribute Rule
-ATTRIBUTE_RULES["RULE_GENETIC_EU"] = AttributeRule(
-    rule_id="RULE_GENETIC_EU",
-    name="EU Genetic Data Protection",
-    description="Genetic data from EU requires special handling",
-    priority=5,
-    attribute_name="genetic_data",
-    attribute_keywords=["genetic", "dna", "genome", "hereditary"],
-    origin_group="EU_EEA",
-    outcome=RuleOutcome.PROHIBITION,
-    odrl_type="Prohibition",
-    odrl_target="GeneticData",
     enabled=True,
 )
 ```
 
 Then rebuild: `python main.py --build-graph`
 
-### Method 2: 10-Step Wizard (Frontend)
+### Method 2: 6-Step Wizard (Frontend)
 
-Access the wizard at http://localhost:5001/wizard:
+Access the wizard at http://localhost:5001/generator (requires admin login: `admin` / `admin`):
 
 | Step | Action |
 |------|--------|
-| 1 | Select origin country & receiving countries |
-| 2 | Choose scenario type (transfer/attribute) & data categories |
-| 3 | Enter rule text in natural language |
-| 4 | AI analyzes rule (Chain of Thought reasoning) |
-| 5 | AI generates keyword dictionary |
-| 6 | Review generated outputs (read-only) |
-| 7 | Edit rule definition & terms dictionary (JSON editors) |
-| 8 | Load rule into sandbox graph for testing |
-| 9 | Test in sandbox with sample evaluations |
-| 10 | Approve and promote rule to main RulesGraph |
+| 1. Country | Select origin/receiving country and legal entities |
+| 2. Metadata | Data categories (required), purpose of processing, processes L1/L2/L3, group data categories, valid until date |
+| 3. Rule | Enter rule text in natural language; AI agents process it |
+| 4. Review | Edit generated rule definition, actions, duties, data dictionaries |
+| 5. Sandbox Test | Load rule into temporary graph and test with sample evaluations |
+| 6. Approve | Confirm and promote rule to the main RulesGraph |
+
+Sessions can be saved from Step 4 onwards and resumed later via the save/resume API.
 
 ### Method 3: CLI Tool
 
 ```bash
 python -m cli.rule_generator_cli --interactive
 python -m cli.rule_generator_cli --rule "Prohibit transfers from UK to China" --country "United Kingdom"
-python -m cli.rule_generator_cli --rule "Health data cannot leave the EU" --type attribute
 ```
 
 ### Adding Country Groups
@@ -266,13 +208,17 @@ MY_NEW_GROUP: FrozenSet[str] = frozenset({
 COUNTRY_GROUPS["MY_NEW_GROUP"] = MY_NEW_GROUP
 ```
 
-**Current groups include:**
-- `EU_EEA` - EU 27 + Norway, Iceland, Liechtenstein
-- `UK_CROWN_DEPENDENCIES` - UK, Jersey, Guernsey, Isle of Man
-- `ADEQUACY_COUNTRIES` - Countries with EU adequacy decisions (incl. US via DPF)
-- `BCR_COUNTRIES` - Binding Corporate Rules countries
-- `US_RESTRICTED` - US-restricted countries (sanctions)
-- `CHINA_TERRITORIES` - China, Hong Kong, Macao
+### Adding Legal Entities
+
+Edit `rules/data_dictionaries/legal_entities.json`:
+
+```json
+{
+  "Country Name": ["Legal Entity 1", "Legal Entity 2"]
+}
+```
+
+Then rebuild the graph: `python main.py --build-graph`
 
 ---
 
@@ -281,12 +227,12 @@ COUNTRY_GROUPS["MY_NEW_GROUP"] = MY_NEW_GROUP
 ### LangGraph Architecture
 
 ```
-Entry → Supervisor → {rule_analyzer | data_dictionary | cypher_generator |
-                       validator | reference_data | human_review}
-         ↑              ↓
-         └── Supervisor ←── (retry on validation failure, max 3 iterations)
-                            ↓
-                    complete / fail → END
+Entry -> Supervisor -> {rule_analyzer | data_dictionary | cypher_generator |
+                        validator | reference_data | human_review}
+          ^              |
+          +-- Supervisor <-- (retry on validation failure, max 3 iterations)
+                             |
+                     complete / fail -> END
 ```
 
 ### Executor Architecture (A2A SDK Bridge)
@@ -308,18 +254,6 @@ LangGraph calls:  node_fn(state) -> state       [agents/nodes/*.py - thin shims]
                   return state                    [mutated by executor]
 ```
 
-Node files in `agents/nodes/` are thin shims that import and wrap executors:
-
-```python
-# agents/nodes/cypher_generator.py (typical shim)
-from agents.executors.cypher_generator_executor import CypherGeneratorExecutor
-from agents.executors.base_executor import wrap_executor_as_node
-from services.database import get_db_service
-
-_executor = CypherGeneratorExecutor(db_service=get_db_service())
-cypher_generator_node = wrap_executor_as_node(_executor)
-```
-
 ### Agent Executors
 
 | Agent | Executor | Technique | FalkorDB |
@@ -331,128 +265,6 @@ cypher_generator_node = wrap_executor_as_node(_executor)
 | **Validator** | `ValidatorExecutor` | Schema-aware checklist | Temp graph test queries |
 | **Reference Data** | `ReferenceDataExecutor` | Gap analysis | Country group lookup |
 | **Human Review** | _(inline in workflow)_ | `interrupt_before` | No |
-
-### State Management
-
-```python
-class WizardAgentState(TypedDict):
-    origin_country: str
-    scenario_type: str
-    receiving_countries: List[str]
-    rule_text: str
-    data_categories: List[str]
-    messages: Annotated[list, add_messages]
-    analysis_result: Optional[Dict]
-    dictionary_result: Optional[Dict]
-    rule_definition: Optional[Dict]
-    cypher_queries: Optional[Dict]
-    validation_result: Optional[Dict]
-    current_phase: str
-    iteration: int
-    max_iterations: int
-    requires_human_input: bool
-    events: List[Dict]        # For SSE streaming
-    success: bool
-    error_message: Optional[str]
-```
-
-### Pydantic Validation Models
-
-```python
-class RuleDefinitionModel(BaseModel):
-    rule_type: Literal["transfer", "attribute"]
-    rule_id: str = Field(..., pattern=r"^RULE_.*$")
-    name: str = Field(..., min_length=3, max_length=200)
-    description: str = Field(..., min_length=10)
-    priority: int = Field(..., ge=1, le=100)
-    outcome: Literal["permission", "prohibition"]
-    odrl_type: Literal["Permission", "Prohibition"]
-    # Country groups validated against COUNTRY_GROUPS registry
-
-class CypherQueriesModel(BaseModel):
-    rule_check: str       # Must contain MATCH/CREATE/MERGE/RETURN
-    rule_insert: str
-    validation: str
-
-class ValidationResultModel(BaseModel):
-    overall_valid: bool
-    confidence_score: float = Field(..., ge=0.0, le=1.0)
-    errors: List[str]
-    suggested_fixes: List[str]
-```
-
-### Event-Sourced Audit Trail
-
-All agent actions are recorded in an append-only event store (`agents/audit/event_store.py`):
-
-```python
-class AuditEventType(str, Enum):
-    WORKFLOW_STARTED = "workflow_started"
-    WORKFLOW_COMPLETED = "workflow_completed"
-    WORKFLOW_FAILED = "workflow_failed"
-    AGENT_INVOKED = "agent_invoked"
-    AGENT_COMPLETED = "agent_completed"
-    AGENT_FAILED = "agent_failed"
-    RULE_ANALYZED = "rule_analyzed"
-    DICTIONARY_GENERATED = "dictionary_generated"
-    CYPHER_GENERATED = "cypher_generated"
-    VALIDATION_PASSED = "validation_passed"
-    VALIDATION_FAILED = "validation_failed"
-    REFERENCE_DATA_CREATED = "reference_data_created"
-    HUMAN_REVIEW_REQUESTED = "human_review_requested"
-    SANDBOX_CREATED = "sandbox_created"
-    SANDBOX_EVALUATED = "sandbox_evaluated"
-    RULE_PROMOTED = "rule_promoted"
-```
-
----
-
-## Google A2A SDK Integration
-
-### Overview
-
-The multi-agent system uses [Google's A2A Python SDK](https://github.com/google/a2a-python) (`a2a-sdk>=0.3.22`) as an in-process abstraction layer. Agents don't need separate HTTP servers -- they run within the single FastAPI process, with LangGraph remaining the workflow backbone.
-
-### SDK Types Used
-
-| SDK Type | Location | Usage |
-|----------|----------|-------|
-| `AgentExecutor` | `a2a.server.agent_execution` | Base class for all agent executors |
-| `RequestContext` | `a2a.server.agent_execution` | Extended as `InProcessRequestContext` to wrap `WizardAgentState` |
-| `EventQueue` | `a2a.server.events` | Async queue for A2A status events |
-| `TaskState` | `a2a.types` | `working`, `completed`, `input_required`, `failed` |
-| `TaskStatus` | `a2a.types` | Wraps `TaskState` for status update events |
-| `TaskStatusUpdateEvent` | `a2a.types` | Emitted by executors, drained to SSE by the bridge |
-| `AgentCard` | `a2a.types` | Agent capability descriptor in the registry |
-| `AgentSkill` | `a2a.types` | Individual skill descriptor per agent |
-| `AgentCapabilities` | `a2a.types` | Capability flags (streaming, push notifications) |
-
-### Key Components
-
-**`ComplianceAgentExecutor`** (`agents/executors/base_executor.py`):
-- Extends `AgentExecutor` with `ai_service`, `event_store`, `db_service` injection
-- Provides async convenience methods: `emit_working()`, `emit_completed()`, `emit_input_required()`
-- Subclasses set `agent_name` and implement `async execute(context, event_queue)`
-
-**`InProcessRequestContext`** (`agents/executors/base_executor.py`):
-- Wraps `WizardAgentState` dict in the A2A `RequestContext` interface
-- `context.state` gives direct access to the mutable LangGraph state
-- `get_user_input()` returns `state["rule_text"]`
-- Generates unique `task_id` and `context_id` for A2A event tracking
-
-**`wrap_executor_as_node()`** (`agents/executors/base_executor.py`):
-- Returns a sync `node_fn(state) -> state` function compatible with LangGraph
-- Creates `InProcessRequestContext` and `EventQueue`, runs `executor.execute()` async
-- Drains `EventQueue` and maps A2A events to SSE `AgentEvent` messages:
-  - `TaskState.working` -> `AgentEventType.AGENT_STARTED`
-  - `TaskState.completed` -> `AgentEventType.AGENT_COMPLETED`
-  - `TaskState.input_required` -> `AgentEventType.HUMAN_REVIEW_REQUIRED`
-  - `TaskState.failed` -> `AgentEventType.AGENT_FAILED`
-
-**`A2AAgentRegistry`** (`agents/protocol/__init__.py`):
-- Singleton registry storing `AgentCard` instances for all 6 agents
-- Methods: `get_card()`, `list_cards()`, `find_agent_for_skill()`, `register_card()`
-- Each card has `url="internal://agent_name"` (in-process, no HTTP)
 
 ### Adding a New Agent
 
@@ -480,7 +292,7 @@ The multi-agent system uses [Google's A2A Python SDK](https://github.com/google/
    my_agent_node = wrap_executor_as_node(_executor)
    ```
 
-3. Register the agent card in `agents/protocol/__init__.py` by adding to `_build_default_cards()`.
+3. Register the agent card in `agents/protocol/__init__.py`.
 
 4. Add the node to the workflow in `agents/workflows/rule_ingestion_workflow.py`.
 
@@ -493,16 +305,8 @@ Three agents receive `DatabaseService` via constructor injection for direct Falk
 | Agent | FalkorDB Usage | Method |
 |-------|---------------|--------|
 | **Cypher Generator** | Syntax-validate generated Cypher with `EXPLAIN` | `db_service.execute_query("EXPLAIN ...")` |
-| **Validator** | Run test queries in a temporary graph | `db_service.get_temp_graph()` -> insert -> validate -> `delete_temp_graph()` |
+| **Validator** | Run test queries in a temporary graph | `db_service.get_temp_graph()` -> insert -> validate |
 | **Reference Data** | Query existing country groups from RulesGraph | `db_service.execute_rules_query("MATCH (g:CountryGroup) RETURN g.name")` |
-
-Injection happens in the node shims (e.g. `agents/nodes/cypher_generator.py`):
-
-```python
-_executor = CypherGeneratorExecutor(db_service=get_db_service())
-```
-
-Agents without FalkorDB needs (supervisor, rule_analyzer, data_dictionary) pass no `db_service` argument, defaulting to `None`.
 
 ---
 
@@ -510,111 +314,136 @@ Agents without FalkorDB needs (supervisor, rule_analyzer, data_dictionary) pass 
 
 ### RulesGraph Schema
 
-```mermaid
-graph TD
-    Country[Country] -->|BELONGS_TO| CountryGroup[CountryGroup]
-    Rule[Rule] -->|HAS_ACTION| Action[Action]
-    Rule -->|HAS_PERMISSION| Permission[Permission]
-    Rule -->|HAS_PROHIBITION| Prohibition[Prohibition]
-    Rule -->|TRIGGERED_BY_ORIGIN| CountryGroup
-    Rule -->|TRIGGERED_BY_RECEIVING| CountryGroup
-    Permission -->|CAN_HAVE_DUTY| Duty[Duty]
-    Prohibition -->|CAN_HAVE_DUTY| Duty
+Nodes: Country, CountryGroup, LegalEntity, Rule, Action, Permission, Prohibition, Duty, Process, Purpose, DataSubject, GDC, DataCategory
+
+Key relationships:
+```
+Country -[:BELONGS_TO]-> CountryGroup
+Country -[:HAS_LEGAL_ENTITY]-> LegalEntity
+Rule -[:TRIGGERED_BY_ORIGIN]-> CountryGroup | Country | LegalEntity
+Rule -[:TRIGGERED_BY_RECEIVING]-> CountryGroup | Country | LegalEntity
+Rule -[:EXCLUDES_RECEIVING]-> CountryGroup
+Rule -[:HAS_ACTION]-> Action
+Rule -[:HAS_PERMISSION]-> Permission
+Rule -[:HAS_PROHIBITION]-> Prohibition
+Permission -[:CAN_HAVE_DUTY]-> Duty
 ```
 
+**Important:** Prohibitions do NOT have the `CAN_HAVE_DUTY` relationship. Only permissions can have duties.
+
 **Node Properties:**
-- `Rule`: rule_id, priority, origin_match_type, receiving_match_type, odrl_type, has_pii_required
+- `Rule`: rule_id, priority, origin_match_type, receiving_match_type, odrl_type, has_pii_required, outcome, valid_until
+- `LegalEntity`: name, country
 - `Country`: name
 - `CountryGroup`: name
-- `Action`: name
 - `Permission/Prohibition`: name
 - `Duty`: name, module, value
 
 ### DataTransferGraph Schema
 
-```mermaid
-graph TD
-    Case[Case] -->|ORIGINATES_FROM| Country[Country]
-    Case -->|TRANSFERS_TO| Jurisdiction[Jurisdiction]
-    Case -->|HAS_PURPOSE| Purpose[Purpose]
-    Case -->|HAS_PROCESS_L1| ProcessL1[ProcessL1]
-    Case -->|HAS_PROCESS_L2| ProcessL2[ProcessL2]
-    Case -->|HAS_PROCESS_L3| ProcessL3[ProcessL3]
-    Case -->|HAS_PERSONAL_DATA| PersonalData[PersonalData]
-    Case -->|HAS_PERSONAL_DATA_CATEGORY| PersonalDataCategory[PersonalDataCategory]
+```
+Case -[:ORIGINATES_FROM]-> Country
+Case -[:TRANSFERS_TO]-> Jurisdiction
+Case -[:HAS_PURPOSE]-> Purpose
+Case -[:HAS_PROCESS_L1]-> ProcessL1
+Case -[:HAS_PROCESS_L2]-> ProcessL2
+Case -[:HAS_PROCESS_L3]-> ProcessL3
+Case -[:HAS_PERSONAL_DATA]-> PersonalData
+Case -[:HAS_PERSONAL_DATA_CATEGORY]-> PersonalDataCategory
 ```
 
-**Case Properties:**
-- case_ref_id
-- case_status
-- pia_status (Completed/Pending/Not Started)
-- tia_status (Completed/Pending/Not Started)
-- hrpr_status (Completed/Pending/Not Started)
+**Case Properties:** case_ref_id, case_status, pia_status, tia_status, hrpr_status
 
 ---
 
 ## Frontend Architecture
 
 ### Tech Stack
-- **Vite** + **React 19** + **TypeScript**
-- **@xyflow/react** (ReactFlow) for graph visualization
-- **Zustand** for state management (wizard flow)
+- **Vite 7** + **React 19** + **TypeScript**
+- **GSAP** for page and step transition animations
+- **Zustand** for state management (wizard, evaluation, auth)
 - **TanStack React Query** for API data caching
-- **Tailwind CSS** for styling
+- **Tailwind CSS v4** for styling
+- **React Router v7** for client-side routing
 
-### Three Pages
+### Authentication
 
-| Page | Route | Description |
-|------|-------|-------------|
-| Rules Network | `/` | Interactive graph visualization with country swimlanes and rule nodes |
-| Evaluator | `/evaluator` | Rule evaluation form with dropdown data, results, and precedent cases |
-| Wizard | `/wizard` | 10-step rule ingestion wizard with SSE progress panel |
+Two hardcoded accounts:
+- `admin` / `admin` - Full access (all pages)
+- `user` / `user` - Limited access (Policy Overview + Evaluator only)
+
+Auth state is managed in `stores/authStore.ts` with localStorage persistence. Routes are protected by `ProtectedRoute` component using role-based checks.
+
+### Pages
+
+| Page | Route | Role | Description |
+|------|-------|------|-------------|
+| Login | `/login` | Public | Username/password form |
+| Policy Overview | `/` | All | Data table with filters (country, risk, duty) and search |
+| Policy Evaluator | `/evaluator` | All | Compliance evaluation with legal entity support |
+| Policy Generator | `/generator` | Admin | 6-step wizard with AI agents |
+| Policy Editor | `/editor` | Admin | Placeholder |
 
 ### Key Frontend Files
 
 ```
 frontend/src/
 ├── pages/
-│   ├── HomePage.tsx              # Rules network graph
-│   ├── EvaluatorPage.tsx         # Rule evaluator
-│   └── WizardPage.tsx            # 10-step wizard
+│   ├── LoginPage.tsx              # Auth login form
+│   ├── HomePage.tsx               # Policy Overview - data table
+│   ├── EvaluatorPage.tsx          # Policy Evaluator - form + results
+│   └── WizardPage.tsx             # Policy Generator - 6-step wizard
 ├── components/
-│   ├── graph/
-│   │   ├── RulesNetworkGraph.tsx  # ReactFlow graph (auto-syncs on data change)
-│   │   ├── RuleNode.tsx           # Custom rule node component
-│   │   └── CountrySwimlane.tsx    # Country group node component
+│   ├── layout/
+│   │   ├── AppLayout.tsx          # Main layout (GSAP fade-in)
+│   │   └── Navbar.tsx             # Horizontal pill-style nav (role-based)
 │   ├── evaluator/
-│   │   ├── EvaluatorForm.tsx      # Evaluation form with dropdowns
-│   │   └── EvaluationResult.tsx   # Results display
-│   └── wizard/
-│       ├── WizardContainer.tsx    # Main wizard orchestrator
-│       ├── WizardStepper.tsx      # Step indicator
-│       ├── steps/                 # Step1Country through Step10Approval
-│       └── shared/
-│           └── AgentProgressPanel.tsx  # SSE event display
+│   │   ├── EvaluatorForm.tsx      # Dark form with legal entity fields
+│   │   └── EvaluationResult.tsx   # Results with permission/prohibition badges
+│   ├── wizard/
+│   │   ├── WizardContainer.tsx    # 6-step orchestrator (GSAP transitions)
+│   │   ├── WizardStepper.tsx      # Step indicator (pill-style)
+│   │   ├── WizardNavigation.tsx   # Back/Next navigation
+│   │   ├── shared/
+│   │   │   └── AgentProgressPanel.tsx
+│   │   └── steps/
+│   │       ├── Step1Country.tsx      # Country + legal entity
+│   │       ├── Step2Metadata.tsx     # Data categories, purposes, processes
+│   │       ├── Step3RuleText.tsx     # Rule text + agent progress
+│   │       ├── Step4Review.tsx       # Editable rule review
+│   │       ├── Step5SandboxTest.tsx  # Sandbox evaluation
+│   │       └── Step6Approve.tsx      # Approval + promotion
+│   └── common/
+│       ├── ProtectedRoute.tsx     # Auth + role route guard (Outlet pattern)
+│       ├── ErrorBoundary.tsx
+│       ├── LoadingSpinner.tsx
+│       └── StatusBadge.tsx
 ├── stores/
-│   └── wizardStore.ts             # Zustand store for wizard state
-├── services/
-│   ├── api.ts                     # Axios instance
-│   ├── wizardApi.ts               # Wizard API functions
-│   └── evaluatorApi.ts            # Evaluator API functions
-└── hooks/
-    ├── useAgentEvents.ts          # SSE hook for agent progress
-    └── useDropdownData.ts         # TanStack Query for dropdowns
+│   ├── authStore.ts               # Login, logout, role (localStorage)
+│   ├── wizardStore.ts             # 6-step wizard state + save/resume
+│   └── evaluationStore.ts         # Evaluation results
+├── hooks/
+│   ├── useAgentEvents.ts          # SSE hook for agent progress
+│   ├── useDropdownData.ts         # TanStack Query for dropdowns
+│   └── useEvaluation.ts           # Evaluation mutation
+└── services/
+    ├── api.ts                     # Axios instance
+    ├── rulesApi.ts                # Rules, dropdowns, legal entities
+    ├── wizardApi.ts               # Wizard lifecycle + save/resume
+    └── evaluatorApi.ts            # Evaluation API
 ```
 
 ### Wizard Data Flow
 
-1. Steps 1-3: User input stored in Zustand → submitted to backend via `submitWizardStep`
+1. Steps 1-3: User input stored in Zustand -> submitted to backend via `submitWizardStep`
 2. Step 3 submission triggers AI agents on backend
 3. After step 3, frontend fetches session state via `getWizardSession` to populate:
-   - `analysisResult` (step 4)
-   - `dictionaryResult` (step 5)
-   - `editedRuleDefinition` (step 6-7)
-4. Step 7 edits are sent to backend via `editRule`/`editTerms` API calls
-5. Step 8 loads rule into sandbox graph
-6. Step 9 tests in sandbox, results unwrapped from `{result, test_number}` response
-7. Step 10 approves and promotes to main graph
+   - `analysisResult`, `dictionaryResult`, `editedRuleDefinition`, `editedTermsDictionary`
+4. Step 4: User can edit the rule definition and save changes via `editRule`/`editTerms`
+5. Step 5: Load rule into sandbox graph and test with sample evaluations
+6. Step 6: Approve and promote to main graph; redirects to Policy Overview
+
+Sessions can be saved from Step 4 onwards via `saveWizardSession` API. Saved sessions persist both server-side (JSON files) and client-side (localStorage).
 
 ---
 
@@ -628,14 +457,15 @@ Content-Type: application/json
 
 {
     "origin_country": "United Kingdom",
-    "receiving_country": "India",
+    "receiving_country": ["India", "China"],
     "pii": true,
     "purposes": ["Marketing"],
-    "metadata": {"data_type": "customer_records"}
+    "origin_legal_entity": "HSBC Holdings plc",
+    "receiving_legal_entity": ["Tata Consultancy Services"]
 }
 ```
 
-### Wizard Lifecycle
+### Wizard Lifecycle (6-Step)
 
 ```http
 POST /api/wizard/start-session           # Start session
@@ -649,6 +479,29 @@ POST /api/wizard/session/{id}/approve           # Promote to main graph
 DELETE /api/wizard/session/{id}                  # Cancel & cleanup
 ```
 
+### Session Persistence
+
+```http
+POST /api/wizard/save-session?session_id={id}   # Save for later resume
+GET  /api/wizard/saved-sessions                   # List saved sessions
+GET  /api/wizard/resume-session/{id}              # Resume saved session
+DELETE /api/wizard/saved-session/{id}             # Delete saved session
+```
+
+### Metadata & Legal Entities
+
+```http
+GET /api/countries
+GET /api/purposes
+GET /api/processes
+GET /api/all-dropdown-values         # Includes legal entities, purpose of processing
+GET /api/legal-entities              # Full country -> legal entities mapping
+GET /api/legal-entities/{country}    # Legal entities for specific country
+GET /api/purpose-of-processing       # Standard purposes list
+GET /api/group-data-categories       # Group data categories from graph
+GET /api/rules-overview-table        # Table data with filter params
+```
+
 ### Agent Events (SSE)
 
 ```http
@@ -657,22 +510,6 @@ Accept: text/event-stream
 ```
 
 Events: `agent_started`, `agent_completed`, `agent_failed`, `phase_changed`, `analysis_progress`, `dictionary_progress`, `cypher_progress`, `validation_progress`, `workflow_complete`, `workflow_failed`
-
-### Metadata
-
-```http
-GET /api/countries
-GET /api/purposes
-GET /api/processes
-GET /api/all-dropdown-values
-```
-
-### Graph Data
-
-```http
-GET /api/graph/rules-network     # For ReactFlow visualization
-GET /api/graph/country-groups    # Country group data
-```
 
 ---
 
@@ -690,17 +527,17 @@ pytest tests/ --cov=. --cov-report=html
 
 | File | Coverage |
 |------|----------|
-| `test_langgraph_workflow.py` | Pydantic models, routing functions, workflow graph, run_rule_ingestion |
+| `test_langgraph_workflow.py` | Pydantic models, routing functions, workflow graph |
 | `test_agentic_workflow.py` | Agent nodes (mocked), EventStore, API endpoints |
 | `test_agent_audit.py` | AuditEventType, AuditEvent, EventStore thread safety |
 | `test_rules_evaluation.py` | Country groups, rule structures, evaluator logic |
 | `test_api.py` | Endpoint testing, request/response validation |
 | `test_attribute_detection.py` | Health, financial, biometric data detection |
 
-### Frontend Tests
+### Frontend Build Verification
 
 ```bash
-cd frontend && npm test
+cd frontend && npm run build
 ```
 
 ---
@@ -722,12 +559,6 @@ AI_LLM_MODEL=o3-mini
 AI_TOKEN_USERNAME=your_username
 AI_TOKEN_PASSWORD=your_password
 
-# Auth Headers (Phase 2)
-# Token_Type: SESSION_TOKEN
-# X-HSBC-E2E-Trust-Token: <token>
-# x-correlation-id: <username>
-# x-usersession-id: <username>
-
 # Server
 APP_PORT=5001
 ENVIRONMENT=development
@@ -746,20 +577,28 @@ ENVIRONMENT=development
 2. **"Rule validation failed"**
    - Ensure `rule_id` starts with `RULE_`
    - Priority must be 1-100
-   - `odrl_type` must match outcome (`Prohibition` ↔ `prohibition`)
+   - `odrl_type` must match outcome (`Prohibition` <-> `prohibition`)
 
 3. **Empty dropdowns in UI**
    - Ensure DataTransferGraph has data: `python main.py --upload-data sample_data.json`
    - Check database connection: `GET /health`
 
-4. **Wizard stuck at step 4-5**
+4. **Wizard stuck at step 3**
    - Check AI service credentials
    - View agent events SSE stream for errors
    - Check backend logs for AI request failures
 
 5. **Sandbox evaluation returns errors**
-   - Ensure sandbox was created (step 8) before testing (step 9)
+   - Ensure sandbox was loaded (step 5) before testing
    - Check FalkorDB connection and temp graph creation
+
+6. **Login not working**
+   - Use `admin` / `admin` for full access or `user` / `user` for limited access
+   - Auth state is stored in localStorage; clear browser storage if state is corrupted
+
+7. **Admin pages not visible**
+   - Policy Generator and Policy Editor require admin role
+   - Log in with `admin` / `admin` credentials
 
 ---
 

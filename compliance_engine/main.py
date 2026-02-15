@@ -36,10 +36,10 @@ def run_server():
     run()
 
 
-def build_graph():
+def build_graph(incremental: bool = False):
     """Build the rules graph"""
     from utils.graph_builder import build_rules_graph
-    build_rules_graph()
+    build_rules_graph(clear_existing=not incremental)
 
 
 def upload_data(file_path: str, clear: bool = False):
@@ -74,6 +74,12 @@ def main():
         "--upload-data",
         metavar="FILE",
         help="Upload data from a JSON file"
+    )
+
+    parser.add_argument(
+        "--incremental",
+        action="store_true",
+        help="Build graph incrementally (MERGE, no clear) instead of full rebuild"
     )
 
     parser.add_argument(
@@ -113,8 +119,9 @@ def main():
     logger = logging.getLogger(__name__)
 
     if args.build_graph:
-        logger.info("Building RulesGraph...")
-        build_graph()
+        mode = "incremental" if args.incremental else "full"
+        logger.info(f"Building RulesGraph ({mode} mode)...")
+        build_graph(incremental=args.incremental)
         logger.info("RulesGraph build complete!")
 
     elif args.upload_data:

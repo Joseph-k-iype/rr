@@ -124,6 +124,16 @@ class SSEManager:
         data = event.model_dump()
         return f"event: {event.event_type.value}\ndata: {json.dumps(data)}\n\n"
 
+    def publish_error(self, session_id: str, agent_name: str, error_message: str):
+        """Publish an error event when an agent fails."""
+        error_event = AgentEvent(
+            event_type=AgentEventType.AGENT_FAILED,
+            session_id=session_id,
+            agent_name=agent_name,
+            message=f"Error in {agent_name}: {error_message}",
+        )
+        self.publish_sync(session_id, error_event)
+
     def has_subscribers(self, session_id: str) -> bool:
         """Check if a session has active subscribers."""
         return session_id in self._queues and len(self._queues[session_id]) > 0

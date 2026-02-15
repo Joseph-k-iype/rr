@@ -1,0 +1,71 @@
+name,category
+Full Name,Personal Identifiers
+Date of Birth,Personal Identifiers
+National ID,Personal Identifiers
+Passport Number,Personal Identifiers
+Social Security Number,Personal Identifiers
+Email Address,Personal Identifiers
+Phone Number,Personal Identifiers
+IP Address,Personal Identifiers
+Device Identifier,Personal Identifiers
+Employee ID,Personal Identifiers
+Tax Identification Number,Personal Identifiers
+Driver License Number,Personal Identifiers
+Bank Account Number,Financial Data
+Credit Card Number,Financial Data
+Income Details,Financial Data
+Credit Score,Financial Data
+Investment Portfolio,Financial Data
+Loan Details,Financial Data
+Transaction History,Financial Data
+Tax Records,Financial Data
+Insurance Policy,Financial Data
+Pension Details,Financial Data
+Salary Information,Financial Data
+Billing Address,Financial Data
+Medical Records,Health Data
+Diagnoses,Health Data
+Prescriptions,Health Data
+Lab Results,Health Data
+Mental Health Records,Health Data
+Disability Status,Health Data
+Genetic Data,Health Data
+Vaccination Records,Health Data
+Fingerprint,Biometric Data
+Facial Recognition Data,Biometric Data
+Voice Print,Biometric Data
+Iris Scan,Biometric Data
+Retina Pattern,Biometric Data
+Palm Print,Biometric Data
+Gait Analysis,Biometric Data
+Keystroke Dynamics,Biometric Data
+GPS Coordinates,Location Data
+Home Address,Location Data
+Work Address,Location Data
+Travel History,Location Data
+Check-in Data,Location Data
+Geofence Data,Location Data
+Cell Tower Data,Location Data
+Wi-Fi Location Data,Location Data
+Job Title,Employment Data
+Employment History,Employment Data
+Performance Reviews,Employment Data
+Disciplinary Records,Employment Data
+Training Records,Employment Data
+Attendance Records,Employment Data
+Leave Records,Employment Data
+Compensation History,Employment Data
+Email Content,Communication Data
+Chat Messages,Communication Data
+Call Records,Communication Data
+Video Conference Data,Communication Data
+Social Media Posts,Communication Data
+Correspondence Records,Communication Data
+Browsing History,Behavioral Data
+Purchase History,Behavioral Data
+App Usage Data,Behavioral Data
+Search Queries,Behavioral Data
+Click Patterns,Behavioral Data
+Content Preferences,Behavioral Data
+Subscription History,Behavioral Data
+Loyalty Program Data,Behavioral Data

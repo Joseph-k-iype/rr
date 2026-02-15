@@ -1,0 +1,52 @@
+name,category
+Service Delivery,Contractual
+Contract Fulfillment,Contractual
+Payment Processing,Contractual
+Order Management,Contractual
+Warranty Administration,Contractual
+Subscription Management,Contractual
+Account Servicing,Contractual
+Product Delivery,Contractual
+Service Level Monitoring,Contractual
+Invoice Generation,Contractual
+Tax Compliance,Legal Obligation
+Regulatory Reporting,Legal Obligation
+AML Compliance,Legal Obligation
+KYC Verification,Legal Obligation
+Sanctions Screening,Legal Obligation
+Financial Reporting,Legal Obligation
+Employment Law Compliance,Legal Obligation
+Health and Safety Reporting,Legal Obligation
+Data Retention Compliance,Legal Obligation
+Audit Trail Maintenance,Legal Obligation
+Fraud Prevention,Legitimate Interest
+Risk Management,Legitimate Interest
+Internal Audit,Legitimate Interest
+Business Analytics,Legitimate Interest
+Network Security,Legitimate Interest
+IT Administration,Legitimate Interest
+Quality Assurance,Legitimate Interest
+Product Improvement,Legitimate Interest
+Customer Insights,Legitimate Interest
+Operational Efficiency,Legitimate Interest
+Marketing Analytics,Consent-based
+Targeted Advertising,Consent-based
+Newsletter Distribution,Consent-based
+Customer Profiling,Consent-based
+Location-based Services,Consent-based
+Cookie Tracking,Consent-based
+Third Party Sharing,Consent-based
+Research Participation,Consent-based
+Behavioral Analysis,Consent-based
+Personalization,Consent-based
+Consent Management,Consent-based
+Emergency Response,Vital Interest
+Health Monitoring,Vital Interest
+Safety Alerts,Vital Interest
+Crisis Management,Vital Interest
+Disaster Recovery Support,Vital Interest
+Public Health Reporting,Vital Interest
+Epidemic Surveillance,Vital Interest
+Medical Emergency Processing,Vital Interest
+Life Safety Systems,Vital Interest
+Critical Infrastructure Protection,Vital Interest

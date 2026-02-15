@@ -152,13 +152,15 @@ class ComplianceAgentExecutor(AgentExecutor):
         self,
         user_prompt: str,
         system_prompt: str,
-        max_retries: int = 2,
+        max_retries: int = 3,
+        context: Optional[InProcessRequestContext] = None,
     ) -> str:
         """Call AI service with transparent retry on auth/request errors.
 
         Retries up to max_retries times on AIRequestError or
         AIAuthenticationError (e.g. token expiry, 401). Preserves the
         full prompt context across retries so no information is lost.
+        On auth errors, the full state is preserved and context is re-injected.
 
         Returns:
             LLM response text
@@ -167,17 +169,40 @@ class ComplianceAgentExecutor(AgentExecutor):
             AIRequestError: If all retries fail
         """
         last_error = None
+        accumulated_errors: list[str] = []
+
         for attempt in range(max_retries + 1):
             try:
-                return self.ai_service.chat(user_prompt, system_prompt)
+                # On retry, include error context in the prompt
+                if accumulated_errors:
+                    error_context = "\n".join(f"Previous attempt {i+1} error: {e}" for i, e in enumerate(accumulated_errors))
+                    enhanced_prompt = f"{user_prompt}\n\n[RETRY CONTEXT - Previous attempts failed:\n{error_context}\nPlease adjust your response accordingly.]"
+                else:
+                    enhanced_prompt = user_prompt
+
+                result = self.ai_service.chat(enhanced_prompt, system_prompt)
+
+                # Save checkpoint on success if context available
+                if context and hasattr(context, '_state'):
+                    state = context._state
+                    checkpoints = state.get("memory_checkpoints", {})
+                    checkpoints[f"{self.agent_name}_last_success"] = {
+                        "attempt": attempt + 1,
+                        "prompt_hash": hash(user_prompt[:100]),
+                    }
+                    state["memory_checkpoints"] = checkpoints
+
+                return result
             except (AIRequestError, AIAuthenticationError) as e:
                 last_error = e
+                accumulated_errors.append(str(e))
                 if attempt < max_retries:
+                    wait_time = min(2 ** attempt, 8)  # Exponential backoff: 1, 2, 4, 8
                     logger.warning(
                         f"{self.agent_name}: auth/request error "
-                        f"(attempt {attempt + 1}/{max_retries + 1}), retrying: {e}"
+                        f"(attempt {attempt + 1}/{max_retries + 1}), retrying in {wait_time}s: {e}"
                     )
-                    time.sleep(1)
+                    time.sleep(wait_time)
                     continue
         raise AIRequestError(
             f"{self.agent_name}: failed after {max_retries + 1} attempts: {last_error}"
@@ -251,9 +276,31 @@ async def _drain_event_queue_to_sse(
     state: WizardAgentState,
     agent_name: str,
 ):
-    """Dequeue all A2A events, map to AgentEvent, publish via SSE manager."""
+    """Dequeue all A2A events, map to AgentEvent, publish via SSE manager.
+
+    Also emits agent_started before draining and agent_completed after,
+    ensuring every phase produces at least these two SSE events.
+    """
     sse_manager = get_sse_manager()
     session_id = state.get("origin_country", "unknown")
+
+    # Emit agent_started event at the beginning of every phase
+    started_event = AgentEvent(
+        event_type=AgentEventType.AGENT_STARTED,
+        session_id=session_id,
+        agent_name=agent_name,
+        phase=state.get("current_phase", ""),
+        message=f"{agent_name}: started",
+    )
+    sse_manager.publish_sync(session_id, started_event)
+    state["events"].append({
+        "event_type": AgentEventType.AGENT_STARTED.value,
+        "agent_name": agent_name,
+        "message": started_event.message,
+    })
+
+    has_completed = False
+    has_failed = False
 
     while True:
         try:
@@ -270,6 +317,11 @@ async def _drain_event_queue_to_sse(
             event_type = _TASK_STATE_TO_EVENT_TYPE.get(
                 task_state, AgentEventType.AGENT_COMPLETED
             )
+
+            if event_type == AgentEventType.AGENT_COMPLETED:
+                has_completed = True
+            if event_type == AgentEventType.AGENT_FAILED:
+                has_failed = True
 
             sse_event = AgentEvent(
                 event_type=event_type,
@@ -288,3 +340,19 @@ async def _drain_event_queue_to_sse(
                 "agent_name": agent_name,
                 "message": sse_event.message,
             })
+
+    # Ensure agent_completed is always emitted (unless it already was or agent failed)
+    if not has_completed and not has_failed:
+        completed_event = AgentEvent(
+            event_type=AgentEventType.AGENT_COMPLETED,
+            session_id=session_id,
+            agent_name=agent_name,
+            phase=state.get("current_phase", ""),
+            message=f"{agent_name}: completed",
+        )
+        sse_manager.publish_sync(session_id, completed_event)
+        state["events"].append({
+            "event_type": AgentEventType.AGENT_COMPLETED.value,
+            "agent_name": agent_name,
+            "message": completed_event.message,
+        })

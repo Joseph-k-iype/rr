@@ -46,23 +46,24 @@ export function Step1Country() {
             <label className="block text-sm font-semibold text-white mb-2">Origin Country</label>
             <select
               value={originCountry}
-              onChange={(e) => { setOriginCountry(e.target.value); setOriginLegalEntity(''); }}
+              onChange={(e) => { setOriginCountry(e.target.value); setOriginLegalEntity([]); }}
               className="input-dark" required
             >
               <option value="">Select...</option>
-              {dropdowns?.countries.map(c => <option key={c} value={c}>{c}</option>)}
+              {(dropdowns?.countries || []).map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <div>
             <label className="block text-sm font-semibold text-white mb-2">Originating Legal Entity</label>
             <select
-              value={originLegalEntity}
-              onChange={(e) => setOriginLegalEntity(e.target.value)}
-              className="input-dark"
+              multiple
+              value={Array.isArray(originLegalEntity) ? originLegalEntity : originLegalEntity ? [originLegalEntity] : []}
+              onChange={(e) => setOriginLegalEntity(Array.from(e.target.selectedOptions, o => o.value))}
+              className="input-dark h-20"
             >
-              <option value="">Select...</option>
               {originLEs.map(le => <option key={le} value={le}>{le}</option>)}
             </select>
+            <p className="text-xs text-gray-400 mt-1">Hold Ctrl/Cmd to select multiple.</p>
           </div>
         </div>
 
@@ -76,7 +77,7 @@ export function Step1Country() {
               onChange={(e) => setReceivingCountries(Array.from(e.target.selectedOptions, o => o.value))}
               className="input-dark h-24"
             >
-              {dropdowns?.countries.map(c => <option key={c} value={c}>{c}</option>)}
+              {(dropdowns?.countries || []).map(c => <option key={c} value={c}>{c}</option>)}
             </select>
             <p className="text-xs text-gray-400 mt-1">Hold Ctrl/Cmd to select multiple. Leave empty for all countries.</p>
           </div>

@@ -6,7 +6,7 @@ interface WizardState {
   // Step 1
   originCountry: string;
   receivingCountries: string[];
-  originLegalEntity: string;
+  originLegalEntity: string[];
   receivingLegalEntity: string;
   // Step 2
   dataCategories: string[];
@@ -39,7 +39,7 @@ interface WizardState {
   setStep: (step: number) => void;
   setOriginCountry: (c: string) => void;
   setReceivingCountries: (c: string[]) => void;
-  setOriginLegalEntity: (e: string) => void;
+  setOriginLegalEntity: (e: string[]) => void;
   setReceivingLegalEntity: (e: string) => void;
   setDataCategories: (c: string[]) => void;
   setPurposesOfProcessing: (p: string[]) => void;
@@ -73,7 +73,7 @@ const initialState = {
   currentStep: 1,
   originCountry: '',
   receivingCountries: [] as string[],
-  originLegalEntity: '',
+  originLegalEntity: [] as string[],
   receivingLegalEntity: '',
   dataCategories: [] as string[],
   purposesOfProcessing: [] as string[],
@@ -137,7 +137,7 @@ export const useWizardStore = create<WizardState>((set, get) => ({
       currentStep: session.current_step as number || 1,
       originCountry: session.origin_country as string || '',
       receivingCountries: session.receiving_countries as string[] || [],
-      originLegalEntity: session.origin_legal_entity as string || '',
+      originLegalEntity: (Array.isArray(session.origin_legal_entity) ? session.origin_legal_entity : session.origin_legal_entity ? [session.origin_legal_entity as string] : []) as string[],
       receivingLegalEntity: session.receiving_legal_entity as string || '',
       dataCategories: session.data_categories as string[] || [],
       purposesOfProcessing: session.purposes_of_processing as string[] || [],

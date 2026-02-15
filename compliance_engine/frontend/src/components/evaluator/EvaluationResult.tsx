@@ -14,7 +14,7 @@ export function EvaluationResult() {
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
       {/* Triggered Rules */}
-      {result.triggered_rules.map((rule, i) => (
+      {(result.triggered_rules || []).map((rule, i) => (
         <div key={`${rule.rule_id}-${i}`} className="border border-gray-200 rounded-lg p-4">
           <div className="flex items-start justify-between mb-2">
             <span className="text-sm font-medium text-gray-600">Rule {i + 1}</span>
@@ -26,8 +26,8 @@ export function EvaluationResult() {
           {rule.description && <p className="text-xs text-gray-500 mb-2">{rule.description}</p>}
 
           {/* Duties for permissions */}
-          {rule.outcome === 'permission' && rule.permissions?.map(p =>
-            p.duties?.map(d => (
+          {rule.outcome === 'permission' && (rule.permissions || []).map(p =>
+            (p.duties || []).map(d => (
               <div key={d.duty_id} className="mt-1">
                 <span className="text-xs font-semibold text-blue-600">Duty</span>
                 <p className="text-xs text-gray-700">{d.name}</p>
@@ -38,11 +38,11 @@ export function EvaluationResult() {
       ))}
 
       {/* Precedent Cases */}
-      {result.precedent_validation && result.precedent_validation.matching_cases.length > 0 && (
+      {result.precedent_validation && (result.precedent_validation.matching_cases || []).length > 0 && (
         <div className="border-t pt-3">
           <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
             <span>List of cases matched</span>
-            <span>{result.precedent_validation.matching_cases.map(c => c.case_ref_id).join(', ')}</span>
+            <span>{(result.precedent_validation.matching_cases || []).map(c => c.case_ref_id).join(', ')}</span>
           </div>
         </div>
       )}
@@ -63,9 +63,9 @@ export function EvaluationResult() {
         </div>
       </div>
 
-      {result.prohibition_reasons.length > 0 && (
+      {(result.prohibition_reasons || []).length > 0 && (
         <div className="text-xs text-red-600">
-          {result.prohibition_reasons.map((r, i) => <p key={i}>{r}</p>)}
+          {(result.prohibition_reasons || []).map((r, i) => <p key={i}>{r}</p>)}
         </div>
       )}
     </div>

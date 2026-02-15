@@ -1,4 +1,5 @@
 import { useCallback, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useWizardStore } from '../../stores/wizardStore';
 import { useAgentEvents } from '../../hooks/useAgentEvents';
 import { startWizardSession, submitWizardStep, getWizardSession, loadSandbox, approveWizard } from '../../services/wizardApi';
@@ -23,6 +24,7 @@ const stepComponents: Record<number, React.FC> = {
 
 export function WizardContainer() {
   const store = useWizardStore();
+  const navigate = useNavigate();
   const stepRef = useRef<HTMLDivElement>(null);
   const prevStepRef = useRef(store.currentStep);
 
@@ -83,7 +85,7 @@ export function WizardContainer() {
           1: {
             origin_country: state.originCountry,
             receiving_countries: state.receivingCountries,
-            origin_legal_entity: state.originLegalEntity,
+            origin_legal_entity: Array.isArray(state.originLegalEntity) ? state.originLegalEntity : state.originLegalEntity ? [state.originLegalEntity] : [],
             receiving_legal_entity: state.receivingLegalEntity,
           },
           2: {
@@ -148,6 +150,11 @@ export function WizardContainer() {
         await approveWizard(sessionId);
         store.setApproved(true);
         store.setProcessing(false);
+        // Auto-navigate to homepage after a brief success display
+        setTimeout(() => {
+          store.reset();
+          navigate('/');
+        }, 1500);
         return;
       }
 

@@ -39,6 +39,12 @@ class WizardAgentState(TypedDict):
     validation_errors: List[str]  # errors from previous iterations for context
     validation_retry_count: int   # consecutive validation failures (for skip fallback)
 
+    # Shared reasoning context between agents
+    shared_reasoning: List[Dict[str, Any]]
+
+    # Memory checkpoints for intermediate results preservation
+    memory_checkpoints: Dict[str, Any]
+
     # Events for SSE streaming
     events: List[Dict[str, Any]]
 
@@ -76,6 +82,8 @@ def create_initial_state(
         requires_human_input=False,
         validation_errors=[],
         validation_retry_count=0,
+        shared_reasoning=[],
+        memory_checkpoints={},
         events=[],
         success=False,
         error_message=None,

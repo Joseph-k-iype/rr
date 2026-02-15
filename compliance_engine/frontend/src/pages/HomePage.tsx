@@ -108,10 +108,10 @@ export function HomePage() {
               </tr>
             </thead>
             <tbody>
-              {data.rows.length === 0 && (
+              {(data.rows || []).length === 0 && (
                 <tr><td colSpan={6} className="text-center py-8 text-gray-400">No rules found</td></tr>
               )}
-              {data.rows.map((row, i) => (
+              {(data.rows || []).map((row, i) => (
                 <tr key={`${row.rule_id}-${i}`}>
                   <td>{row.sending_country}</td>
                   <td>{row.receiving_country}</td>

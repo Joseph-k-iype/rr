@@ -87,11 +87,11 @@ export function EvaluatorForm() {
             <label className="block text-sm font-semibold text-white mb-2">Origin Country</label>
             <select
               value={formData.origin_country}
-              onChange={(e) => setFormData(f => ({ ...f, origin_country: e.target.value, origin_legal_entity: '' }))}
+              onChange={(e) => setFormData(f => ({ ...f, origin_country: e.target.value, origin_legal_entity: '' as string }))}
               className="input-dark" required
             >
               <option value="">Select...</option>
-              {dropdowns?.countries.map(c => <option key={c} value={c}>{c}</option>)}
+              {(dropdowns?.countries || []).map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <div>
@@ -102,19 +102,20 @@ export function EvaluatorForm() {
               onChange={(e) => setFormData(f => ({ ...f, receiving_country: Array.from(e.target.selectedOptions, o => o.value) }))}
               className="input-dark h-20"
             >
-              {dropdowns?.countries.map(c => <option key={c} value={c}>{c}</option>)}
+              {(dropdowns?.countries || []).map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <div>
             <label className="block text-sm font-semibold text-white mb-2">Originating Legal Entity</label>
             <select
-              value={formData.origin_legal_entity || ''}
-              onChange={(e) => setFormData(f => ({ ...f, origin_legal_entity: e.target.value }))}
-              className="input-dark"
+              multiple
+              value={Array.isArray(formData.origin_legal_entity) ? formData.origin_legal_entity : formData.origin_legal_entity ? [formData.origin_legal_entity] : []}
+              onChange={(e) => setFormData(f => ({ ...f, origin_legal_entity: Array.from(e.target.selectedOptions, o => o.value).join(',') }))}
+              className="input-dark h-20"
             >
-              <option value="">Select...</option>
               {originLEs.map(le => <option key={le} value={le}>{le}</option>)}
             </select>
+            <p className="text-xs text-gray-400 mt-1">Hold Ctrl/Cmd to select multiple.</p>
           </div>
           <div>
             <label className="block text-sm font-semibold text-white mb-2">Receiving Legal Entity</label>
@@ -150,7 +151,7 @@ export function EvaluatorForm() {
               onChange={(e) => setFormData(f => ({ ...f, process_l1: Array.from(e.target.selectedOptions, o => o.value) }))}
               className="input-dark h-16"
             >
-              {dropdowns?.processes.l1.map(p => <option key={p} value={p}>{p}</option>)}
+              {(dropdowns?.processes?.l1 || []).map(p => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
           <div>
@@ -161,7 +162,7 @@ export function EvaluatorForm() {
               onChange={(e) => setFormData(f => ({ ...f, process_l2: Array.from(e.target.selectedOptions, o => o.value) }))}
               className="input-dark h-16"
             >
-              {dropdowns?.processes.l2.map(p => <option key={p} value={p}>{p}</option>)}
+              {(dropdowns?.processes?.l2 || []).map(p => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
           <div>
@@ -172,7 +173,7 @@ export function EvaluatorForm() {
               onChange={(e) => setFormData(f => ({ ...f, process_l3: Array.from(e.target.selectedOptions, o => o.value) }))}
               className="input-dark h-16"
             >
-              {dropdowns?.processes.l3.map(p => <option key={p} value={p}>{p}</option>)}
+              {(dropdowns?.processes?.l3 || []).map(p => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
         </div>

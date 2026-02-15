@@ -80,7 +80,7 @@ export function Step5SandboxTest() {
                 className="input-dark text-sm"
               >
                 <option value="">Select...</option>
-                {dropdowns?.countries.map(c => <option key={c} value={c}>{c}</option>)}
+                {(dropdowns?.countries || []).map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             <div>
@@ -91,7 +91,7 @@ export function Step5SandboxTest() {
                 onChange={(e) => setEvalForm(f => ({ ...f, receiving_country: Array.from(e.target.selectedOptions, o => o.value) }))}
                 className="input-dark text-sm h-20"
               >
-                {dropdowns?.countries.map(c => <option key={c} value={c}>{c}</option>)}
+                {(dropdowns?.countries || []).map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
           </div>
@@ -112,19 +112,19 @@ export function Step5SandboxTest() {
             <div>
               <label className="block text-xs font-semibold text-white mb-1">Process L1</label>
               <select multiple value={evalForm.process_l1} onChange={(e) => setEvalForm(f => ({ ...f, process_l1: Array.from(e.target.selectedOptions, o => o.value) }))} className="input-dark text-sm h-14">
-                {dropdowns?.processes.l1.map(p => <option key={p} value={p}>{p}</option>)}
+                {(dropdowns?.processes?.l1 || []).map(p => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
             <div>
               <label className="block text-xs font-semibold text-white mb-1">Process L2</label>
               <select multiple value={evalForm.process_l2} onChange={(e) => setEvalForm(f => ({ ...f, process_l2: Array.from(e.target.selectedOptions, o => o.value) }))} className="input-dark text-sm h-14">
-                {dropdowns?.processes.l2.map(p => <option key={p} value={p}>{p}</option>)}
+                {(dropdowns?.processes?.l2 || []).map(p => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
             <div>
               <label className="block text-xs font-semibold text-white mb-1">Process L3</label>
               <select multiple value={evalForm.process_l3} onChange={(e) => setEvalForm(f => ({ ...f, process_l3: Array.from(e.target.selectedOptions, o => o.value) }))} className="input-dark text-sm h-14">
-                {dropdowns?.processes.l3.map(p => <option key={p} value={p}>{p}</option>)}
+                {(dropdowns?.processes?.l3 || []).map(p => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
           </div>
@@ -149,7 +149,7 @@ export function Step5SandboxTest() {
 
           {latestResult && (
             <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-3">
-              {latestResult.triggered_rules.map((rule, i) => (
+              {(latestResult.triggered_rules || []).map((rule, i) => (
                 <div key={`${rule.rule_id}-${i}`} className="border border-gray-200 rounded-lg p-3">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-xs font-medium text-gray-500">Rule {i + 1}</span>

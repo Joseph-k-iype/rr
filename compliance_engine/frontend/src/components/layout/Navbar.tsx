@@ -17,8 +17,10 @@ export function Navbar() {
   return (
     <nav className="w-full py-4 px-8">
       <div className="flex items-center justify-between">
-        <Link to="/" className="border border-gray-300 rounded-full px-5 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50">
-          Logo
+        <Link to="/" className="flex items-center">
+          <div className="border border-gray-300 rounded-full px-5 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50 flex items-center gap-2 h-8">
+            <span>Privacy Policy Engine</span>
+          </div>
         </Link>
 
         <div className="flex items-center gap-1 bg-white rounded-full border border-gray-200 px-1 py-1">

@@ -21,6 +21,10 @@ from services.attribute_detector import (
     get_attribute_detector,
     AttributeDetectionConfig,
 )
+from rules.dictionaries.rules_definitions import (
+    get_enabled_attribute_rules,
+    RuleOutcome,
+)
 from models.schemas import (
     TransferStatus,
     RuleOutcomeType,
@@ -172,6 +176,26 @@ class RulesEvaluator:
         triggered_rules: List[TriggeredRule] = []
         consolidated_duties: List[str] = []
 
+        # ── PHASE 0: Attribute-level rules (from definitions) ──────────
+        attribute_triggered = self._evaluate_attribute_rules(context)
+        for attr_rule in attribute_triggered:
+            triggered_rules.append(attr_rule)
+            if attr_rule.outcome == RuleOutcomeType.PROHIBITION:
+                # Attribute prohibitions are immediate
+                context_info = self._build_context_info(context)
+                return RulesEvaluationResponse(
+                    transfer_status=TransferStatus.PROHIBITED,
+                    origin_country=origin_country,
+                    receiving_country=receiving_country,
+                    pii=pii,
+                    triggered_rules=triggered_rules,
+                    detected_attributes=self._format_detected(context),
+                    consolidated_duties=consolidated_duties,
+                    prohibition_reasons=[f"Attribute rule '{attr_rule.rule_name}': {attr_rule.description}"],
+                    message=f"Transfer PROHIBITED [{context_info}]: Attribute-level rule triggered.",
+                    evaluation_time_ms=(time.time() - start_time) * 1000,
+                )
+
         # ── PHASE 1: Case-matching rules (graph query) ─────────────────
         case_rules = self._evaluate_case_matching_rules(context)
 
@@ -304,6 +328,88 @@ class RulesEvaluator:
             "has_personal_data": bool(context.personal_data_names),
             "today": today_str,
         })
+
+    # ─── Attribute rule evaluation ─────────────────────────────────────
+
+    def _evaluate_attribute_rules(self, context: EvaluationContext) -> List[TriggeredRule]:
+        """Evaluate attribute-level rules from rules_definitions.py against detected attributes and personal data names."""
+        import re
+        attribute_rules = get_enabled_attribute_rules()
+        triggered = []
+
+        for rule_key, rule in attribute_rules.items():
+            matched = False
+
+            # Check if any personal_data_names match attribute keywords
+            for pdn in context.personal_data_names:
+                pdn_lower = pdn.lower()
+                for keyword in rule.attribute_keywords:
+                    if keyword.lower() in pdn_lower:
+                        matched = True
+                        break
+                if matched:
+                    break
+
+            # Check regex patterns against personal_data_names
+            if not matched:
+                for pdn in context.personal_data_names:
+                    for pattern in rule.attribute_patterns:
+                        if re.search(pattern, pdn):
+                            matched = True
+                            break
+                    if matched:
+                        break
+
+            # Check detected attributes from AttributeDetector
+            if not matched:
+                for detected in context.detected_attributes:
+                    if detected.attribute_name == rule.attribute_name:
+                        matched = True
+                        break
+
+            if not matched:
+                continue
+
+            # Check PII requirement
+            if rule.requires_pii and not context.pii:
+                continue
+
+            outcome = RuleOutcomeType.PROHIBITION if rule.outcome == RuleOutcome.PROHIBITION else RuleOutcomeType.PERMISSION
+            permissions = []
+            prohibitions = []
+
+            if rule.outcome == RuleOutcome.PROHIBITION:
+                prohibitions.append(ProhibitionInfo(
+                    prohibition_id=f"PROHIB_{rule.rule_id}",
+                    name=rule.name,
+                    description=rule.description,
+                ))
+            else:
+                permissions.append(PermissionInfo(
+                    permission_id=f"PERM_{rule.rule_id}",
+                    name=rule.name,
+                    description=rule.description,
+                    duties=[],
+                ))
+
+            triggered.append(TriggeredRule(
+                rule_id=rule.rule_id,
+                rule_name=rule.name,
+                rule_type="attribute",
+                priority=rule.priority,
+                origin_match_type="any",
+                receiving_match_type="any",
+                odrl_type=rule.odrl_type,
+                has_pii_required=rule.requires_pii,
+                description=rule.description,
+                outcome=outcome,
+                permissions=permissions,
+                prohibitions=prohibitions,
+                required_actions=[],
+                required_assessments=[],
+            ))
+
+        return triggered
 
     # ─── Helpers ────────────────────────────────────────────────────────
 

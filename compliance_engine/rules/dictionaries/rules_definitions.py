@@ -308,7 +308,72 @@ TRANSFER_RULES: Dict[str, TransferRule] = {}
 # =============================================================================
 # Attribute-level rules based on data characteristics
 
-ATTRIBUTE_RULES: Dict[str, AttributeRule] = {}
+ATTRIBUTE_RULES: Dict[str, AttributeRule] = {
+    # Sample attribute rules
+    "ATTR_1_HEALTH_DATA": AttributeRule(
+        rule_id="ATTR_1",
+        name="Health Data Transfer Restriction",
+        description="Transfers involving health data require explicit consent and are prohibited to countries without adequate health data protection",
+        priority="high",
+        attribute_name="health_data",
+        attribute_keywords=["medical", "health", "diagnosis", "prescription", "patient", "clinical"],
+        attribute_patterns=[r"(?i)health\s*data", r"(?i)medical\s*record"],
+        outcome=RuleOutcome.PROHIBITION,
+        requires_pii=True,
+        odrl_type="Prohibition",
+    ),
+
+    "ATTR_2_FINANCIAL_DATA": AttributeRule(
+        rule_id="ATTR_2",
+        name="Financial Data Enhanced Protection",
+        description="Transfers involving financial data require enhanced security measures",
+        priority="high",
+        attribute_name="financial_data",
+        attribute_keywords=["credit card", "bank account", "financial", "salary", "income", "tax"],
+        attribute_patterns=[r"(?i)financial\s*data", r"(?i)credit\s*card"],
+        outcome=RuleOutcome.PERMISSION,
+        requires_pii=True,
+        odrl_type="Permission",
+    ),
+
+    "ATTR_3_BIOMETRIC_DATA": AttributeRule(
+        rule_id="ATTR_3",
+        name="Biometric Data Transfer Prohibition",
+        description="Biometric data transfers are prohibited unless explicit consent is obtained",
+        priority="high",
+        attribute_name="biometric_data",
+        attribute_keywords=["fingerprint", "facial recognition", "iris", "biometric", "voice print"],
+        attribute_patterns=[r"(?i)biometric"],
+        outcome=RuleOutcome.PROHIBITION,
+        requires_pii=True,
+        odrl_type="Prohibition",
+    ),
+}
+
+
+# =============================================================================
+# STANDARD ACTIONS AND DUTIES LISTS
+# =============================================================================
+
+# Actions (system-level tasks performed automatically or by the system)
+STANDARD_ACTIONS = [
+    "Anonymisation",
+    "Enhanced Technical and Organisational Security Measures",
+    "Public Availability",
+    "Services Agreement",
+    "Storage Limitation",
+    "Outsourcing Agreement",
+]
+
+# Duties (user-level obligations requiring human action)
+STANDARD_DUTIES = [
+    "Consent",
+    "Consult/Approve Legal",
+    "Consult/Approve Risk and Compliance",
+    "Notification to Regulator",
+    "Local Authority/Regulatory Approval",
+    "Explicit Consent",
+]
 
 
 # =============================================================================

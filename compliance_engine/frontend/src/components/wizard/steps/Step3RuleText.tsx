@@ -9,9 +9,16 @@ export function Step3RuleText() {
   const progressRef = useRef<HTMLDivElement>(null);
 
   // Calculate progress from events
-  const totalPhases = 5;
-  const completedPhases = events.filter(e => e.event_type === 'agent_completed').length;
+  const totalPhases = 6; // supervisor, rule_analyzer, data_dictionary, cypher_generator, validator, reference_data
+  const completedPhases = (events || []).filter(e => e.event_type === 'agent_completed').length;
   const progressPct = Math.min(100, Math.round((completedPhases / totalPhases) * 100));
+
+  // Initialize progress bar to 0% on mount
+  useEffect(() => {
+    if (progressRef.current) {
+      gsap.set(progressRef.current, { width: '0%' });
+    }
+  }, []);
 
   useEffect(() => {
     if (progressRef.current) {
@@ -63,12 +70,12 @@ export function Step3RuleText() {
 
           {/* Progress bar */}
           <div className="progress-bar">
-            <div ref={progressRef} className="progress-bar-fill" style={{ width: `${progressPct}%` }} />
+            <div ref={progressRef} className="progress-bar-fill" />
           </div>
 
           {/* Event stream */}
           <div className="max-h-40 overflow-y-auto space-y-1 font-mono text-xs">
-            {events.filter(e => e.event_type !== 'heartbeat').map((event, i) => (
+            {(events || []).filter(e => e.event_type !== 'heartbeat').map((event, i) => (
               <div key={i} className="agent-text">
                 [{event.event_type}] {event.message || event.agent_name || ''}
               </div>
