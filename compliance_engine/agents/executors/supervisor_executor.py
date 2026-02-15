@@ -70,6 +70,8 @@ class SupervisorExecutor(ComplianceAgentExecutor):
             agent_outputs=agent_outputs,
             validation_status=validation_status,
             feedback="",
+            graph_step=state.get("graph_step", 0),
+            agent_retry_counts=state.get("agent_retry_counts", {}),
         )
 
         try:
@@ -97,9 +99,17 @@ class SupervisorExecutor(ComplianceAgentExecutor):
                 )
 
                 state["current_phase"] = next_agent
+
+                # Track per-agent invocations for circuit breaker
+                if next_agent not in ("complete", "fail", "human_review", "supervisor"):
+                    counts = state.get("agent_retry_counts", {})
+                    counts[next_agent] = counts.get(next_agent, 0) + 1
+                    state["agent_retry_counts"] = counts
+
                 logger.info(
                     f"Supervisor routing to: {next_agent} "
-                    f"(iteration {state.get('iteration', 0)}) - {reasoning}"
+                    f"(iteration {state.get('iteration', 0)}, "
+                    f"step {state.get('graph_step', 0)}) - {reasoning}"
                 )
             else:
                 state["current_phase"] = "fail"

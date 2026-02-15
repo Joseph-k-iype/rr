@@ -79,7 +79,7 @@ def complete_node(state: WizardAgentState) -> WizardAgentState:
 
 
 def fail_node(state: WizardAgentState) -> WizardAgentState:
-    """Handle workflow failure."""
+    """Handle workflow failure. Cleans up any stale temp graphs."""
     state["success"] = False
     if not state.get("error_message"):
         state["error_message"] = "Workflow failed after max iterations"
@@ -88,6 +88,14 @@ def fail_node(state: WizardAgentState) -> WizardAgentState:
         "agent_name": "system",
         "message": state.get("error_message", "Unknown error"),
     })
+
+    # Cleanup stale temp graphs
+    try:
+        from services.database import get_db_service
+        db = get_db_service()
+        db.cleanup_stale_temp_graphs()
+    except Exception:
+        pass
 
     event_store = get_event_store()
     session_id = state.get("origin_country", "unknown")
@@ -100,30 +108,82 @@ def fail_node(state: WizardAgentState) -> WizardAgentState:
     return state
 
 
-def route_from_supervisor(state: WizardAgentState) -> str:
-    """Route based on supervisor decision.
+# ── Circuit breaker constants ─────────────────────────────────────────────
+MAX_GRAPH_STEPS = 35          # hard cap on total node transitions (recursion_limit=50)
+MAX_AGENT_RETRIES = 3         # max times any single agent can be invoked
+MAX_TEST_RETRIES = 2          # max rule_tester failures before auto-completing
 
-    If validation has been retried enough times, route directly to
-    validator so its skip-fallback triggers (instead of letting the
-    supervisor re-analyze endlessly).
+
+def _increment_graph_step(state: WizardAgentState) -> int:
+    """Increment and return the global graph step counter."""
+    step = state.get("graph_step", 0) + 1
+    state["graph_step"] = step
+    return step
+
+
+def _increment_agent_retry(state: WizardAgentState, agent_name: str) -> int:
+    """Increment and return the per-agent retry counter."""
+    counts = state.get("agent_retry_counts", {})
+    counts[agent_name] = counts.get(agent_name, 0) + 1
+    state["agent_retry_counts"] = counts
+    return counts[agent_name]
+
+
+def route_from_supervisor(state: WizardAgentState) -> str:
+    """Route based on supervisor decision with hard circuit breakers.
+
+    Circuit breakers (checked in order):
+    1. graph_step >= MAX_GRAPH_STEPS → fail (prevents recursion error)
+    2. iteration >= max_iterations → fail
+    3. validation_retry_count >= 3 → force validator (triggers skip fallback)
+    4. target agent retried >= MAX_AGENT_RETRIES → skip to next logical phase
+    5. Otherwise follow supervisor's decision
     """
     phase = state.get("current_phase", "fail")
 
-    # If validation retries exhausted, go straight to validator (triggers skip fallback)
-    retry_count = state.get("validation_retry_count", 0)
-    if retry_count >= 3 and phase not in ("complete", "fail"):
-        return "validator"
+    # ── Breaker 1: hard graph step limit ──
+    step = _increment_graph_step(state)
+    if step >= MAX_GRAPH_STEPS and phase not in ("complete", "fail"):
+        logger.warning(f"Circuit breaker: graph_step={step} >= {MAX_GRAPH_STEPS}, forcing fail")
+        state["error_message"] = f"Workflow exceeded {MAX_GRAPH_STEPS} graph steps"
+        return "fail"
 
-    # Check max iterations
+    # ── Breaker 2: iteration limit ──
     iteration = state.get("iteration", 0)
     max_iterations = state.get("max_iterations", 10)
     if iteration >= max_iterations and phase not in ("complete", "fail"):
+        logger.warning(f"Circuit breaker: iteration={iteration} >= max={max_iterations}")
         return "fail"
 
+    # ── Breaker 3: validation retry exhaustion → force validator skip fallback ──
+    retry_count = state.get("validation_retry_count", 0)
+    if retry_count >= 3 and phase not in ("complete", "fail", "rule_tester"):
+        return "validator"
+
+    # ── Breaker 4: per-agent retry limit ──
     valid_routes = {
         "rule_analyzer", "data_dictionary", "cypher_generator",
         "validator", "reference_data", "rule_tester", "human_review", "complete", "fail"
     }
+
+    if phase in valid_routes and phase not in ("complete", "fail", "human_review"):
+        agent_counts = state.get("agent_retry_counts", {})
+        agent_count = agent_counts.get(phase, 0)
+        if agent_count >= MAX_AGENT_RETRIES:
+            logger.warning(
+                f"Circuit breaker: agent '{phase}' invoked {agent_count} times, "
+                f"skipping to next phase"
+            )
+            # Skip logic: push forward in the pipeline
+            skip_map = {
+                "rule_analyzer": "cypher_generator",
+                "data_dictionary": "cypher_generator",
+                "cypher_generator": "validator",
+                "validator": "rule_tester",
+                "reference_data": "rule_tester",
+                "rule_tester": "complete",
+            }
+            return skip_map.get(phase, "complete")
 
     if phase in valid_routes:
         return phase
@@ -131,7 +191,8 @@ def route_from_supervisor(state: WizardAgentState) -> str:
 
 
 def route_after_validation(state: WizardAgentState) -> str:
-    """Route after validation."""
+    """Route after validation. Increments graph step for safety."""
+    _increment_graph_step(state)
     phase = state.get("current_phase", "supervisor")
     if phase == "rule_tester":
         return "rule_tester"
@@ -143,7 +204,8 @@ def route_after_validation(state: WizardAgentState) -> str:
 
 
 def route_after_rule_tester(state: WizardAgentState) -> str:
-    """Route after rule tester."""
+    """Route after rule tester. Increments graph step for safety."""
+    _increment_graph_step(state)
     phase = state.get("current_phase", "supervisor")
     if phase == "complete":
         return "complete"
@@ -343,6 +405,17 @@ def run_rule_ingestion(
 
     except Exception as e:
         logger.error(f"Workflow execution failed: {e}", exc_info=True)
+
+        # Cleanup any stale temp graphs on workflow failure
+        try:
+            from services.database import get_db_service
+            db = get_db_service()
+            cleaned = db.cleanup_stale_temp_graphs()
+            if cleaned:
+                logger.info(f"Cleaned {cleaned} stale temp graphs after workflow error")
+        except Exception as cleanup_err:
+            logger.debug(f"Temp graph cleanup skipped: {cleanup_err}")
+
         error_state = initial_state.copy()
         error_state["success"] = False
         error_state["error_message"] = f"Workflow error: {str(e)}"

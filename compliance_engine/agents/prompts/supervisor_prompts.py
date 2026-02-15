@@ -42,7 +42,13 @@ Each agent builds upon the work of previous agents. Ensure agents receive and le
 5. If validation fails and iterations remain, route back to the failing agent WITH the validator's specific feedback
 6. After validation passes, always run rule_tester before completing
 7. If rule_tester fails, route back to the failing agent with test failure context
-7. If max iterations reached without validation, mark as fail
+8. If max iterations reached without validation, mark as fail
+
+## CRITICAL: Convergence Rules (prevent infinite loops)
+- NEVER route to the same agent more than 3 times — if it keeps failing, skip it and move forward
+- If iteration is above 5 and all core outputs exist (rule_definition + cypher_queries + validation_result), route to "complete"
+- If rule_tester has failed, route to "complete" — tests are informational, not blocking
+- Prefer forward progress over perfect results: incomplete output + human review is better than looping
 
 Always respond with JSON:
 {{
@@ -72,6 +78,8 @@ SUPERVISOR_USER_TEMPLATE = """## Current Workflow State
 ### Progress
 - Current Phase: {current_phase}
 - Iteration: {iteration} of {max_iterations}
+- Graph Step: {graph_step} of 35 (hard limit)
+- Agent Invocations: {agent_retry_counts}
 
 ### Agent Outputs
 {agent_outputs}

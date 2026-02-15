@@ -94,6 +94,25 @@ class DatabaseService:
             logger.error(f"Failed to delete graph {graph_name}: {e}")
             return False
 
+    def cleanup_stale_temp_graphs(self) -> int:
+        """Delete all temporary graphs. Call on startup or after workflow errors."""
+        cleaned = 0
+        prefix = settings.database.temp_graph_prefix
+        try:
+            graphs = self.db.list_graphs()
+            for graph_name in graphs:
+                if graph_name.startswith(prefix):
+                    try:
+                        graph = self.db.select_graph(graph_name)
+                        graph.delete()
+                        cleaned += 1
+                        logger.info(f"Cleaned stale temp graph: {graph_name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to clean temp graph {graph_name}: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to list graphs for cleanup: {e}")
+        return cleaned
+
     def execute_query(
         self,
         query: str,

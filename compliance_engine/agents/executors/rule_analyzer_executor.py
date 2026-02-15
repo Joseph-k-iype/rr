@@ -131,6 +131,7 @@ class RuleAnalyzerExecutor(ComplianceAgentExecutor):
                 except ValidationError as ve:
                     errors = [str(e) for e in ve.errors()]
                     state["current_phase"] = "supervisor"
+                    state["iteration"] = state.get("iteration", 0) + 1
                     self.event_store.append(
                         session_id=session_id,
                         event_type=AuditEventType.AGENT_FAILED,
@@ -140,6 +141,7 @@ class RuleAnalyzerExecutor(ComplianceAgentExecutor):
                     logger.warning(f"Rule validation failed: {errors}")
             else:
                 state["current_phase"] = "supervisor"
+                state["iteration"] = state.get("iteration", 0) + 1
                 self.event_store.append(
                     session_id=session_id,
                     event_type=AuditEventType.AGENT_FAILED,
@@ -150,6 +152,7 @@ class RuleAnalyzerExecutor(ComplianceAgentExecutor):
         except AIRequestError as e:
             logger.error(f"Rule analyzer error: {e}")
             state["current_phase"] = "supervisor"
+            state["iteration"] = state.get("iteration", 0) + 1
             self.event_store.append(
                 session_id=session_id,
                 event_type=AuditEventType.AGENT_FAILED,

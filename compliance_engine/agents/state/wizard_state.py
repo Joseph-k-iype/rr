@@ -40,6 +40,11 @@ class WizardAgentState(TypedDict):
     validation_errors: List[str]  # errors from previous iterations for context
     validation_retry_count: int   # consecutive validation failures (for skip fallback)
 
+    # Circuit breaker: tracks total graph node transitions and per-agent invocations
+    graph_step: int                          # incremented on every supervisor call
+    agent_retry_counts: Dict[str, int]       # per-agent invocation counts
+    test_retry_count: int                    # consecutive rule_tester failures
+
     # Shared reasoning context between agents
     shared_reasoning: List[Dict[str, Any]]
 
@@ -84,6 +89,9 @@ def create_initial_state(
         requires_human_input=False,
         validation_errors=[],
         validation_retry_count=0,
+        graph_step=0,
+        agent_retry_counts={},
+        test_retry_count=0,
         shared_reasoning=[],
         memory_checkpoints={},
         events=[],

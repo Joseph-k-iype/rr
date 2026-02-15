@@ -99,6 +99,7 @@ class DataDictionaryExecutor(ComplianceAgentExecutor):
                 })
             else:
                 state["current_phase"] = "supervisor"
+                state["iteration"] = state.get("iteration", 0) + 1
                 self.event_store.append(
                     session_id=session_id,
                     event_type=AuditEventType.AGENT_FAILED,
@@ -109,6 +110,7 @@ class DataDictionaryExecutor(ComplianceAgentExecutor):
         except AIRequestError as e:
             logger.error(f"Data dictionary error: {e}")
             state["current_phase"] = "supervisor"
+            state["iteration"] = state.get("iteration", 0) + 1
             self.event_store.append(
                 session_id=session_id,
                 event_type=AuditEventType.AGENT_FAILED,

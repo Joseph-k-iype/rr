@@ -32,6 +32,8 @@ def build_supervisor_prompt(
     agent_outputs: Dict[str, Any],
     validation_status: str,
     feedback: str,
+    graph_step: int = 0,
+    agent_retry_counts: Optional[Dict[str, int]] = None,
 ) -> str:
     """Build a fully-assembled supervisor user prompt."""
     return template.format(
@@ -43,6 +45,8 @@ def build_supervisor_prompt(
         current_phase=current_phase,
         iteration=iteration,
         max_iterations=max_iterations,
+        graph_step=graph_step,
+        agent_retry_counts=json.dumps(agent_retry_counts or {}, default=str),
         agent_outputs=json.dumps(agent_outputs, indent=2, default=str),
         validation_status=validation_status,
         feedback=feedback or "None",

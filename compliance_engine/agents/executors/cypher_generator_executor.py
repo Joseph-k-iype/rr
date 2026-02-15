@@ -81,6 +81,7 @@ class CypherGeneratorExecutor(ComplianceAgentExecutor):
                         if not syntax_ok:
                             logger.warning("Cypher EXPLAIN validation failed, routing back to supervisor for retry")
                             state["current_phase"] = "supervisor"
+                            state["iteration"] = state.get("iteration", 0) + 1
                             await self.emit_completed(event_queue, ctx)
                             return
 
@@ -109,6 +110,7 @@ class CypherGeneratorExecutor(ComplianceAgentExecutor):
                 except ValidationError as ve:
                     errors = [str(e) for e in ve.errors()]
                     state["current_phase"] = "supervisor"
+                    state["iteration"] = state.get("iteration", 0) + 1
                     self.event_store.append(
                         session_id=session_id,
                         event_type=AuditEventType.AGENT_FAILED,
@@ -117,6 +119,7 @@ class CypherGeneratorExecutor(ComplianceAgentExecutor):
                     )
             else:
                 state["current_phase"] = "supervisor"
+                state["iteration"] = state.get("iteration", 0) + 1
                 self.event_store.append(
                     session_id=session_id,
                     event_type=AuditEventType.AGENT_FAILED,
@@ -127,6 +130,7 @@ class CypherGeneratorExecutor(ComplianceAgentExecutor):
         except AIRequestError as e:
             logger.error(f"Cypher generator error: {e}")
             state["current_phase"] = "supervisor"
+            state["iteration"] = state.get("iteration", 0) + 1
             self.event_store.append(
                 session_id=session_id,
                 event_type=AuditEventType.AGENT_FAILED,
