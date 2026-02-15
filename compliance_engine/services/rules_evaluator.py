@@ -364,7 +364,15 @@ class RulesEvaluator:
                 or rule_row.get('linked_purposes')
             )
 
-            if rule_type == 'attribute' or (has_keywords and rule_type in ('transfer', 'case_matching')):
+            # Determine if this rule requires content matching
+            needs_content_match = (
+                rule_type == 'attribute'
+                or has_keywords
+                or has_patterns
+                or has_linked
+            )
+
+            if needs_content_match:
                 matched = False
 
                 # Method 1: JSON keyword/pattern matching against all input dimensions
@@ -386,19 +394,15 @@ class RulesEvaluator:
                     matched = self._match_graph_linked_attributes(context, rule_row)
 
                 if not matched:
-                    if rule_type == 'attribute':
-                        logger.debug(
-                            f"Attribute rule {rule_id} skipped: no keyword or graph match"
-                        )
-                        continue
-                    # transfer/case_matching rules still match on country alone
+                    # Rule has keywords/attributes but input didn't match — skip
+                    logger.debug(
+                        f"Rule {rule_id} ({rule_type}) skipped: no keyword or graph match"
+                    )
+                    continue
                 else:
                     logger.info(
-                        f"Rule {rule_id} ({rule_type}) matched via attribute/keyword/graph"
+                        f"Rule {rule_id} ({rule_type}) matched via content/keyword/graph"
                     )
-
-            elif rule_type == 'attribute' and not has_keywords and not has_patterns and not has_linked:
-                continue  # Attribute rule with no keywords and no graph links — skip
 
             country_matched_rules.append(rule_row)
             evaluated_rule_ids.add(rule_id)
