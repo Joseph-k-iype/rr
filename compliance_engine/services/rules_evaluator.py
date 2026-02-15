@@ -46,29 +46,103 @@ from models.schemas import (
 logger = logging.getLogger(__name__)
 
 
+# ── Country name normalization ──────────────────────────────────────────────
+# Maps common abbreviations and variants to canonical names used in the graph.
+COUNTRY_ALIASES = {
+    "uk": "United Kingdom",
+    "gb": "United Kingdom",
+    "great britain": "United Kingdom",
+    "england": "United Kingdom",
+    "us": "United States",
+    "usa": "United States",
+    "united states of america": "United States",
+    "uae": "United Arab Emirates",
+    "south korea": "Republic of Korea",
+    "korea": "Republic of Korea",
+    "czech republic": "Czechia",
+    "türkiye": "Turkiye",
+    "turkey": "Turkiye",
+    "hk": "Hong Kong",
+    "sg": "Singapore",
+    "de": "Germany",
+    "fr": "France",
+    "jp": "Japan",
+    "cn": "China",
+    "in": "India",
+    "au": "Australia",
+    "nz": "New Zealand",
+    "ca": "Canada",
+    "br": "Brazil",
+    "mx": "Mexico",
+    "za": "South Africa",
+    "ch": "Switzerland",
+    "ie": "Ireland",
+    "nl": "Netherlands",
+    "se": "Sweden",
+    "no": "Norway",
+    "dk": "Denmark",
+    "fi": "Finland",
+    "at": "Austria",
+    "be": "Belgium",
+    "it": "Italy",
+    "es": "Spain",
+    "pt": "Portugal",
+    "pl": "Poland",
+    "ro": "Romania",
+    "bg": "Bulgaria",
+    "hr": "Croatia",
+    "cy": "Cyprus",
+    "cz": "Czechia",
+    "ee": "Estonia",
+    "gr": "Greece",
+    "hu": "Hungary",
+    "lv": "Latvia",
+    "lt": "Lithuania",
+    "lu": "Luxembourg",
+    "mt": "Malta",
+    "sk": "Slovakia",
+    "si": "Slovenia",
+    "is": "Iceland",
+    "li": "Liechtenstein",
+}
+
+
+def _normalize_country(name: str) -> str:
+    """Normalize country name to match graph data."""
+    if not name:
+        return name
+    stripped = name.strip()
+    lower = stripped.lower()
+    return COUNTRY_ALIASES.get(lower, stripped)
+
+
 # ── FalkorDB-compatible Cypher queries ──────────────────────────────────────
 
-# Case-matching rules: origin/receiving matching + assessment duties
-# Uses case-insensitive CONTAINS matching for country names
-# Checks rule expiration via valid_until property
-CASE_MATCHING_RULES_QUERY = """
+# Unified rules query: matches ALL enabled rules (case_matching, transfer,
+# attribute) via graph-driven country matching.
+# Uses exact case-insensitive matching for country names.
+# Fixes: not_in receiving rules, AI-generated rule types, exact matching.
+ALL_RULES_QUERY = """
 MATCH (r:Rule)
-WHERE r.rule_type = 'case_matching' AND r.enabled = true
+WHERE r.enabled = true
   AND (r.valid_until IS NULL OR r.valid_until >= $today)
 OPTIONAL MATCH (r)-[:TRIGGERED_BY_ORIGIN]->(og:CountryGroup)<-[:BELONGS_TO]-(oc:Country)
-  WHERE toLower(oc.name) CONTAINS toLower($origin)
+  WHERE toLower(oc.name) = toLower($origin)
 OPTIONAL MATCH (r)-[:TRIGGERED_BY_ORIGIN]->(odc:Country)
-  WHERE toLower(odc.name) CONTAINS toLower($origin)
+  WHERE toLower(odc.name) = toLower($origin)
 WITH r, og, odc
 WHERE r.origin_match_type = 'any' OR og IS NOT NULL OR odc IS NOT NULL
 OPTIONAL MATCH (r)-[:TRIGGERED_BY_RECEIVING]->(rg:CountryGroup)<-[:BELONGS_TO]-(rc:Country)
-  WHERE toLower(rc.name) CONTAINS toLower($receiving)
+  WHERE toLower(rc.name) = toLower($receiving)
 OPTIONAL MATCH (r)-[:TRIGGERED_BY_RECEIVING]->(rdc:Country)
-  WHERE toLower(rdc.name) CONTAINS toLower($receiving)
+  WHERE toLower(rdc.name) = toLower($receiving)
 WITH r, rg, rdc
-WHERE r.receiving_match_type = 'any' OR rg IS NOT NULL OR rdc IS NOT NULL
+WHERE r.receiving_match_type = 'any'
+   OR r.receiving_match_type = 'not_in'
+   OR rg IS NOT NULL
+   OR rdc IS NOT NULL
 OPTIONAL MATCH (r)-[:EXCLUDES_RECEIVING]->(eg:CountryGroup)<-[:BELONGS_TO]-(ec:Country)
-  WHERE toLower(ec.name) CONTAINS toLower($receiving)
+  WHERE toLower(ec.name) = toLower($receiving)
 WITH DISTINCT r, eg
 WHERE r.receiving_match_type <> 'not_in' OR eg IS NULL
 WITH DISTINCT r
@@ -78,6 +152,7 @@ OPTIONAL MATCH (r)-[:HAS_PERMISSION]->(p:Permission)-[:CAN_HAVE_DUTY]->(d:Duty)
 OPTIONAL MATCH (r)-[:HAS_PROHIBITION]->(pb:Prohibition)
 RETURN DISTINCT
     r.rule_id AS rule_id, r.name AS name, r.description AS description,
+    r.rule_type AS rule_type,
     r.priority AS priority, r.priority_order AS priority_order,
     r.odrl_type AS odrl_type, r.outcome AS outcome,
     r.has_pii_required AS requires_pii,
@@ -85,7 +160,11 @@ RETURN DISTINCT
     r.origin_match_type AS origin_match_type,
     r.receiving_match_type AS receiving_match_type,
     r.required_actions AS required_actions,
+    r.attribute_name AS attribute_name,
+    r.attribute_keywords AS attribute_keywords,
+    r.attribute_patterns AS attribute_patterns,
     collect(DISTINCT d.module) AS required_assessments,
+    collect(DISTINCT d.name) AS duty_names,
     collect(DISTINCT pb.name) AS prohibition_names
 ORDER BY r.priority_order
 """
@@ -145,6 +224,7 @@ class RulesEvaluator:
         try:
             result = self._rules_graph.query(query, params)
             if not hasattr(result, 'result_set') or not result.result_set:
+                logger.debug(f"Graph query returned empty result set (params: {params})")
                 return []
             headers = result.header
             rows = []
@@ -154,9 +234,11 @@ class RulesEvaluator:
                     col_name = header[1] if isinstance(header, (list, tuple)) else header
                     row_dict[col_name] = row[i]
                 rows.append(row_dict)
+            logger.debug(f"Graph query returned {len(rows)} row(s)")
             return rows
         except Exception as e:
-            logger.error(f"Graph query failed: {e}")
+            logger.error(f"Graph query failed: {e}", exc_info=True)
+            logger.error(f"Query params were: {params}")
             return []
 
     # ─── Main evaluation entry ──────────────────────────────────────────
@@ -178,9 +260,17 @@ class RulesEvaluator:
         """Evaluate all applicable rules for a data transfer via graph queries."""
         start_time = time.time()
 
+        # Normalize country names to match graph data
+        norm_origin = _normalize_country(origin_country)
+        norm_receiving = _normalize_country(receiving_country)
+        logger.info(
+            f"Evaluating transfer: {origin_country} (normalized: {norm_origin}) "
+            f"→ {receiving_country} (normalized: {norm_receiving}), PII={pii}"
+        )
+
         context = EvaluationContext(
-            origin_country=origin_country,
-            receiving_country=receiving_country,
+            origin_country=norm_origin,
+            receiving_country=norm_receiving,
             pii=pii,
             purposes=purposes or [],
             process_l1=process_l1 or [],
@@ -197,36 +287,71 @@ class RulesEvaluator:
 
         triggered_rules: List[TriggeredRule] = []
         consolidated_duties: List[str] = []
+        has_prohibition = False
+        prohibition_reasons: List[str] = []
 
-        # ── PHASE 0: Attribute-level rules (from definitions) ──────────
+        # ── PHASE 0: Attribute-level rules (hardcoded, keyword-based) ──
         attribute_triggered = self._evaluate_attribute_rules(context)
         for attr_rule in attribute_triggered:
             triggered_rules.append(attr_rule)
             if attr_rule.outcome == RuleOutcomeType.PROHIBITION:
-                # Attribute prohibitions are immediate
-                context_info = self._build_context_info(context)
-                return RulesEvaluationResponse(
-                    transfer_status=TransferStatus.PROHIBITED,
-                    origin_country=origin_country,
-                    receiving_country=receiving_country,
-                    pii=pii,
-                    triggered_rules=triggered_rules,
-                    detected_attributes=self._format_detected(context),
-                    consolidated_duties=consolidated_duties,
-                    prohibition_reasons=[f"Attribute rule '{attr_rule.rule_name}': {attr_rule.description}"],
-                    message=f"Transfer PROHIBITED [{context_info}]: Attribute-level rule triggered.",
-                    evaluation_time_ms=(time.time() - start_time) * 1000,
+                has_prohibition = True
+                prohibition_reasons.append(
+                    f"Attribute rule '{attr_rule.rule_name}': {attr_rule.description}"
                 )
 
-        # ── PHASE 1: Case-matching rules (graph query) ─────────────────
-        case_rules = self._evaluate_case_matching_rules(context)
+        # Immediate prohibition for attribute rules
+        if has_prohibition:
+            context_info = self._build_context_info(context)
+            return RulesEvaluationResponse(
+                transfer_status=TransferStatus.PROHIBITED,
+                origin_country=norm_origin,
+                receiving_country=norm_receiving,
+                pii=pii,
+                triggered_rules=triggered_rules,
+                detected_attributes=self._format_detected(context),
+                consolidated_duties=consolidated_duties,
+                prohibition_reasons=prohibition_reasons,
+                message=f"Transfer PROHIBITED [{context_info}]: Attribute-level rule triggered.",
+                evaluation_time_ms=(time.time() - start_time) * 1000,
+            )
 
-        if not case_rules:
+        # ── PHASE 1: All graph rules (unified country-based matching) ──
+        all_graph_rules = self._query_all_applicable_rules(context)
+        logger.info(f"Graph query returned {len(all_graph_rules)} applicable rule(s)")
+
+        # Filter attribute-type rules by keyword matching
+        country_matched_rules = []
+        for rule_row in all_graph_rules:
+            rule_type = rule_row.get('rule_type', 'case_matching')
+
+            if rule_type == 'attribute':
+                # Attribute rules from graph need keyword matching too
+                keywords_json = rule_row.get('attribute_keywords') or '[]'
+                patterns_json = rule_row.get('attribute_patterns') or '[]'
+                try:
+                    keywords = json.loads(keywords_json) if isinstance(keywords_json, str) else keywords_json
+                except (json.JSONDecodeError, TypeError):
+                    keywords = []
+                try:
+                    patterns = json.loads(patterns_json) if isinstance(patterns_json, str) else patterns_json
+                except (json.JSONDecodeError, TypeError):
+                    patterns = []
+
+                if keywords or patterns:
+                    if not self._match_attribute_keywords(context, keywords, patterns):
+                        continue  # Keywords don't match, skip this rule
+                else:
+                    continue  # No keywords defined, skip
+
+            country_matched_rules.append(rule_row)
+
+        if not country_matched_rules and not triggered_rules:
             context_info = self._build_context_info(context)
             return RulesEvaluationResponse(
                 transfer_status=TransferStatus.REQUIRES_REVIEW,
-                origin_country=origin_country,
-                receiving_country=receiving_country,
+                origin_country=norm_origin,
+                receiving_country=norm_receiving,
                 pii=pii,
                 triggered_rules=triggered_rules,
                 detected_attributes=self._format_detected(context),
@@ -235,9 +360,7 @@ class RulesEvaluator:
             )
 
         # ── Check for prohibition rules ──────────────────────────────
-        has_prohibition = False
-        prohibition_reasons = []
-        for rule_row in case_rules:
+        for rule_row in country_matched_rules:
             outcome = rule_row.get('outcome', 'permission')
             prohibition_names = rule_row.get('prohibition_names', [])
             if outcome == 'prohibition' or (prohibition_names and any(p for p in prohibition_names)):
@@ -246,15 +369,29 @@ class RulesEvaluator:
                     f"Rule '{rule_row.get('name', '')}' is a prohibition: {rule_row.get('description', '')}"
                 )
 
-        # ── PHASE 2: Search for precedent cases ───────────────────────
-        required_assessments = self._get_required_assessments_from_graph(case_rules)
-        precedent_result = self._search_precedent_cases(context, required_assessments)
+        # ── Collect required assessments from ALL rules ────────────
+        required_assessments = self._get_required_assessments_from_graph(country_matched_rules)
+        logger.info(f"Required assessments: {required_assessments}")
 
-        for rule_row in case_rules:
-            triggered_rules.append(self._build_triggered_rule_from_row(rule_row, "case_matching"))
+        # ── Build triggered rules ─────────────────────────────────
+        for rule_row in country_matched_rules:
+            rule_type = rule_row.get('rule_type', 'case_matching')
+            triggered_rules.append(self._build_triggered_rule_from_row(rule_row, rule_type))
             for module in (rule_row.get('required_assessments') or []):
                 if module:
                     consolidated_duties.append(module)
+            # Also collect duty names for display
+            for duty_name in (rule_row.get('duty_names') or []):
+                if duty_name:
+                    consolidated_duties.append(duty_name)
+
+        logger.info(
+            f"Triggered {len(triggered_rules)} rule(s), "
+            f"prohibition={has_prohibition}, duties={list(set(consolidated_duties))}"
+        )
+
+        # ── PHASE 2: Search for precedent cases ───────────────────────
+        precedent_result = self._search_precedent_cases(context, required_assessments)
 
         # ── PHASE 3: Determine final status ───────────────────────────
         # If ANY triggered rule is a prohibition → overall PROHIBITION
@@ -262,8 +399,8 @@ class RulesEvaluator:
             context_info = self._build_context_info(context)
             return RulesEvaluationResponse(
                 transfer_status=TransferStatus.PROHIBITED,
-                origin_country=origin_country,
-                receiving_country=receiving_country,
+                origin_country=norm_origin,
+                receiving_country=norm_receiving,
                 pii=pii,
                 triggered_rules=triggered_rules,
                 precedent_validation=precedent_result,
@@ -289,8 +426,8 @@ class RulesEvaluator:
             context_info = self._build_context_info(context)
             return RulesEvaluationResponse(
                 transfer_status=TransferStatus.ALLOWED,
-                origin_country=origin_country,
-                receiving_country=receiving_country,
+                origin_country=norm_origin,
+                receiving_country=norm_receiving,
                 pii=pii,
                 triggered_rules=triggered_rules,
                 precedent_validation=precedent_result,
@@ -320,8 +457,8 @@ class RulesEvaluator:
         )
         return RulesEvaluationResponse(
             transfer_status=TransferStatus.PROHIBITED,
-            origin_country=origin_country,
-            receiving_country=receiving_country,
+            origin_country=norm_origin,
+            receiving_country=norm_receiving,
             pii=pii,
             triggered_rules=triggered_rules,
             precedent_validation=precedent_result,
@@ -340,16 +477,34 @@ class RulesEvaluator:
 
     # ─── Graph-based rule evaluation ────────────────────────────────────
 
-    def _evaluate_case_matching_rules(self, context: EvaluationContext) -> list:
-        """Query the RulesGraph for applicable case-matching rules."""
+    def _query_all_applicable_rules(self, context: EvaluationContext) -> list:
+        """Query the RulesGraph for ALL applicable rules (case_matching, transfer, attribute).
+
+        Uses the unified ALL_RULES_QUERY which:
+        - Matches all enabled rule types via graph-driven country matching
+        - Handles 'not_in' receiving rules correctly
+        - Uses exact case-insensitive matching for country names
+        - Returns rule metadata including attribute keywords for post-filtering
+        """
         today_str = date.today().isoformat()
-        return self._graph_query(CASE_MATCHING_RULES_QUERY, {
+        params = {
             "origin": context.origin_country,
             "receiving": context.receiving_country,
             "pii": context.pii,
             "has_personal_data": bool(context.personal_data_names),
             "today": today_str,
-        })
+        }
+        logger.debug(f"Querying rules with params: {params}")
+        results = self._graph_query(ALL_RULES_QUERY, params)
+        if results:
+            rule_ids = [r.get('rule_id', '?') for r in results]
+            logger.info(f"Rules matched by graph query: {rule_ids}")
+        else:
+            logger.warning(
+                f"No rules matched for {context.origin_country} → {context.receiving_country}. "
+                f"Check that country names exist in the graph."
+            )
+        return results
 
     # ─── Attribute rule evaluation ─────────────────────────────────────
 
@@ -565,13 +720,44 @@ class RulesEvaluator:
             parts.append(f"Detected: {', '.join(attrs)}")
         return " | ".join(parts)
 
-    def _get_required_assessments_from_graph(self, case_rules: list) -> Dict[str, bool]:
+    def _get_required_assessments_from_graph(self, rules: list) -> Dict[str, bool]:
+        """Extract required assessments from graph query results.
+
+        Checks both d.module (predefined rules) and d.name/required_actions
+        (AI-generated rules) for PIA/TIA/HRPR requirements.
+        """
         required = {'pia': False, 'tia': False, 'hrpr': False}
-        for row in case_rules:
+        assessment_aliases = {
+            'pia': 'pia', 'tia': 'tia', 'hrpr': 'hrpr',
+            'complete pia module': 'pia', 'complete tia module': 'tia',
+            'complete hrpr module': 'hrpr',
+            'privacy impact assessment': 'pia',
+            'transfer impact assessment': 'tia',
+            'high risk processing review': 'hrpr',
+        }
+        for row in rules:
+            # Check d.module values (predefined rules)
             for module in (row.get('required_assessments') or []):
-                key = str(module).lower()
-                if key in required:
-                    required[key] = True
+                if module:
+                    key = str(module).lower().strip()
+                    mapped = assessment_aliases.get(key, key)
+                    if mapped in required:
+                        required[mapped] = True
+            # Check d.name values (AI-generated rules via add_rule)
+            for duty_name in (row.get('duty_names') or []):
+                if duty_name:
+                    key = str(duty_name).lower().strip()
+                    mapped = assessment_aliases.get(key, key)
+                    if mapped in required:
+                        required[mapped] = True
+            # Check required_actions stored on rule node (comma-separated string)
+            req_actions = row.get('required_actions') or ''
+            if isinstance(req_actions, str) and req_actions:
+                for action in req_actions.split(','):
+                    action_lower = action.strip().lower()
+                    mapped = assessment_aliases.get(action_lower, action_lower)
+                    if mapped in required:
+                        required[mapped] = True
         return required
 
     def _build_triggered_rule_from_row(self, row: dict, rule_type: str) -> TriggeredRule:
@@ -582,33 +768,69 @@ class RulesEvaluator:
         prohibitions = []
         permissions = []
         duties = []
-        req_actions = row.get('required_actions') or []
 
-        if isinstance(req_actions, str):
-            req_actions = [req_actions] if req_actions else []
+        # Parse required_actions (comma-separated string from rule node)
+        req_actions_raw = row.get('required_actions') or ''
+        if isinstance(req_actions_raw, str):
+            req_actions = [a.strip() for a in req_actions_raw.split(',') if a.strip()] if req_actions_raw else []
+        elif isinstance(req_actions_raw, list):
+            req_actions = req_actions_raw
+        else:
+            req_actions = []
 
+        # Collect assessment modules from graph duties
+        assessment_modules = set()
+        assessment_aliases = {
+            'pia', 'tia', 'hrpr',
+        }
+        duty_name_to_module = {
+            'complete pia module': 'PIA',
+            'complete tia module': 'TIA',
+            'complete hrpr module': 'HRPR',
+        }
+
+        for module in (row.get('required_assessments') or []):
+            if module:
+                module_str = str(module).strip()
+                if module_str.lower() in assessment_aliases:
+                    assessment_modules.add(module_str.upper())
+
+        for duty_name in (row.get('duty_names') or []):
+            if duty_name:
+                mapped = duty_name_to_module.get(str(duty_name).lower().strip())
+                if mapped:
+                    assessment_modules.add(mapped)
+
+        # Also check required_actions for assessment names
         for action in req_actions:
+            action_lower = action.lower().strip()
+            if action_lower in assessment_aliases:
+                assessment_modules.add(action.upper())
+            mapped = duty_name_to_module.get(action_lower)
+            if mapped:
+                assessment_modules.add(mapped)
+
+        # Build duty info for assessments
+        for module in sorted(assessment_modules):
             duties.append(DutyInfo(
-                duty_id=f"DUTY_{str(action).replace(' ', '_')}",
-                name=str(action),
-                module="action",
-                value="required",
+                duty_id=f"DUTY_{module}",
+                name=f"Complete {module} Module",
+                module=str(module),
+                value="Completed",
+                description=f"Complete the {module} assessment before transfer",
             ))
 
-        # For case-matching rules, build duties from assessments
-        if rule_type == 'case_matching':
-            for module in (row.get('required_assessments') or []):
-                if module:
-                    duties.append(DutyInfo(
-                        duty_id=f"DUTY_{module}",
-                        name=f"Complete {module} Module",
-                        module=str(module),
-                        value="Completed",
-                        description=f"Complete the {module} assessment before transfer",
-                    ))
+        # Build duty info for non-assessment actions
+        for action in req_actions:
+            if action.lower().strip() not in assessment_aliases and action.lower().strip() not in duty_name_to_module:
+                duties.append(DutyInfo(
+                    duty_id=f"DUTY_{str(action).replace(' ', '_')}",
+                    name=str(action),
+                    module="action",
+                    value="required",
+                ))
 
         if outcome_str == 'prohibition':
-            # Prohibitions have NO duties
             prohibitions.append(ProhibitionInfo(
                 prohibition_id=f"PROHIB_{row.get('rule_id')}",
                 name=row.get('name', ''),
@@ -636,7 +858,7 @@ class RulesEvaluator:
             permissions=permissions,
             prohibitions=prohibitions,
             required_actions=req_actions,
-            required_assessments=[str(m) for m in (row.get('required_assessments') or []) if m],
+            required_assessments=sorted(assessment_modules),
         )
 
     # ─── Precedent case search (already graph-based on DataTransferGraph) ───

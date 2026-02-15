@@ -582,19 +582,54 @@ class RulesGraphBuilder:
                 MERGE (r)-[:HAS_PROHIBITION]->(pb)
                 """, {"rule_id": rule_def.get('rule_id'), "name": rule_name})
             else:
+                perm_name = f"Transfer Permission ({rule_name})"
                 self.graph.query("""
                 MATCH (r:Rule {rule_id: $rule_id})
                 MERGE (p:Permission {name: $name})
                 MERGE (r)-[:HAS_PERMISSION]->(p)
-                """, {"rule_id": rule_def.get('rule_id'), "name": rule_name})
+                """, {"rule_id": rule_def.get('rule_id'), "name": perm_name})
 
+                # Create assessment duties (PIA/TIA/HRPR) from required_assessments
+                assessment_names = {'pia', 'tia', 'hrpr'}
+                created_assessments = set()
+
+                for assessment in (rule_def.get('required_assessments') or []):
+                    assessment_upper = str(assessment).strip().upper()
+                    assessment_lower = assessment_upper.lower()
+                    if assessment_lower in assessment_names and assessment_lower not in created_assessments:
+                        duty_name = f"Complete {assessment_upper} Module"
+                        self._create_duty(duty_name, assessment_upper, "Completed")
+                        self.graph.query("""
+                        MATCH (p:Permission {name: $perm_name})
+                        MATCH (d:Duty {name: $duty_name, module: $module, value: $value})
+                        MERGE (p)-[:CAN_HAVE_DUTY]->(d)
+                        """, {"perm_name": perm_name, "duty_name": duty_name,
+                              "module": assessment_upper, "value": "Completed"})
+                        created_assessments.add(assessment_lower)
+
+                # Also check required_actions for assessment names
                 for action in (rule_def.get('required_actions') or []):
-                    self._create_duty(action, "action", "required")
-                    self.graph.query("""
-                    MATCH (p:Permission {name: $perm_name})
-                    MATCH (d:Duty {name: $duty_name})
-                    MERGE (p)-[:CAN_HAVE_DUTY]->(d)
-                    """, {"perm_name": rule_name, "duty_name": action})
+                    action_stripped = str(action).strip()
+                    action_lower = action_stripped.lower()
+                    if action_lower in assessment_names and action_lower not in created_assessments:
+                        assessment_upper = action_stripped.upper()
+                        duty_name = f"Complete {assessment_upper} Module"
+                        self._create_duty(duty_name, assessment_upper, "Completed")
+                        self.graph.query("""
+                        MATCH (p:Permission {name: $perm_name})
+                        MATCH (d:Duty {name: $duty_name, module: $module, value: $value})
+                        MERGE (p)-[:CAN_HAVE_DUTY]->(d)
+                        """, {"perm_name": perm_name, "duty_name": duty_name,
+                              "module": assessment_upper, "value": "Completed"})
+                        created_assessments.add(action_lower)
+                    elif action_lower not in assessment_names:
+                        # Non-assessment action duties
+                        self._create_duty(action_stripped, "action", "required")
+                        self.graph.query("""
+                        MATCH (p:Permission {name: $perm_name})
+                        MATCH (d:Duty {name: $duty_name})
+                        MERGE (p)-[:CAN_HAVE_DUTY]->(d)
+                        """, {"perm_name": perm_name, "duty_name": action_stripped})
 
             # Origin
             if rule_def.get('origin_group'):
