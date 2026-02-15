@@ -84,16 +84,21 @@ class SSEManager:
                 pass
 
     def publish_sync(self, session_id: str, event: AgentEvent):
-        """Synchronous publish for use in non-async agent code."""
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.ensure_future(self.publish(session_id, event))
-            else:
-                loop.run_until_complete(self.publish(session_id, event))
-        except RuntimeError:
-            # No event loop available - skip SSE in pure sync context
-            pass
+        """Synchronous publish for use in non-async agent code.
+
+        Uses direct put_nowait on queues (thread-safe) instead of
+        going through the async publish method, which avoids event
+        loop issues when called from worker threads.
+        """
+        if session_id not in self._queues:
+            return
+
+        self._last_activity[session_id] = time.time()
+        for queue in list(self._queues.get(session_id, [])):
+            try:
+                queue.put_nowait(event)
+            except (asyncio.QueueFull, Exception):
+                pass
 
     async def event_stream(self, session_id: str) -> AsyncGenerator[str, None]:
         """Generate SSE event stream for a session."""

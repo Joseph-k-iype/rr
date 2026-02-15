@@ -18,6 +18,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 # Try to use SqliteSaver for persistent checkpointing; fall back to MemorySaver
 try:
+    import sqlite3
     from langgraph.checkpoint.sqlite import SqliteSaver
     _HAS_SQLITE_SAVER = True
 except ImportError:
@@ -25,6 +26,9 @@ except ImportError:
 
 # Persistent checkpoint directory (project-level, not temp)
 _CHECKPOINT_DIR = Path(__file__).parent.parent.parent / "data" / "checkpoints"
+
+# Module-level persistent connection (kept open for app lifetime)
+_sqlite_conn: "sqlite3.Connection | None" = None
 
 from agents.state.wizard_state import WizardAgentState, create_initial_state
 from agents.nodes.supervisor import supervisor_node
@@ -214,10 +218,14 @@ def build_rule_ingestion_graph(with_interrupt: bool = True) -> tuple:
 
     # Compile with checkpointer — prefer SqliteSaver for persistent memory
     if _HAS_SQLITE_SAVER:
+        global _sqlite_conn
         _CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
         db_path = str(_CHECKPOINT_DIR / "checkpoints.db")
         try:
-            checkpointer = SqliteSaver.from_conn_string(db_path)
+            # Create a persistent connection (reused across invocations)
+            if _sqlite_conn is None:
+                _sqlite_conn = sqlite3.connect(db_path, check_same_thread=False)
+            checkpointer = SqliteSaver(_sqlite_conn)
             logger.info(f"Using SqliteSaver checkpointer at {db_path}")
         except Exception as e:
             logger.warning(f"SqliteSaver init failed, falling back to MemorySaver: {e}")

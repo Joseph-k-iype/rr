@@ -267,10 +267,13 @@ class DatabaseService:
             return {'node_count': 0, 'edge_count': 0}
 
 
-# Singleton instance
-db_service = DatabaseService()
+# Lazy singleton instance
+_db_service: DatabaseService | None = None
 
 
 def get_db_service() -> DatabaseService:
-    """Get the database service instance"""
-    return db_service
+    """Get the database service instance (lazy initialization)."""
+    global _db_service
+    if _db_service is None:
+        _db_service = DatabaseService()
+    return _db_service
