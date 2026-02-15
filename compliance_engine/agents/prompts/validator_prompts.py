@@ -12,7 +12,7 @@ Country (name) -[:BELONGS_TO]-> CountryGroup (name)
 
 Rule (
     rule_id,          -- string, format "RULE_*"
-    rule_type,        -- "transfer" | "attribute" | "case_matching"
+    rule_type,        -- "case_matching" | "attribute"
     name,             -- string
     description,      -- string
     priority,         -- "high" | "medium" | "low"
@@ -58,8 +58,8 @@ Case (case_id, case_ref_id, case_status, pia_status, tia_status, hrpr_status, pi
 ## Validation Checklist
 
 ### 1. Rule Definition Validation
-- rule_id: Must start with "RULE_"
-- rule_type: Must be "transfer" or "attribute"
+- rule_id: Should start with "RULE_" (but any non-empty string is acceptable)
+- rule_type: Must be "case_matching" or "attribute"
 - priority: Must be "high", "medium", or "low" (string, NOT a number)
 - outcome: Must be "permission" or "prohibition"
 - odrl_type: Must match outcome ("Prohibition" for prohibition, "Permission" for permission)

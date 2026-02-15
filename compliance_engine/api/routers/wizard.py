@@ -100,7 +100,7 @@ async def submit_step(session_id: str, submission: WizardStepSubmission):
         try:
             result = run_rule_ingestion(
                 origin_country=session.origin_country,
-                scenario_type="transfer",
+                scenario_type="case_matching",
                 receiving_countries=session.receiving_countries,
                 rule_text=session.rule_text,
                 data_categories=session.data_categories,

@@ -75,7 +75,7 @@ export function Step2Metadata() {
               onChange={(e) => setProcessL1(Array.from(e.target.selectedOptions, o => o.value))}
               className="input-dark h-20"
             >
-              {dropdowns?.processes.l1.map(p => <option key={p} value={p}>{p}</option>)}
+              {(dropdowns?.processes?.l1 || []).map(p => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
           <div>
@@ -86,7 +86,7 @@ export function Step2Metadata() {
               onChange={(e) => setProcessL2(Array.from(e.target.selectedOptions, o => o.value))}
               className="input-dark h-20"
             >
-              {dropdowns?.processes.l2.map(p => <option key={p} value={p}>{p}</option>)}
+              {(dropdowns?.processes?.l2 || []).map(p => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
           <div>
@@ -97,7 +97,7 @@ export function Step2Metadata() {
               onChange={(e) => setProcessL3(Array.from(e.target.selectedOptions, o => o.value))}
               className="input-dark h-20"
             >
-              {dropdowns?.processes.l3.map(p => <option key={p} value={p}>{p}</option>)}
+              {(dropdowns?.processes?.l3 || []).map(p => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
         </div>

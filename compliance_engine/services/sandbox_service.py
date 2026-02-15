@@ -86,7 +86,7 @@ class SandboxService:
 
             # Merge dictionary keywords if provided
             if dictionary_result:
-                merged = list(rule_def.get('attribute_keywords', []))
+                merged = list(rule_def.get('attribute_keywords') or [])
                 merged.extend(self._extract_dictionary_keywords(dictionary_result))
                 seen = set()
                 unique = []
@@ -198,7 +198,7 @@ class SandboxService:
             # Merge dictionary keywords if available
             dictionary = self._sandbox_dictionaries.get(graph_name)
             if dictionary:
-                merged = list(rule_def.get('attribute_keywords', []))
+                merged = list(rule_def.get('attribute_keywords') or [])
                 merged.extend(self._extract_dictionary_keywords(dictionary))
                 seen = set()
                 unique = []

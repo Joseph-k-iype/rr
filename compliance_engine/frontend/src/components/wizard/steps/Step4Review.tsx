@@ -38,7 +38,8 @@ export function Step4Review() {
   const [ruleName, setRuleName] = useState('');
   const [ruleDescription, setRuleDescription] = useState('');
   const [outcome, setOutcome] = useState('permission');
-  const [ruleType, setRuleType] = useState('transfer');
+  const [ruleType, setRuleType] = useState('case_matching');
+  const [caseMatchingModule, setCaseMatchingModule] = useState('');
   const [priority, setPriority] = useState('medium');
   const [actions, setActions] = useState('');
   const [duties, setDuties] = useState('');
@@ -64,7 +65,8 @@ export function Step4Review() {
     setRuleName((rule.name as string) || '');
     setRuleDescription((rule.description as string) || '');
     setOutcome((rule.outcome as string) || 'permission');
-    setRuleType((rule.rule_type as string) || 'transfer');
+    setRuleType((rule.rule_type as string) || 'case_matching');
+    setCaseMatchingModule((rule.case_matching_module as string) || '');
     setPriority((rule.priority as string) || 'medium');
     setOdrlType((rule.odrl_type as string) || 'Permission');
     setOdrlAction((rule.odrl_action as string) || 'transfer');
@@ -125,6 +127,7 @@ export function Step4Review() {
         description: ruleDescription,
         outcome,
         rule_type: ruleType,
+        case_matching_module: ruleType === 'case_matching' ? caseMatchingModule : null,
         priority,
         odrl_type: odrlType,
         odrl_action: odrlAction,
@@ -254,15 +257,28 @@ export function Step4Review() {
             <input value={receivingCountries} onChange={e => setReceivingCountries(e.target.value)} placeholder="Comma-separated country names" className="input-dark text-sm" />
           </div>
         </div>
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-semibold text-gray-300 mb-1">Rule Type</label>
-            <select value={ruleType} onChange={e => setRuleType(e.target.value)} className="input-dark text-sm">
-              <option value="transfer">Transfer</option>
-              <option value="attribute">Attribute</option>
+            <select value={ruleType} onChange={e => { setRuleType(e.target.value); if (e.target.value !== 'case_matching') setCaseMatchingModule(''); }} className="input-dark text-sm">
               <option value="case_matching">Case Matching</option>
+              <option value="attribute">Attribute</option>
             </select>
           </div>
+          {ruleType === 'case_matching' && (
+            <div>
+              <label className="block text-xs font-semibold text-gray-300 mb-1">Assessment Module</label>
+              <select value={caseMatchingModule} onChange={e => setCaseMatchingModule(e.target.value)} className="input-dark text-sm">
+                <option value="">Select module...</option>
+                <option value="PIA">PIA (Privacy Impact Assessment)</option>
+                <option value="TIA">TIA (Transfer Impact Assessment)</option>
+                <option value="HRPR">HRPR (Human Rights Prior Review)</option>
+              </select>
+              <p className="text-[10px] text-gray-500 mt-0.5">Required: select which assessment module this rule triggers</p>
+            </div>
+          )}
+        </div>
+        <div className="grid grid-cols-3 gap-4">
           <div>
             <label className="block text-xs font-semibold text-gray-300 mb-1">ODRL Type</label>
             <input value={odrlType} onChange={e => setOdrlType(e.target.value)} className="input-dark text-sm" />

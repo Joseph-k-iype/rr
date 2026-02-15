@@ -514,7 +514,7 @@ class RulesGraphBuilder:
     def add_rule(self, rule_def: dict) -> bool:
         """Add any rule type to the graph from AI-generated definition."""
         try:
-            rule_type = rule_def.get('rule_type', 'case_matching')
+            rule_type = rule_def.get('rule_type') or 'case_matching'
             origin_match_type = "group" if rule_def.get('origin_group') else (
                 "specific" if rule_def.get('origin_countries') else "any"
             )
@@ -543,6 +543,7 @@ class RulesGraphBuilder:
                 r.requires_personal_data = $requires_personal_data,
                 r.required_actions = $required_actions,
                 r.valid_until = $valid_until,
+                r.case_matching_module = $case_matching_module,
                 r.enabled = true
             """, {
                 "rule_id": rule_def.get('rule_id'),
@@ -560,8 +561,9 @@ class RulesGraphBuilder:
                 "has_pii_required": rule_def.get('requires_pii', False),
                 "requires_any_data": rule_def.get('requires_any_data', False),
                 "requires_personal_data": rule_def.get('requires_personal_data', False),
-                "required_actions": rule_def.get('required_actions', []),
+                "required_actions": rule_def.get('required_actions') or [],
                 "valid_until": valid_until,
+                "case_matching_module": rule_def.get('case_matching_module') or None,
             })
 
             # Permission/Prohibition
@@ -579,7 +581,7 @@ class RulesGraphBuilder:
                 MERGE (r)-[:HAS_PERMISSION]->(p)
                 """, {"rule_id": rule_def.get('rule_id'), "name": rule_name})
 
-                for action in rule_def.get('required_actions', []):
+                for action in (rule_def.get('required_actions') or []):
                     self._create_duty(action, "action", "required")
                     self.graph.query("""
                     MATCH (p:Permission {name: $perm_name})
@@ -594,21 +596,19 @@ class RulesGraphBuilder:
                 MATCH (g:CountryGroup {name: $group})
                 MERGE (r)-[:TRIGGERED_BY_ORIGIN]->(g)
                 """, {"rule_id": rule_def.get('rule_id'), "group": rule_def['origin_group']})
-            if rule_def.get('origin_countries'):
-                for country in rule_def['origin_countries']:
-                    self._ensure_country(country)
-                    self.graph.query("""
-                    MATCH (r:Rule {rule_id: $rule_id})
-                    MATCH (c:Country {name: $country})
-                    MERGE (r)-[:TRIGGERED_BY_ORIGIN]->(c)
-                    """, {"rule_id": rule_def.get('rule_id'), "country": country})
-            if rule_def.get('origin_legal_entities'):
-                for entity in rule_def['origin_legal_entities']:
-                    self.graph.query("""
-                    MATCH (r:Rule {rule_id: $rule_id})
-                    MATCH (le:LegalEntity {name: $entity})
-                    MERGE (r)-[:TRIGGERED_BY_ORIGIN]->(le)
-                    """, {"rule_id": rule_def.get('rule_id'), "entity": entity})
+            for country in (rule_def.get('origin_countries') or []):
+                self._ensure_country(country)
+                self.graph.query("""
+                MATCH (r:Rule {rule_id: $rule_id})
+                MATCH (c:Country {name: $country})
+                MERGE (r)-[:TRIGGERED_BY_ORIGIN]->(c)
+                """, {"rule_id": rule_def.get('rule_id'), "country": country})
+            for entity in (rule_def.get('origin_legal_entities') or []):
+                self.graph.query("""
+                MATCH (r:Rule {rule_id: $rule_id})
+                MATCH (le:LegalEntity {name: $entity})
+                MERGE (r)-[:TRIGGERED_BY_ORIGIN]->(le)
+                """, {"rule_id": rule_def.get('rule_id'), "entity": entity})
 
             # Receiving
             if rule_def.get('receiving_group'):
@@ -617,21 +617,19 @@ class RulesGraphBuilder:
                 MATCH (g:CountryGroup {name: $group})
                 MERGE (r)-[:TRIGGERED_BY_RECEIVING]->(g)
                 """, {"rule_id": rule_def.get('rule_id'), "group": rule_def['receiving_group']})
-            if rule_def.get('receiving_countries'):
-                for country in rule_def['receiving_countries']:
-                    self._ensure_country(country)
-                    self.graph.query("""
-                    MATCH (r:Rule {rule_id: $rule_id})
-                    MATCH (c:Country {name: $country})
-                    MERGE (r)-[:TRIGGERED_BY_RECEIVING]->(c)
-                    """, {"rule_id": rule_def.get('rule_id'), "country": country})
-            if rule_def.get('receiving_legal_entities'):
-                for entity in rule_def['receiving_legal_entities']:
-                    self.graph.query("""
-                    MATCH (r:Rule {rule_id: $rule_id})
-                    MATCH (le:LegalEntity {name: $entity})
-                    MERGE (r)-[:TRIGGERED_BY_RECEIVING]->(le)
-                    """, {"rule_id": rule_def.get('rule_id'), "entity": entity})
+            for country in (rule_def.get('receiving_countries') or []):
+                self._ensure_country(country)
+                self.graph.query("""
+                MATCH (r:Rule {rule_id: $rule_id})
+                MATCH (c:Country {name: $country})
+                MERGE (r)-[:TRIGGERED_BY_RECEIVING]->(c)
+                """, {"rule_id": rule_def.get('rule_id'), "country": country})
+            for entity in (rule_def.get('receiving_legal_entities') or []):
+                self.graph.query("""
+                MATCH (r:Rule {rule_id: $rule_id})
+                MATCH (le:LegalEntity {name: $entity})
+                MERGE (r)-[:TRIGGERED_BY_RECEIVING]->(le)
+                """, {"rule_id": rule_def.get('rule_id'), "entity": entity})
 
             # Action
             action_name = "Transfer PII" if rule_def.get('requires_pii') else "Transfer Data"
@@ -642,7 +640,7 @@ class RulesGraphBuilder:
             """, {"rule_id": rule_def.get('rule_id'), "action_name": action_name})
 
             # Data Categories — MERGE nodes and link to rule
-            for cat in rule_def.get('data_categories', []):
+            for cat in (rule_def.get('data_categories') or []):
                 cat_name = str(cat).strip()
                 if cat_name:
                     self.graph.query("""
@@ -655,7 +653,7 @@ class RulesGraphBuilder:
                     """, {"rule_id": rule_def.get('rule_id'), "name": cat_name})
 
             # Purposes — MERGE nodes and link to rule
-            for purpose in rule_def.get('purposes_of_processing', []):
+            for purpose in (rule_def.get('purposes_of_processing') or []):
                 purpose_name = str(purpose).strip()
                 if purpose_name:
                     self.graph.query("""

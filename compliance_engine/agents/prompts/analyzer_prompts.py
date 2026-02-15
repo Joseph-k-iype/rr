@@ -86,7 +86,7 @@ Respond with a JSON object:
         "acronym_expansion": "All acronyms found and their full expansions",
         "regulatory_context": "The regulatory framework, jurisdiction, and implications",
         "intent_analysis": "What the rule protects, risks mitigated, data subjects",
-        "rule_type_reasoning": "Why this is a transfer/attribute rule",
+        "rule_type_reasoning": "Why this is a case_matching/attribute rule",
         "country_analysis": "Origin and destination analysis",
         "outcome_analysis": "Prohibition vs permission, conditions and duties",
         "pii_assessment": "PII implications and whether requires_pii should be true"
@@ -105,7 +105,7 @@ Respond with a JSON object:
         "synthesis": "How expert perspectives were reconciled"
     }},
     "rule_definition": {{
-        "rule_type": "transfer" | "attribute",
+        "rule_type": "case_matching" | "attribute",
         "rule_id": "RULE_<SHORT_UPPERCASE_SLUG>",
         "name": "<descriptive name>",
         "description": "<full description including regulatory context>",

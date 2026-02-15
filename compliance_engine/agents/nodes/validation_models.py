@@ -18,7 +18,7 @@ class RuleDefinitionModel(BaseModel):
     formatting differences.  Structural issues are caught here; semantic
     correctness is left to the validator agent.
     """
-    rule_type: str = "transfer"  # transfer, attribute, case_matching, etc.
+    rule_type: str = "case_matching"  # attribute or case_matching
     rule_id: str = Field(..., min_length=1)
     name: str = Field(..., min_length=1, max_length=300)
     description: str = Field(default="", min_length=0)
@@ -37,6 +37,7 @@ class RuleDefinitionModel(BaseModel):
     odrl_type: str = "Permission"
     odrl_action: str = "transfer"
     odrl_target: str = "Data"
+    case_matching_module: Optional[str] = None  # PIA, TIA, or HRPR (for case_matching rules)
     data_categories: Optional[List[str]] = None
     purposes_of_processing: Optional[List[str]] = None
     valid_until: Optional[str] = None

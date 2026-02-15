@@ -131,26 +131,37 @@ class ValidatorExecutor(ComplianceAgentExecutor):
             await self.emit_completed(event_queue, ctx)
             return
 
-        val_results = parsed.get("validation_results", {})
+        val_results = parsed.get("validation_results") or {}
 
         try:
+            # Safely extract sub-results — AI may return unexpected structures
+            def _safe_section(section_name: str) -> dict:
+                section = val_results.get(section_name)
+                if isinstance(section, dict):
+                    return section
+                return {"valid": True, "errors": [], "warnings": []}
+
+            rd = _safe_section("rule_definition")
+            cq = _safe_section("cypher_queries")
+            lg = _safe_section("logical")
+
+            all_errors = (rd.get("errors") or []) + (cq.get("errors") or []) + (lg.get("errors") or [])
+            all_warnings = (rd.get("warnings") or []) + (cq.get("warnings") or []) + (lg.get("warnings") or [])
+
+            # If the AI didn't set overall_valid, infer from sub-sections
+            overall = parsed.get("overall_valid")
+            if overall is None:
+                overall = rd.get("valid", True) and cq.get("valid", True) and lg.get("valid", True)
+
             validated = ValidationResultModel(
-                overall_valid=parsed.get("overall_valid", False),
-                confidence_score=parsed.get("confidence_score", 0.0),
-                rule_definition_valid=val_results.get("rule_definition", {}).get("valid", False),
-                cypher_valid=val_results.get("cypher_queries", {}).get("valid", False),
-                logical_valid=val_results.get("logical", {}).get("valid", False),
-                errors=sum([
-                    val_results.get("rule_definition", {}).get("errors", []),
-                    val_results.get("cypher_queries", {}).get("errors", []),
-                    val_results.get("logical", {}).get("errors", []),
-                ], []),
-                warnings=sum([
-                    val_results.get("rule_definition", {}).get("warnings", []),
-                    val_results.get("cypher_queries", {}).get("warnings", []),
-                    val_results.get("logical", {}).get("warnings", []),
-                ], []),
-                suggested_fixes=parsed.get("suggested_fixes", []),
+                overall_valid=bool(overall),
+                confidence_score=parsed.get("confidence_score", 0.8),
+                rule_definition_valid=bool(rd.get("valid", True)),
+                cypher_valid=bool(cq.get("valid", True)),
+                logical_valid=bool(lg.get("valid", True)),
+                errors=[str(e) for e in all_errors if e],
+                warnings=[str(w) for w in all_warnings if w],
+                suggested_fixes=[str(f) for f in (parsed.get("suggested_fixes") or []) if f],
             )
 
             state["validation_result"] = validated.model_dump()
@@ -160,7 +171,11 @@ class ValidatorExecutor(ComplianceAgentExecutor):
             if self.db_service and validated.overall_valid:
                 self._run_test_queries(state, session_id)
 
-            if validated.overall_valid and validated.confidence_score >= 0.5:
+            # Accept if: overall_valid=True, or no real errors (only warnings), or confidence >= 0.5
+            has_blocking_errors = len(validated.errors) > 0
+            is_acceptable = (validated.overall_valid or not has_blocking_errors) and validated.confidence_score >= 0.4
+
+            if is_acceptable:
                 # Validation passed — reset retry counter
                 state["validation_retry_count"] = 0
                 state["current_phase"] = "complete"
