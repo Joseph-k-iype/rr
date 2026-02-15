@@ -99,12 +99,12 @@ class ValidatorExecutor(ComplianceAgentExecutor):
 
         user_prompt = build_validator_prompt(
             template=VALIDATOR_USER_TEMPLATE,
-            rule_text=state["rule_text"],
-            rule_definition=state["rule_definition"],
-            cypher_queries=state["cypher_queries"],
+            rule_text=state.get("rule_text", ""),
+            rule_definition=state.get("rule_definition", {}),
+            cypher_queries=state.get("cypher_queries", {}),
             dictionary=state.get("dictionary_result"),
-            iteration=state["iteration"],
-            max_iterations=state["max_iterations"],
+            iteration=state.get("iteration", 0),
+            max_iterations=state.get("max_iterations", 10),
             previous_errors=previous_errors,
         )
 
@@ -185,10 +185,11 @@ class ValidatorExecutor(ComplianceAgentExecutor):
                         [f"Fix: {fix}" for fix in validated.suggested_fixes]
                     )
 
-                state["iteration"] += 1
-                if state["iteration"] >= state["max_iterations"]:
+                state["iteration"] = state.get("iteration", 0) + 1
+                max_iter = state.get("max_iterations", 10)
+                if state["iteration"] >= max_iter:
                     state["current_phase"] = "fail"
-                    state["error_message"] = f"Max iterations ({state['max_iterations']}) reached"
+                    state["error_message"] = f"Max iterations ({max_iter}) reached"
                 else:
                     state["current_phase"] = "supervisor"
 

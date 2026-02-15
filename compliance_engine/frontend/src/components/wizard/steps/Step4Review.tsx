@@ -1,66 +1,163 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useWizardStore } from '../../../stores/wizardStore';
 import { editRule, editTerms } from '../../../services/wizardApi';
 
+/**
+ * Recursively render a value as a readable string.
+ * Handles nested objects, arrays of objects, primitives, etc.
+ */
+function renderValue(val: unknown): string {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'string') return val;
+  if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+  if (Array.isArray(val)) {
+    return val.map(item => {
+      if (typeof item === 'object' && item !== null) return JSON.stringify(item);
+      return String(item);
+    }).join(', ');
+  }
+  if (typeof val === 'object') return JSON.stringify(val, null, 2);
+  return String(val);
+}
+
 export function Step4Review() {
-  const { editedRuleDefinition, editedTermsDictionary, dictionaryResult, sessionId, setEditedRuleDefinition } = useWizardStore();
+  const {
+    editedRuleDefinition,
+    editedTermsDictionary,
+    dictionaryResult,
+    sessionId,
+    setEditedRuleDefinition,
+    setEditedTermsDictionary,
+  } = useWizardStore();
+
   const rule = editedRuleDefinition as Record<string, unknown> | null;
   const terms = (editedTermsDictionary || dictionaryResult) as Record<string, unknown> | null;
 
+  // Rule fields
   const [ruleId, setRuleId] = useState('');
   const [ruleName, setRuleName] = useState('');
   const [ruleDescription, setRuleDescription] = useState('');
   const [outcome, setOutcome] = useState('permission');
+  const [ruleType, setRuleType] = useState('transfer');
+  const [priority, setPriority] = useState('medium');
   const [actions, setActions] = useState('');
   const [duties, setDuties] = useState('');
+  const [originCountries, setOriginCountries] = useState('');
+  const [originGroup, setOriginGroup] = useState('');
+  const [receivingCountries, setReceivingCountries] = useState('');
+  const [receivingGroup, setReceivingGroup] = useState('');
+  const [requiresPii, setRequiresPii] = useState(false);
+  const [odrlType, setOdrlType] = useState('Permission');
+  const [odrlAction, setOdrlAction] = useState('transfer');
+
+  // Dictionary editing state — each entry is a JSON string the user can edit
+  const [editableTerms, setEditableTerms] = useState<Record<string, string>>({});
+
+  // UI state
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  // Initialize rule fields from the rule definition
   useEffect(() => {
-    if (rule) {
-      setRuleId((rule.rule_id as string) || '');
-      setRuleName((rule.name as string) || '');
-      setRuleDescription((rule.description as string) || '');
-      setOutcome((rule.outcome as string) || 'permission');
-      const ruleActions = (rule.required_actions as string[]) || [];
-      setActions(ruleActions.join(', '));
-      // Extract ALL duties from ALL permissions
-      const perms = rule.permissions as Array<{ duties?: Array<{ name?: string }> }> | undefined;
-      const allDuties: string[] = [];
-      (perms || []).forEach(p => {
-        (p.duties || []).forEach(d => {
-          if (d.name && !allDuties.includes(d.name)) {
-            allDuties.push(d.name);
-          }
-        });
+    if (!rule) return;
+    setRuleId((rule.rule_id as string) || '');
+    setRuleName((rule.name as string) || '');
+    setRuleDescription((rule.description as string) || '');
+    setOutcome((rule.outcome as string) || 'permission');
+    setRuleType((rule.rule_type as string) || 'transfer');
+    setPriority((rule.priority as string) || 'medium');
+    setOdrlType((rule.odrl_type as string) || 'Permission');
+    setOdrlAction((rule.odrl_action as string) || 'transfer');
+    setRequiresPii(Boolean(rule.requires_pii));
+
+    // Actions
+    const ruleActions = (rule.required_actions as string[]) || [];
+    setActions(ruleActions.join(', '));
+
+    // Duties — from permissions[].duties[].name AND top-level duties[]
+    const allDuties: string[] = [];
+    const perms = rule.permissions as Array<{ duties?: Array<{ name?: string }> }> | undefined;
+    (perms || []).forEach(p => {
+      (p.duties || []).forEach(d => {
+        if (d.name && !allDuties.includes(d.name)) allDuties.push(d.name);
       });
-      // Also check top-level duties field
-      const topDuties = (rule.duties as string[]) || [];
-      topDuties.forEach(d => {
-        if (d && !allDuties.includes(d)) allDuties.push(d);
-      });
-      setDuties(allDuties.join(', '));
-    }
+    });
+    const topDuties = (rule.duties as string[]) || [];
+    topDuties.forEach(d => { if (d && !allDuties.includes(d)) allDuties.push(d); });
+    setDuties(allDuties.join(', '));
+
+    // Origin / Receiving
+    setOriginGroup((rule.origin_group as string) || '');
+    setOriginCountries(((rule.origin_countries as string[]) || []).join(', '));
+    setReceivingGroup((rule.receiving_group as string) || '');
+    setReceivingCountries(((rule.receiving_countries as string[]) || []).join(', '));
   }, [rule]);
+
+  // Initialize editable dictionary terms
+  useEffect(() => {
+    if (!terms) return;
+    const entries: Record<string, string> = {};
+    for (const [key, value] of Object.entries(terms)) {
+      if (typeof value === 'object' && value !== null) {
+        entries[key] = JSON.stringify(value, null, 2);
+      } else if (Array.isArray(value)) {
+        entries[key] = (value as string[]).join(', ');
+      } else if (value !== undefined && value !== null) {
+        entries[key] = String(value);
+      }
+    }
+    setEditableTerms(entries);
+  }, [terms]);
+
+  const handleTermChange = useCallback((key: string, value: string) => {
+    setEditableTerms(prev => ({ ...prev, [key]: value }));
+  }, []);
 
   const handleSave = async () => {
     if (!sessionId || !rule) return;
     setSaving(true);
     try {
-      const updatedRule = {
+      // Build updated rule from all editable fields
+      const updatedRule: Record<string, unknown> = {
         ...rule,
         rule_id: ruleId,
         name: ruleName,
         description: ruleDescription,
         outcome,
+        rule_type: ruleType,
+        priority,
+        odrl_type: odrlType,
+        odrl_action: odrlAction,
+        requires_pii: requiresPii,
         required_actions: actions.split(',').map(s => s.trim()).filter(Boolean),
         duties: duties.split(',').map(s => s.trim()).filter(Boolean),
+        origin_group: originGroup || null,
+        origin_countries: originCountries ? originCountries.split(',').map(s => s.trim()).filter(Boolean) : null,
+        receiving_group: receivingGroup || null,
+        receiving_countries: receivingCountries ? receivingCountries.split(',').map(s => s.trim()).filter(Boolean) : null,
       };
+
       await editRule(sessionId, updatedRule);
       setEditedRuleDefinition(updatedRule);
-      if (terms) {
-        await editTerms(sessionId, terms);
+
+      // Build updated terms dictionary from editable text fields
+      if (Object.keys(editableTerms).length > 0) {
+        const updatedTerms: Record<string, unknown> = {};
+        for (const [key, rawValue] of Object.entries(editableTerms)) {
+          const trimmed = rawValue.trim();
+          if (!trimmed) continue;
+          // Try parsing as JSON first (for objects/arrays)
+          try {
+            updatedTerms[key] = JSON.parse(trimmed);
+          } catch {
+            // If not JSON, treat as a simple string value
+            updatedTerms[key] = trimmed;
+          }
+        }
+        await editTerms(sessionId, updatedTerms);
+        setEditedTermsDictionary(updatedTerms);
       }
+
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch {
@@ -86,103 +183,137 @@ export function Step4Review() {
         </button>
       </div>
 
+      {/* Rule Definition — Fully Editable */}
       <div className="card-dark p-5 space-y-4">
-        <div className="grid grid-cols-2 gap-4">
+        <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wide">Rule Definition</h4>
+
+        <div className="grid grid-cols-3 gap-4">
           <div>
             <label className="block text-xs font-semibold text-gray-300 mb-1">Rule ID</label>
-            <input value={ruleId} onChange={(e) => setRuleId(e.target.value)} className="input-dark text-sm" />
+            <input value={ruleId} onChange={e => setRuleId(e.target.value)} className="input-dark text-sm" />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-gray-300 mb-1">Permission / Prohibition</label>
-            <select value={outcome} onChange={(e) => setOutcome(e.target.value)} className="input-dark text-sm">
+            <label className="block text-xs font-semibold text-gray-300 mb-1">Outcome</label>
+            <select value={outcome} onChange={e => { setOutcome(e.target.value); setOdrlType(e.target.value === 'prohibition' ? 'Prohibition' : 'Permission'); }} className="input-dark text-sm">
               <option value="permission">Permission</option>
               <option value="prohibition">Prohibition</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-300 mb-1">Priority</label>
+            <select value={priority} onChange={e => setPriority(e.target.value)} className="input-dark text-sm">
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
             </select>
           </div>
         </div>
 
         <div>
           <label className="block text-xs font-semibold text-gray-300 mb-1">Rule Title</label>
-          <input value={ruleName} onChange={(e) => setRuleName(e.target.value)} className="input-dark text-sm" />
+          <input value={ruleName} onChange={e => setRuleName(e.target.value)} className="input-dark text-sm" />
         </div>
 
         <div>
           <label className="block text-xs font-semibold text-gray-300 mb-1">Rule Description</label>
-          <textarea
-            value={ruleDescription}
-            onChange={(e) => setRuleDescription(e.target.value)}
-            rows={3}
-            className="input-dark text-sm resize-none"
-          />
+          <textarea value={ruleDescription} onChange={e => setRuleDescription(e.target.value)} rows={3} className="input-dark text-sm resize-none" />
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-semibold text-gray-300 mb-1">Actions (System)</label>
-            <input value={actions} onChange={(e) => setActions(e.target.value)} placeholder="Comma-separated: Anonymisation, Storage Limitation..." className="input-dark text-sm" />
-            <p className="text-[10px] text-gray-500 mt-0.5">System-level: Anonymisation, Enhanced Security, Public Availability, Services Agreement, Storage Limitation, Outsourcing Agreement</p>
+            <input value={actions} onChange={e => setActions(e.target.value)} placeholder="Comma-separated..." className="input-dark text-sm" />
+            <p className="text-[10px] text-gray-500 mt-0.5">Anonymisation, Enhanced Security, Storage Limitation, Services Agreement, Outsourcing Agreement</p>
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-300 mb-1">Duties (User)</label>
-            <input value={duties} onChange={(e) => setDuties(e.target.value)} placeholder="Comma-separated: Consent, Consult/Approve Legal..." className="input-dark text-sm" />
-            <p className="text-[10px] text-gray-500 mt-0.5">User-level: Consent, Consult/Approve Legal, Consult/Approve Risk, Notification to Regulator, Regulatory Approval, Explicit Consent</p>
+            <input value={duties} onChange={e => setDuties(e.target.value)} placeholder="Comma-separated..." className="input-dark text-sm" />
+            <p className="text-[10px] text-gray-500 mt-0.5">Consent, Consult/Approve Legal, Consult/Approve Risk, Notification to Regulator, Explicit Consent</p>
           </div>
         </div>
       </div>
 
-      {/* Data Dictionaries */}
-      {terms && (
+      {/* Origin / Receiving — Editable */}
+      <div className="card-dark p-5 space-y-4">
+        <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wide">Origin & Receiving</h4>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-semibold text-gray-300 mb-1">Origin Country Group</label>
+            <input value={originGroup} onChange={e => setOriginGroup(e.target.value)} placeholder="e.g. EEA, APAC, or leave empty" className="input-dark text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-300 mb-1">Origin Countries</label>
+            <input value={originCountries} onChange={e => setOriginCountries(e.target.value)} placeholder="Comma-separated country names" className="input-dark text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-300 mb-1">Receiving Country Group</label>
+            <input value={receivingGroup} onChange={e => setReceivingGroup(e.target.value)} placeholder="e.g. NON_EEA, or leave empty" className="input-dark text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-300 mb-1">Receiving Countries</label>
+            <input value={receivingCountries} onChange={e => setReceivingCountries(e.target.value)} placeholder="Comma-separated country names" className="input-dark text-sm" />
+          </div>
+        </div>
+        <div className="grid grid-cols-4 gap-4">
+          <div>
+            <label className="block text-xs font-semibold text-gray-300 mb-1">Rule Type</label>
+            <select value={ruleType} onChange={e => setRuleType(e.target.value)} className="input-dark text-sm">
+              <option value="transfer">Transfer</option>
+              <option value="attribute">Attribute</option>
+              <option value="case_matching">Case Matching</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-300 mb-1">ODRL Type</label>
+            <input value={odrlType} onChange={e => setOdrlType(e.target.value)} className="input-dark text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-300 mb-1">ODRL Action</label>
+            <input value={odrlAction} onChange={e => setOdrlAction(e.target.value)} className="input-dark text-sm" />
+          </div>
+          <div className="flex items-end gap-2 pb-1">
+            <label className="flex items-center gap-1.5 text-xs text-gray-300 cursor-pointer">
+              <input type="checkbox" checked={requiresPii} onChange={e => setRequiresPii(e.target.checked)} className="rounded" />
+              Requires PII
+            </label>
+          </div>
+        </div>
+      </div>
+
+      {/* Data Dictionaries — Fully Editable */}
+      {Object.keys(editableTerms).length > 0 && (
         <div className="card-dark p-5 space-y-3">
           <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wide">Data Dictionaries</h4>
-          <div className="max-h-64 overflow-y-auto space-y-2">
-            {Object.entries(terms).map(([key, value]) => {
-              if (key === 'name' || key === 'description') return null;
-              if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-                return (
-                  <div key={key} className="border border-gray-700 rounded-lg p-3">
-                    <p className="text-xs font-semibold text-gray-300 mb-1 capitalize">{key.replace(/_/g, ' ')}</p>
-                    {Object.entries(value as Record<string, unknown>).map(([subKey, subValue]) => (
-                      <div key={subKey} className="ml-2 mb-1">
-                        <span className="text-xs text-gray-500">{subKey}: </span>
-                        <span className="text-xs text-gray-300">
-                          {Array.isArray(subValue) ? subValue.join(', ') : String(subValue)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                );
-              }
-              if (Array.isArray(value)) {
-                return (
-                  <div key={key} className="border border-gray-700 rounded-lg p-3">
-                    <p className="text-xs font-semibold text-gray-300 mb-1 capitalize">{key.replace(/_/g, ' ')}</p>
-                    <p className="text-xs text-gray-400">{(value as string[]).join(', ')}</p>
-                  </div>
-                );
-              }
+          <p className="text-[10px] text-gray-500">Edit JSON values directly. Changes are saved when you click "Save Changes".</p>
+          <div className="max-h-96 overflow-y-auto space-y-3">
+            {Object.entries(editableTerms).map(([key, value]) => {
+              // Determine if this is a JSON object/array or a simple value
+              const isMultiLine = value.includes('\n') || value.length > 80;
               return (
-                <div key={key} className="flex gap-2 text-xs">
-                  <span className="text-gray-500 capitalize">{key.replace(/_/g, ' ')}:</span>
-                  <span className="text-gray-300">{String(value)}</span>
+                <div key={key} className="border border-gray-700 rounded-lg p-3">
+                  <label className="block text-xs font-semibold text-gray-300 mb-1 capitalize">
+                    {key.replace(/_/g, ' ')}
+                  </label>
+                  {isMultiLine ? (
+                    <textarea
+                      value={value}
+                      onChange={e => handleTermChange(key, e.target.value)}
+                      rows={Math.min(10, value.split('\n').length + 1)}
+                      className="input-dark text-xs font-mono resize-y w-full"
+                    />
+                  ) : (
+                    <input
+                      value={value}
+                      onChange={e => handleTermChange(key, e.target.value)}
+                      className="input-dark text-xs w-full"
+                    />
+                  )}
                 </div>
               );
             })}
           </div>
         </div>
       )}
-
-      {/* Metadata summary */}
-      <div className="card-dark p-5 space-y-2">
-        <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wide">Metadata</h4>
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <div><span className="text-gray-500">Origin:</span> <span className="text-white">{(rule.origin_group as string) || (rule.origin_countries as string[])?.join(', ') || 'Any'}</span></div>
-          <div><span className="text-gray-500">Receiving:</span> <span className="text-white">{(rule.receiving_group as string) || (rule.receiving_countries as string[])?.join(', ') || 'Any'}</span></div>
-          <div><span className="text-gray-500">Type:</span> <span className="text-white">{(rule.rule_type as string) || '—'}</span></div>
-          <div><span className="text-gray-500">Priority:</span> <span className="text-white">{String(rule.priority || '—')}</span></div>
-          <div><span className="text-gray-500">PII:</span> <span className="text-white">{rule.requires_pii ? 'Yes' : 'No'}</span></div>
-          <div><span className="text-gray-500">ODRL:</span> <span className="text-white">{(rule.odrl_type as string) || '—'}</span></div>
-        </div>
-      </div>
     </div>
   );
 }

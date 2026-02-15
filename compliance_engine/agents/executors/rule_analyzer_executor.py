@@ -57,11 +57,11 @@ class RuleAnalyzerExecutor(ComplianceAgentExecutor):
 
         user_prompt = build_analyzer_prompt(
             template=RULE_ANALYZER_USER_TEMPLATE,
-            rule_text=state["rule_text"],
-            origin_country=state["origin_country"],
-            receiving_countries=state["receiving_countries"],
-            scenario_type=state["scenario_type"],
-            data_categories=state["data_categories"],
+            rule_text=state.get("rule_text", ""),
+            origin_country=state.get("origin_country", ""),
+            receiving_countries=state.get("receiving_countries", []),
+            scenario_type=state.get("scenario_type", "transfer"),
+            data_categories=state.get("data_categories", []),
             feedback="",
             is_pii_related=state.get("is_pii_related", False),
         )
@@ -102,7 +102,7 @@ class RuleAnalyzerExecutor(ComplianceAgentExecutor):
                     validated = RuleDefinitionModel(**rule_def)
                     state["rule_definition"] = validated.model_dump()
                     state["current_phase"] = (
-                        "data_dictionary" if state["data_categories"] else "cypher_generator"
+                        "data_dictionary" if state.get("data_categories") else "cypher_generator"
                     )
 
                     duration = (time.time() - start_time) * 1000

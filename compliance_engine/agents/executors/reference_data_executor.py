@@ -64,8 +64,8 @@ class ReferenceDataExecutor(ComplianceAgentExecutor):
 
         user_prompt = build_reference_prompt(
             template=REFERENCE_DATA_USER_TEMPLATE,
-            rule_definition=state["rule_definition"],
-            rule_text=state["rule_text"],
+            rule_definition=state.get("rule_definition", {}),
+            rule_text=state.get("rule_text", ""),
             feedback="",
         )
 

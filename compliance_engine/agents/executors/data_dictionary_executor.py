@@ -56,10 +56,10 @@ class DataDictionaryExecutor(ComplianceAgentExecutor):
 
         user_prompt = build_dictionary_prompt(
             template=DICTIONARY_USER_TEMPLATE,
-            data_categories=state["data_categories"],
-            rule_text=state["rule_text"],
-            origin_country=state["origin_country"],
-            scenario_type=state["scenario_type"],
+            data_categories=state.get("data_categories", []),
+            rule_text=state.get("rule_text", ""),
+            origin_country=state.get("origin_country", ""),
+            scenario_type=state.get("scenario_type", "transfer"),
             feedback="",
             is_pii_related=state.get("is_pii_related", False),
         )

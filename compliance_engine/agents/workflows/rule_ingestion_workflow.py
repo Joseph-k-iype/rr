@@ -114,7 +114,9 @@ def route_from_supervisor(state: WizardAgentState) -> str:
         return "validator"
 
     # Check max iterations
-    if state["iteration"] >= state["max_iterations"] and phase not in ("complete", "fail"):
+    iteration = state.get("iteration", 0)
+    max_iterations = state.get("max_iterations", 10)
+    if iteration >= max_iterations and phase not in ("complete", "fail"):
         return "fail"
 
     valid_routes = {

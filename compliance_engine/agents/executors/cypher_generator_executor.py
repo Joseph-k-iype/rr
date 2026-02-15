@@ -57,7 +57,7 @@ class CypherGeneratorExecutor(ComplianceAgentExecutor):
 
         user_prompt = build_cypher_prompt(
             template=CYPHER_GENERATOR_USER_TEMPLATE,
-            rule_definition=state["rule_definition"],
+            rule_definition=state.get("rule_definition", {}),
             feedback="",
         )
 

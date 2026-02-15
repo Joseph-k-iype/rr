@@ -59,14 +59,14 @@ class SupervisorExecutor(ComplianceAgentExecutor):
 
         user_prompt = build_supervisor_prompt(
             template=SUPERVISOR_USER_TEMPLATE,
-            rule_text=state["rule_text"],
-            origin_country=state["origin_country"],
-            scenario_type=state["scenario_type"],
-            receiving_countries=state["receiving_countries"],
-            data_categories=state["data_categories"],
-            current_phase=state["current_phase"],
-            iteration=state["iteration"],
-            max_iterations=state["max_iterations"],
+            rule_text=state.get("rule_text", ""),
+            origin_country=state.get("origin_country", ""),
+            scenario_type=state.get("scenario_type", "transfer"),
+            receiving_countries=state.get("receiving_countries", []),
+            data_categories=state.get("data_categories", []),
+            current_phase=state.get("current_phase", "supervisor"),
+            iteration=state.get("iteration", 0),
+            max_iterations=state.get("max_iterations", 10),
             agent_outputs=agent_outputs,
             validation_status=validation_status,
             feedback="",
@@ -77,8 +77,17 @@ class SupervisorExecutor(ComplianceAgentExecutor):
             parsed = parse_json_response(response)
 
             if parsed:
-                next_agent = parsed.get("next_agent", "fail")
+                next_agent = parsed.get("next_agent") or "fail"
                 reasoning = parsed.get("reasoning", "")
+
+                # Validate the next agent is a known route
+                valid_agents = {
+                    "rule_analyzer", "data_dictionary", "cypher_generator",
+                    "validator", "reference_data", "human_review", "complete", "fail"
+                }
+                if next_agent not in valid_agents:
+                    logger.warning(f"Supervisor returned unknown agent '{next_agent}', defaulting to 'fail'")
+                    next_agent = "fail"
 
                 self.event_store.append(
                     session_id=session_id,
@@ -90,7 +99,7 @@ class SupervisorExecutor(ComplianceAgentExecutor):
                 state["current_phase"] = next_agent
                 logger.info(
                     f"Supervisor routing to: {next_agent} "
-                    f"(iteration {state['iteration']}) - {reasoning}"
+                    f"(iteration {state.get('iteration', 0)}) - {reasoning}"
                 )
             else:
                 state["current_phase"] = "fail"

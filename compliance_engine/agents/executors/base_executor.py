@@ -284,6 +284,10 @@ async def _drain_event_queue_to_sse(
     sse_manager = get_sse_manager()
     session_id = state.get("origin_country", "unknown")
 
+    # Ensure events list exists
+    if "events" not in state or not isinstance(state.get("events"), list):
+        state["events"] = []
+
     # Emit agent_started event at the beginning of every phase
     started_event = AgentEvent(
         event_type=AgentEventType.AGENT_STARTED,
