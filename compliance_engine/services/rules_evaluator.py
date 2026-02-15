@@ -143,8 +143,8 @@ OPTIONAL MATCH (r)-[:EXCLUDES_RECEIVING]->(eg:CountryGroup)<-[:BELONGS_TO]-(ec:C
 WITH DISTINCT r, eg
 WHERE r.receiving_match_type <> 'not_in' OR eg IS NULL
 WITH DISTINCT r
-WHERE (r.requires_personal_data = false OR $has_personal_data = true)
-  AND (r.has_pii_required = false OR $pii = true)
+WHERE (r.requires_personal_data = false OR $has_personal_data = true OR r.rule_type IN ['attribute', 'transfer'])
+  AND (r.has_pii_required = false OR $pii = true OR r.rule_type IN ['attribute', 'transfer'])
 OPTIONAL MATCH (r)-[:HAS_PERMISSION]->(p:Permission)-[:CAN_HAVE_DUTY]->(d:Duty)
 OPTIONAL MATCH (r)-[:HAS_PROHIBITION]->(pb:Prohibition)
 WITH r,
@@ -627,13 +627,25 @@ class RulesEvaluator:
 
         return triggered
 
+    # Minimum characters for a keyword to participate in substring matching.
+    # Shorter keywords only match via exact (whole-word) comparison.
+    MIN_KEYWORD_SUBSTRING_LEN = 4
+
     def _match_attribute_keywords(self, context: EvaluationContext, keywords: list, patterns: list) -> bool:
         """Check ALL input dimensions against keywords/patterns.
 
-        Checks: personal_data_names, metadata (keys+values), purposes,
-        data_categories, process_l1/l2/l3 — any match triggers the rule.
+        Matching logic (per user requirement):
+        - Keywords >= 4 chars: substring match (keyword found inside input value)
+        - Keywords < 4 chars: exact whole-word match only
+        - Metadata: only VALUES are checked, not dict keys
+        - Each value is checked individually (no cross-contamination)
         """
-        # Collect all discrete input texts to check against keywords
+        # Filter to meaningful keywords
+        valid_keywords = [str(k).lower().strip() for k in keywords if str(k).strip()]
+        if not valid_keywords and not patterns:
+            return False
+
+        # Collect all discrete input texts (NOT metadata keys)
         input_texts = list(context.personal_data_names)
         input_texts.extend(context.purposes)
         input_texts.extend(context.data_categories)
@@ -641,43 +653,59 @@ class RulesEvaluator:
         input_texts.extend(context.process_l2)
         input_texts.extend(context.process_l3)
 
-        # Check each input text against keywords (substring match)
+        # Add metadata VALUES only (not keys)
+        if context.metadata:
+            input_texts.extend(self._extract_metadata_values(context.metadata))
+
+        # Check each input value against keywords individually
         for text in input_texts:
-            text_lower = str(text).lower()
-            for keyword in keywords:
-                kw_lower = str(keyword).lower()
-                if kw_lower in text_lower or text_lower in kw_lower:
-                    logger.debug(f"Keyword match: '{keyword}' ↔ input '{text}'")
+            text_lower = str(text).lower().strip()
+            if not text_lower:
+                continue
+            for kw in valid_keywords:
+                if self._keyword_matches(kw, text_lower):
+                    logger.debug(f"Keyword match: '{kw}' in input '{text}'")
                     return True
 
-        # Check regex patterns against discrete input texts
+        # Check regex patterns against input texts
         for text in input_texts:
+            text_str = str(text)
             for pattern in patterns:
                 try:
-                    if re.search(pattern, str(text), re.IGNORECASE):
+                    if re.search(pattern, text_str, re.IGNORECASE):
+                        logger.debug(f"Pattern match: '{pattern}' in input '{text}'")
                         return True
                 except re.error:
                     pass
 
-        # Check metadata (flattened keys and values) against keywords
-        if context.metadata:
-            metadata_parts = self._flatten_metadata(context.metadata)
-            metadata_text = ' '.join(str(v) for v in metadata_parts)
-            metadata_lower = metadata_text.lower()
-            for keyword in keywords:
-                if str(keyword).lower() in metadata_lower:
-                    logger.debug(f"Keyword match in metadata: '{keyword}' in '{metadata_lower[:100]}'")
-                    return True
-            # Check patterns against individual metadata parts
-            for part in metadata_parts:
-                for pattern in patterns:
-                    try:
-                        if re.search(pattern, str(part), re.IGNORECASE):
-                            return True
-                    except re.error:
-                        pass
-
         return False
+
+    def _keyword_matches(self, keyword: str, text: str) -> bool:
+        """Check if a keyword matches a text value.
+
+        - Keywords >= MIN_KEYWORD_SUBSTRING_LEN chars: substring match
+          (keyword is found inside text)
+        - Short keywords: only match if they appear as a whole word in text
+        """
+        if len(keyword) >= self.MIN_KEYWORD_SUBSTRING_LEN:
+            return keyword in text
+        # Short keyword: whole-word match using word boundaries
+        return bool(re.search(r'\b' + re.escape(keyword) + r'\b', text))
+
+    def _extract_metadata_values(self, obj) -> list:
+        """Extract only VALUES from metadata (not dict keys).
+        Returns individual string values for matching.
+        """
+        values = []
+        if isinstance(obj, dict):
+            for v in obj.values():
+                values.extend(self._extract_metadata_values(v))
+        elif isinstance(obj, list):
+            for item in obj:
+                values.extend(self._extract_metadata_values(item))
+        elif obj is not None:
+            values.append(str(obj))
+        return values
 
     def _match_graph_linked_attributes(
         self, context: EvaluationContext, rule_row: dict
@@ -686,6 +714,7 @@ class RulesEvaluator:
 
         Uses linked_attributes, linked_data_categories, and linked_purposes
         returned by ALL_RULES_QUERY for graph-native matching.
+        Same minimum-length rules apply as keyword matching.
         """
         linked_attrs = rule_row.get('linked_attributes') or []
         linked_cats = rule_row.get('linked_data_categories') or []
@@ -694,41 +723,34 @@ class RulesEvaluator:
         if not linked_attrs and not linked_cats and not linked_purposes:
             return False
 
-        # Build input terms from all context dimensions
-        input_terms = []
-        input_terms.extend(context.personal_data_names)
-        input_terms.extend(context.data_categories)
-        input_terms.extend(context.purposes)
-        input_terms.extend(context.process_l1)
-        input_terms.extend(context.process_l2)
-        input_terms.extend(context.process_l3)
+        # Build input values (not metadata keys)
+        input_texts = []
+        input_texts.extend(context.personal_data_names)
+        input_texts.extend(context.data_categories)
+        input_texts.extend(context.purposes)
+        input_texts.extend(context.process_l1)
+        input_texts.extend(context.process_l2)
+        input_texts.extend(context.process_l3)
         if context.metadata:
-            input_terms.extend(str(v) for v in self._flatten_metadata(context.metadata))
+            input_texts.extend(self._extract_metadata_values(context.metadata))
 
-        input_lower = {str(t).lower().strip() for t in input_terms if t}
+        input_lower = [str(t).lower().strip() for t in input_texts if str(t).strip()]
+        if not input_lower:
+            return False
 
-        # Check linked attributes (Attribute nodes from dictionary keywords)
-        for attr_name in linked_attrs:
-            attr_lower = str(attr_name).lower()
-            for term in input_lower:
-                if attr_lower in term or term in attr_lower:
-                    logger.debug(f"Graph attribute match: '{attr_name}' ↔ input '{term}'")
-                    return True
+        # Check all linked graph terms against input values
+        all_linked = [(a, 'attribute') for a in linked_attrs]
+        all_linked += [(c, 'category') for c in linked_cats]
+        all_linked += [(p, 'purpose') for p in linked_purposes]
 
-        # Check linked data categories
-        for cat_name in linked_cats:
-            cat_lower = str(cat_name).lower()
-            for term in input_lower:
-                if cat_lower in term or term in cat_lower:
-                    logger.debug(f"Graph data category match: '{cat_name}' ↔ input '{term}'")
-                    return True
-
-        # Check linked purposes
-        for purp_name in linked_purposes:
-            purp_lower = str(purp_name).lower()
-            for term in input_lower:
-                if purp_lower in term or term in purp_lower:
-                    logger.debug(f"Graph purpose match: '{purp_name}' ↔ input '{term}'")
+        for linked_term, link_type in all_linked:
+            linked_lower = str(linked_term).lower().strip()
+            if not linked_lower:
+                continue
+            for text in input_lower:
+                # Only check: linked_term found in input text (not reverse)
+                if self._keyword_matches(linked_lower, text):
+                    logger.debug(f"Graph {link_type} match: '{linked_term}' in input '{text}'")
                     return True
 
         return False

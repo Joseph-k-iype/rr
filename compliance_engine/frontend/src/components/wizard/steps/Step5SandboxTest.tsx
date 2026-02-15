@@ -261,19 +261,59 @@ export function Step5SandboxTest() {
                   <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Triggered Rules ({latestResult.triggered_rules.length})</span>
                   <div className="mt-2 space-y-2">
                     {latestResult.triggered_rules.map((rule, i) => (
-                      <div key={`${rule.rule_id}-${i}`} className="border border-gray-200 rounded-lg p-3">
-                        <div className="flex items-center justify-between mb-1">
+                      <div key={`${rule.rule_id}-${i}`} className="border border-gray-200 rounded-lg p-3 space-y-2">
+                        <div className="flex items-center justify-between">
                           <span className="text-xs font-medium text-gray-400">{rule.rule_id} ({rule.rule_type})</span>
-                          <span className={rule.outcome === 'permission' ? 'badge-permission text-xs' : 'badge-prohibition text-xs'}>
+                          <span className={rule.outcome === 'permission'
+                            ? 'bg-green-100 text-green-700 px-2 py-0.5 rounded text-[10px] font-semibold'
+                            : 'bg-red-100 text-red-700 px-2 py-0.5 rounded text-[10px] font-semibold'}>
                             {rule.outcome === 'permission' ? 'Permission' : 'Prohibition'}
                           </span>
                         </div>
                         <p className="text-sm font-medium text-gray-800">{rule.rule_name}</p>
-                        {rule.description && <p className="text-xs text-gray-500 mt-1">{rule.description}</p>}
+                        {rule.description && <p className="text-xs text-gray-500">{rule.description}</p>}
+
+                        {/* Required Assessments */}
                         {rule.required_assessments && rule.required_assessments.length > 0 && (
-                          <div className="mt-1.5 flex flex-wrap gap-1">
+                          <div className="flex flex-wrap gap-1">
                             {rule.required_assessments.map(a => (
                               <span key={a} className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-semibold">{a}</span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Required Actions (e.g. "contact legal") */}
+                        {rule.required_actions && rule.required_actions.length > 0 && (
+                          <div>
+                            <span className="text-[10px] font-semibold text-gray-400 uppercase">Actions</span>
+                            <div className="flex flex-wrap gap-1 mt-0.5">
+                              {rule.required_actions.map((action, ai) => (
+                                <span key={ai} className="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded text-[10px] font-medium">{action}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Duties from permissions */}
+                        {rule.permissions?.flatMap(p => p.duties || []).filter(d => d.name).length > 0 && (
+                          <div>
+                            <span className="text-[10px] font-semibold text-gray-400 uppercase">Duties</span>
+                            <div className="flex flex-wrap gap-1 mt-0.5">
+                              {rule.permissions.flatMap(p => p.duties || []).filter(d => d.name).map((duty, di) => (
+                                <span key={di} className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-medium">
+                                  {duty.module && duty.module !== 'action' ? `[${duty.module}] ` : ''}{duty.name}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Prohibition details */}
+                        {rule.prohibitions && rule.prohibitions.length > 0 && (
+                          <div>
+                            <span className="text-[10px] font-semibold text-red-400 uppercase">Prohibition</span>
+                            {rule.prohibitions.map((p, pi) => (
+                              <p key={pi} className="text-xs text-red-600 mt-0.5">{p.description || p.name}</p>
                             ))}
                           </div>
                         )}
