@@ -78,9 +78,11 @@ export function Step5SandboxTest() {
       };
       delete (payload as Record<string, unknown>).metadata_json;
 
-      const result = await sandboxEvaluate(sessionId, payload);
-      setLatestResult(result as RulesEvaluationResponse);
-      addSandboxTestResult(result);
+      const response = await sandboxEvaluate(sessionId, payload);
+      // Backend returns { result: RulesEvaluationResponse, results: [...], test_number }
+      const evalResult = (response?.result ?? response) as RulesEvaluationResponse;
+      setLatestResult(evalResult);
+      addSandboxTestResult(response);
     } catch {
       // handled by parent
     }
@@ -202,33 +204,48 @@ export function Step5SandboxTest() {
 
           {latestResult && (
             <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-3">
-              {(latestResult.triggered_rules || []).map((rule, i) => (
-                <div key={`${rule.rule_id}-${i}`} className="border border-gray-200 rounded-lg p-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-medium text-gray-500">Rule {i + 1}</span>
-                    <span className={rule.outcome === 'permission' ? 'badge-permission text-xs' : 'badge-prohibition text-xs'}>
-                      {rule.outcome === 'permission' ? 'Permission' : 'Prohibition'}
-                    </span>
-                  </div>
-                  <p className="text-sm font-medium text-gray-800">{rule.rule_name}</p>
-                  {rule.description && <p className="text-xs text-gray-500 mt-1">{rule.description}</p>}
+              {/* Transfer Status Banner */}
+              <div className={`rounded-lg p-3 ${
+                latestResult.transfer_status === 'ALLOWED' ? 'bg-green-50 border border-green-200' :
+                latestResult.transfer_status === 'PROHIBITED' ? 'bg-red-50 border border-red-200' :
+                'bg-yellow-50 border border-yellow-200'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold text-gray-900">Transfer Status</span>
+                  <span className={`text-sm font-bold ${
+                    latestResult.transfer_status === 'ALLOWED' ? 'text-green-600' :
+                    latestResult.transfer_status === 'PROHIBITED' ? 'text-red-600' :
+                    'text-yellow-600'
+                  }`}>
+                    {latestResult.transfer_status}
+                  </span>
                 </div>
-              ))}
+                {latestResult.message && (
+                  <p className="text-xs text-gray-600 mt-1">{latestResult.message}</p>
+                )}
+              </div>
 
-              {(latestResult as Record<string, unknown>).detected_attributes &&
-                Array.isArray((latestResult as Record<string, unknown>).detected_attributes) &&
-                ((latestResult as Record<string, unknown>).detected_attributes as Array<Record<string, unknown>>).length > 0 && (
-                <div className="border-t pt-3">
-                  <span className="text-xs font-medium text-gray-500">Detected Attributes</span>
-                  <div className="mt-1 space-y-1">
-                    {((latestResult as Record<string, unknown>).detected_attributes as Array<Record<string, unknown>>).map((attr, i) => (
-                      <div key={i} className="flex items-center gap-2 text-xs">
-                        <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium">
-                          {String(attr.attribute_name)}
-                        </span>
-                        <span className="text-gray-400">{String(attr.detection_method)}</span>
-                        {attr.confidence != null && (
-                          <span className="text-gray-400">({(Number(attr.confidence) * 100).toFixed(0)}%)</span>
+              {/* Triggered Rules */}
+              {(latestResult.triggered_rules || []).length > 0 && (
+                <div>
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Triggered Rules ({latestResult.triggered_rules.length})</span>
+                  <div className="mt-2 space-y-2">
+                    {latestResult.triggered_rules.map((rule, i) => (
+                      <div key={`${rule.rule_id}-${i}`} className="border border-gray-200 rounded-lg p-3">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-medium text-gray-400">{rule.rule_id} ({rule.rule_type})</span>
+                          <span className={rule.outcome === 'permission' ? 'badge-permission text-xs' : 'badge-prohibition text-xs'}>
+                            {rule.outcome === 'permission' ? 'Permission' : 'Prohibition'}
+                          </span>
+                        </div>
+                        <p className="text-sm font-medium text-gray-800">{rule.rule_name}</p>
+                        {rule.description && <p className="text-xs text-gray-500 mt-1">{rule.description}</p>}
+                        {rule.required_assessments && rule.required_assessments.length > 0 && (
+                          <div className="mt-1.5 flex flex-wrap gap-1">
+                            {rule.required_assessments.map(a => (
+                              <span key={a} className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-semibold">{a}</span>
+                            ))}
+                          </div>
                         )}
                       </div>
                     ))}
@@ -236,20 +253,106 @@ export function Step5SandboxTest() {
                 </div>
               )}
 
-              <div className="border-t pt-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-bold text-gray-900">Result</span>
-                  <span className={`text-sm font-bold ${
-                    latestResult.transfer_status === 'ALLOWED' ? 'text-green-600' :
-                    latestResult.transfer_status === 'PROHIBITED' ? 'text-red-600' :
-                    'text-yellow-600'
-                  }`}>
-                    {latestResult.transfer_status === 'ALLOWED' ? 'Permission' :
-                     latestResult.transfer_status === 'PROHIBITED' ? 'Prohibition' :
-                     latestResult.transfer_status}
-                  </span>
+              {/* Assessment Compliance */}
+              {(latestResult as Record<string, unknown>).assessment_compliance && (
+                <div className="border-t pt-3">
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Required Assessments</span>
+                  <div className="mt-1.5 flex flex-wrap gap-2">
+                    {(() => {
+                      const ac = (latestResult as Record<string, unknown>).assessment_compliance as Record<string, unknown>;
+                      return ['pia', 'tia', 'hrpr'].map(key => {
+                        const required = ac[`${key}_required`];
+                        const compliant = ac[`${key}_compliant`];
+                        if (!required) return null;
+                        return (
+                          <span key={key} className={`px-2 py-1 rounded text-xs font-semibold ${
+                            compliant ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                          }`}>
+                            {key.toUpperCase()}: {compliant ? 'Compliant' : 'Required'}
+                          </span>
+                        );
+                      }).filter(Boolean);
+                    })()}
+                  </div>
+                  {(() => {
+                    const ac = (latestResult as Record<string, unknown>).assessment_compliance as Record<string, unknown>;
+                    const missing = ac?.missing_assessments as string[] | undefined;
+                    if (missing && missing.length > 0) {
+                      return <p className="text-xs text-red-600 mt-1">Missing: {missing.join(', ')}</p>;
+                    }
+                    return null;
+                  })()}
                 </div>
-              </div>
+              )}
+
+              {/* Consolidated Duties */}
+              {(latestResult as Record<string, unknown>).consolidated_duties &&
+                ((latestResult as Record<string, unknown>).consolidated_duties as string[]).length > 0 && (
+                <div className="border-t pt-3">
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Consolidated Duties</span>
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {((latestResult as Record<string, unknown>).consolidated_duties as string[]).map((d, i) => (
+                      <span key={i} className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-medium">{d}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Detected Attributes */}
+              {latestResult.detected_attributes &&
+                Array.isArray(latestResult.detected_attributes) &&
+                latestResult.detected_attributes.length > 0 && (
+                <div className="border-t pt-3">
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Detected Attributes</span>
+                  <div className="mt-1 space-y-1">
+                    {latestResult.detected_attributes.map((attr, i) => (
+                      <div key={i} className="flex items-center gap-2 text-xs">
+                        <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium">
+                          {String((attr as Record<string, unknown>).attribute_name)}
+                        </span>
+                        {(attr as Record<string, unknown>).detection_method && (
+                          <span className="text-gray-400">{String((attr as Record<string, unknown>).detection_method)}</span>
+                        )}
+                        {(attr as Record<string, unknown>).confidence != null && (
+                          <span className="text-gray-400">({(Number((attr as Record<string, unknown>).confidence) * 100).toFixed(0)}%)</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Prohibition Reasons */}
+              {latestResult.prohibition_reasons && latestResult.prohibition_reasons.length > 0 && (
+                <div className="border-t pt-3">
+                  <span className="text-xs font-semibold text-red-500 uppercase tracking-wide">Prohibition Reasons</span>
+                  <ul className="mt-1 space-y-1">
+                    {latestResult.prohibition_reasons.map((r, i) => (
+                      <li key={i} className="text-xs text-red-700">{r}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Precedent Validation */}
+              {latestResult.precedent_validation && (
+                <div className="border-t pt-3">
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Precedent Cases</span>
+                  <div className="mt-1 text-xs text-gray-600">
+                    <p>{latestResult.precedent_validation.total_matches} total match(es), {latestResult.precedent_validation.compliant_matches} compliant</p>
+                    {latestResult.precedent_validation.evidence_summary?.evidence_narrative && (
+                      <p className="mt-1 text-gray-500">{latestResult.precedent_validation.evidence_summary.evidence_narrative}</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Evaluation Time */}
+              {latestResult.evaluation_time_ms != null && (
+                <div className="text-right">
+                  <span className="text-[10px] text-gray-400">{latestResult.evaluation_time_ms.toFixed(0)}ms</span>
+                </div>
+              )}
             </div>
           )}
 

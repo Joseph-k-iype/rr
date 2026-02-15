@@ -289,18 +289,22 @@ class RulesEvaluator:
         consolidated_duties: List[str] = []
         has_prohibition = False
         prohibition_reasons: List[str] = []
+        evaluated_rule_ids: set = set()
 
-        # ── PHASE 0: Attribute-level rules (hardcoded, keyword-based) ──
-        attribute_triggered = self._evaluate_attribute_rules(context)
-        for attr_rule in attribute_triggered:
+        # ── PHASE 0: Hardcoded attribute rules only (from rules_definitions.py) ──
+        # These are global rules (no country matching needed).
+        # Graph-stored attribute rules are handled in Phase 1 WITH country matching.
+        hardcoded_triggered = self._evaluate_hardcoded_attribute_rules(context)
+        for attr_rule in hardcoded_triggered:
             triggered_rules.append(attr_rule)
+            evaluated_rule_ids.add(attr_rule.rule_id)
             if attr_rule.outcome == RuleOutcomeType.PROHIBITION:
                 has_prohibition = True
                 prohibition_reasons.append(
                     f"Attribute rule '{attr_rule.rule_name}': {attr_rule.description}"
                 )
 
-        # Immediate prohibition for attribute rules
+        # Immediate prohibition for hardcoded attribute rules
         if has_prohibition:
             context_info = self._build_context_info(context)
             return RulesEvaluationResponse(
@@ -317,34 +321,51 @@ class RulesEvaluator:
             )
 
         # ── PHASE 1: All graph rules (unified country-based matching) ──
+        # Queries ALL enabled rules (case_matching, transfer, attribute) with
+        # country matching. Attribute rules with keywords get additional
+        # keyword post-filtering against personal_data_names and metadata.
         all_graph_rules = self._query_all_applicable_rules(context)
         logger.info(f"Graph query returned {len(all_graph_rules)} applicable rule(s)")
 
-        # Filter attribute-type rules by keyword matching
+        # Post-filter and build triggered rules
         country_matched_rules = []
         for rule_row in all_graph_rules:
+            rule_id = rule_row.get('rule_id', '')
             rule_type = rule_row.get('rule_type', 'case_matching')
 
-            if rule_type == 'attribute':
-                # Attribute rules from graph need keyword matching too
-                keywords_json = rule_row.get('attribute_keywords') or '[]'
-                patterns_json = rule_row.get('attribute_patterns') or '[]'
-                try:
-                    keywords = json.loads(keywords_json) if isinstance(keywords_json, str) else keywords_json
-                except (json.JSONDecodeError, TypeError):
-                    keywords = []
-                try:
-                    patterns = json.loads(patterns_json) if isinstance(patterns_json, str) else patterns_json
-                except (json.JSONDecodeError, TypeError):
-                    patterns = []
+            # Skip rules already evaluated in Phase 0
+            if rule_id in evaluated_rule_ids:
+                continue
 
-                if keywords or patterns:
-                    if not self._match_attribute_keywords(context, keywords, patterns):
-                        continue  # Keywords don't match, skip this rule
-                else:
-                    continue  # No keywords defined, skip
+            # For rules with attribute_keywords (any type), check keyword matching
+            keywords_json = rule_row.get('attribute_keywords') or ''
+            patterns_json = rule_row.get('attribute_patterns') or ''
+            has_keywords = keywords_json and keywords_json != '[]'
+            has_patterns = patterns_json and patterns_json != '[]'
+
+            if rule_type == 'attribute' or (has_keywords and rule_type in ('transfer', 'case_matching')):
+                if has_keywords or has_patterns:
+                    try:
+                        keywords = json.loads(keywords_json) if isinstance(keywords_json, str) else (keywords_json or [])
+                    except (json.JSONDecodeError, TypeError):
+                        keywords = []
+                    try:
+                        patterns = json.loads(patterns_json) if isinstance(patterns_json, str) else (patterns_json or [])
+                    except (json.JSONDecodeError, TypeError):
+                        patterns = []
+
+                    if keywords or patterns:
+                        if not self._match_attribute_keywords(context, keywords, patterns):
+                            # For pure attribute rules, skip entirely
+                            if rule_type == 'attribute':
+                                continue
+                            # For transfer/case_matching rules with keywords,
+                            # they still match on country — keywords are optional enrichment
+                elif rule_type == 'attribute':
+                    continue  # Attribute rule with no keywords — skip
 
             country_matched_rules.append(rule_row)
+            evaluated_rule_ids.add(rule_id)
 
         if not country_matched_rules and not triggered_rules:
             context_info = self._build_context_info(context)
@@ -508,53 +529,17 @@ class RulesEvaluator:
 
     # ─── Attribute rule evaluation ─────────────────────────────────────
 
-    def _evaluate_attribute_rules(self, context: EvaluationContext) -> List[TriggeredRule]:
-        """Evaluate attribute-level rules from BOTH the graph AND rules_definitions.py."""
+    def _evaluate_hardcoded_attribute_rules(self, context: EvaluationContext) -> List[TriggeredRule]:
+        """Evaluate hardcoded attribute rules from rules_definitions.py only.
+
+        Graph-stored attribute rules are evaluated in Phase 1 via ALL_RULES_QUERY
+        which includes proper country matching. This method only handles the
+        backward-compatible hardcoded rules that apply globally.
+        """
         triggered = []
-        evaluated_rule_ids = set()
 
-        # --- Phase A: Graph-stored attribute rules (AI-generated) ---
-        today_str = date.today().isoformat()
-        graph_rules = self._graph_query(GRAPH_ATTRIBUTE_RULES_QUERY, {"today": today_str})
-
-        for row in graph_rules:
-            rule_id = row.get('rule_id', '')
-            if rule_id in evaluated_rule_ids:
-                continue
-            evaluated_rule_ids.add(rule_id)
-
-            # Parse JSON-stored keywords and patterns
-            try:
-                keywords = json.loads(row.get('attribute_keywords', '[]'))
-            except (json.JSONDecodeError, TypeError):
-                keywords = []
-            try:
-                patterns = json.loads(row.get('attribute_patterns', '[]'))
-            except (json.JSONDecodeError, TypeError):
-                patterns = []
-
-            if not keywords and not patterns:
-                continue
-
-            matched = self._match_attribute_keywords(context, keywords, patterns)
-            if not matched:
-                continue
-
-            # Check PII requirement
-            if row.get('requires_pii') and not context.pii:
-                continue
-
-            outcome_str = row.get('outcome', 'permission')
-            outcome = RuleOutcomeType.PROHIBITION if outcome_str == 'prohibition' else RuleOutcomeType.PERMISSION
-            triggered.append(self._build_attribute_triggered_rule(row, outcome))
-
-        # --- Phase B: Hard-coded attribute rules (backward compat) ---
         attribute_rules = get_enabled_attribute_rules()
         for rule_key, rule in attribute_rules.items():
-            if rule.rule_id in evaluated_rule_ids:
-                continue
-            evaluated_rule_ids.add(rule.rule_id)
-
             matched = self._match_attribute_keywords(
                 context, rule.attribute_keywords, rule.attribute_patterns
             )
