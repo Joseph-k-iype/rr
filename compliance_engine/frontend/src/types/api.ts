@@ -57,6 +57,24 @@ export interface EvidenceSummary {
   evidence_narrative: string;
 }
 
+export interface AssessmentCompliance {
+  pia_required: boolean;
+  tia_required: boolean;
+  hrpr_required: boolean;
+  pia_compliant?: boolean;
+  tia_compliant?: boolean;
+  hrpr_compliant?: boolean;
+  all_compliant?: boolean;
+  missing_assessments?: string[];
+}
+
+export interface DetectedAttribute {
+  attribute_name: string;
+  detection_method?: string;
+  matched_terms?: string[];
+  confidence: number;
+}
+
 export interface RulesEvaluationResponse {
   transfer_status: 'ALLOWED' | 'PROHIBITED' | 'REQUIRES_REVIEW' | 'INSUFFICIENT_DATA';
   origin_country: string;
@@ -70,7 +88,9 @@ export interface RulesEvaluationResponse {
     matching_cases: CaseMatch[];
     evidence_summary?: EvidenceSummary;
   };
-  detected_attributes: { attribute_name: string; confidence: number }[];
+  assessment_compliance?: AssessmentCompliance;
+  detected_attributes: DetectedAttribute[];
+  consolidated_duties: string[];
   prohibition_reasons: string[];
   evidence_summary?: EvidenceSummary;
   message: string;

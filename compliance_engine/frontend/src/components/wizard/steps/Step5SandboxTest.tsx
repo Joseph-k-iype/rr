@@ -128,6 +128,18 @@ export function Step5SandboxTest() {
             </div>
           </div>
 
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-xs font-semibold text-white cursor-pointer">
+              <input
+                type="checkbox"
+                checked={evalForm.pii}
+                onChange={(e) => setEvalForm(f => ({ ...f, pii: e.target.checked }))}
+                className="rounded border-gray-600"
+              />
+              Contains PII
+            </label>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-white mb-1">Purpose Of Processing</label>
@@ -148,7 +160,11 @@ export function Step5SandboxTest() {
                 onChange={(e) => setEvalForm(f => ({ ...f, data_categories: Array.from(e.target.selectedOptions, o => o.value) }))}
                 className="input-dark text-sm h-16"
               >
-                {(dropdowns?.data_categories || dropdowns?.group_data_categories || []).map(c => <option key={c} value={c}>{c}</option>)}
+                {(dropdowns?.group_data_categories || []).map(c => {
+                  const name = typeof c === 'string' ? c : c.name;
+                  const label = typeof c === 'string' ? c : (c.category ? `${c.name} (${c.category})` : c.name);
+                  return <option key={name} value={name}>{label}</option>;
+                })}
               </select>
             </div>
           </div>
@@ -268,44 +284,39 @@ export function Step5SandboxTest() {
               )}
 
               {/* Assessment Compliance */}
-              {(latestResult as Record<string, unknown>).assessment_compliance && (
+              {latestResult.assessment_compliance && (
                 <div className="border-t pt-3">
                   <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Required Assessments</span>
                   <div className="mt-1.5 flex flex-wrap gap-2">
-                    {(() => {
-                      const ac = (latestResult as Record<string, unknown>).assessment_compliance as Record<string, unknown>;
-                      return ['pia', 'tia', 'hrpr'].map(key => {
-                        const required = ac[`${key}_required`];
-                        const compliant = ac[`${key}_compliant`];
-                        if (!required) return null;
-                        return (
-                          <span key={key} className={`px-2 py-1 rounded text-xs font-semibold ${
-                            compliant ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                          }`}>
-                            {key.toUpperCase()}: {compliant ? 'Compliant' : 'Required'}
-                          </span>
-                        );
-                      }).filter(Boolean);
-                    })()}
+                    {(['pia', 'tia', 'hrpr'] as const).map(key => {
+                      const ac = latestResult.assessment_compliance!;
+                      const required = ac[`${key}_required`];
+                      const compliant = ac[`${key}_compliant`];
+                      if (!required) return null;
+                      return (
+                        <span key={key} className={`px-2 py-1 rounded text-xs font-semibold ${
+                          compliant ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                        }`}>
+                          {key.toUpperCase()}: {compliant ? 'Compliant' : 'Required'}
+                        </span>
+                      );
+                    })}
                   </div>
-                  {(() => {
-                    const ac = (latestResult as Record<string, unknown>).assessment_compliance as Record<string, unknown>;
-                    const missing = ac?.missing_assessments as string[] | undefined;
-                    if (missing && missing.length > 0) {
-                      return <p className="text-xs text-red-600 mt-1">Missing: {missing.join(', ')}</p>;
-                    }
-                    return null;
-                  })()}
+                  {latestResult.assessment_compliance.missing_assessments &&
+                    latestResult.assessment_compliance.missing_assessments.length > 0 && (
+                    <p className="text-xs text-red-600 mt-1">
+                      Missing: {latestResult.assessment_compliance.missing_assessments.join(', ')}
+                    </p>
+                  )}
                 </div>
               )}
 
               {/* Consolidated Duties */}
-              {(latestResult as Record<string, unknown>).consolidated_duties &&
-                ((latestResult as Record<string, unknown>).consolidated_duties as string[]).length > 0 && (
+              {latestResult.consolidated_duties && latestResult.consolidated_duties.length > 0 && (
                 <div className="border-t pt-3">
                   <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Consolidated Duties</span>
                   <div className="mt-1.5 flex flex-wrap gap-1">
-                    {((latestResult as Record<string, unknown>).consolidated_duties as string[]).map((d, i) => (
+                    {latestResult.consolidated_duties.map((d, i) => (
                       <span key={i} className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-medium">{d}</span>
                     ))}
                   </div>
@@ -313,22 +324,20 @@ export function Step5SandboxTest() {
               )}
 
               {/* Detected Attributes */}
-              {latestResult.detected_attributes &&
-                Array.isArray(latestResult.detected_attributes) &&
-                latestResult.detected_attributes.length > 0 && (
+              {latestResult.detected_attributes && latestResult.detected_attributes.length > 0 && (
                 <div className="border-t pt-3">
                   <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Detected Attributes</span>
                   <div className="mt-1 space-y-1">
                     {latestResult.detected_attributes.map((attr, i) => (
                       <div key={i} className="flex items-center gap-2 text-xs">
                         <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium">
-                          {String((attr as Record<string, unknown>).attribute_name)}
+                          {attr.attribute_name}
                         </span>
-                        {(attr as Record<string, unknown>).detection_method && (
-                          <span className="text-gray-400">{String((attr as Record<string, unknown>).detection_method)}</span>
+                        {attr.detection_method && (
+                          <span className="text-gray-400">{attr.detection_method}</span>
                         )}
-                        {(attr as Record<string, unknown>).confidence != null && (
-                          <span className="text-gray-400">({(Number((attr as Record<string, unknown>).confidence) * 100).toFixed(0)}%)</span>
+                        {attr.confidence != null && (
+                          <span className="text-gray-400">({(attr.confidence * 100).toFixed(0)}%)</span>
                         )}
                       </div>
                     ))}
