@@ -5,7 +5,7 @@ Pydantic models for the 6-step rule ingestion wizard.
 """
 
 from typing import Dict, List, Optional, Any
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from enum import Enum
 from datetime import datetime
 
@@ -63,8 +63,20 @@ class WizardSessionState(BaseModel):
     # Step 1: Country
     origin_country: Optional[str] = None
     receiving_countries: List[str] = Field(default_factory=list)
-    origin_legal_entity: Optional[str] = None
+    origin_legal_entity: Optional[List[str]] = Field(default_factory=list)
     receiving_legal_entity: Optional[str] = None
+
+    @field_validator('origin_legal_entity', mode='before')
+    @classmethod
+    def coerce_legal_entity_to_list(cls, v):
+        """Handle backward compat: string -> list, None -> []."""
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [v] if v else []
+        if isinstance(v, list):
+            return v
+        return []
 
     # Step 2: Metadata
     data_categories: List[str] = Field(default_factory=list)
@@ -111,9 +123,20 @@ class WizardSessionResponse(BaseModel):
     current_step: int
     origin_country: Optional[str] = None
     receiving_countries: List[str] = Field(default_factory=list)
-    origin_legal_entity: Optional[str] = None
+    origin_legal_entity: Optional[List[str]] = Field(default_factory=list)
     receiving_legal_entity: Optional[str] = None
     data_categories: List[str] = Field(default_factory=list)
+
+    @field_validator('origin_legal_entity', mode='before')
+    @classmethod
+    def coerce_legal_entity_to_list(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [v] if v else []
+        if isinstance(v, list):
+            return v
+        return []
     purposes_of_processing: List[str] = Field(default_factory=list)
     process_l1: List[str] = Field(default_factory=list)
     process_l2: List[str] = Field(default_factory=list)
@@ -154,7 +177,7 @@ class SandboxEvaluationRequest(BaseModel):
     process_l3: Optional[List[str]] = None
     personal_data_names: Optional[List[str]] = None
     metadata: Optional[Dict[str, Any]] = None
-    origin_legal_entity: Optional[str] = None
+    origin_legal_entity: Optional[List[str]] = None
     receiving_legal_entity: Optional[str] = None
 
 

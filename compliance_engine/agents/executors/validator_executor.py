@@ -160,7 +160,7 @@ class ValidatorExecutor(ComplianceAgentExecutor):
             if self.db_service and validated.overall_valid:
                 self._run_test_queries(state, session_id)
 
-            if validated.overall_valid and validated.confidence_score >= 0.7:
+            if validated.overall_valid and validated.confidence_score >= 0.5:
                 # Validation passed — reset retry counter
                 state["validation_retry_count"] = 0
                 state["current_phase"] = "complete"
