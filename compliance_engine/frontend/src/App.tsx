@@ -7,6 +7,7 @@ import { LoginPage } from './pages/LoginPage';
 import { HomePage } from './pages/HomePage';
 import { EvaluatorPage } from './pages/EvaluatorPage';
 import { WizardPage } from './pages/WizardPage';
+import { EditorPage } from './pages/EditorPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 
 const queryClient = new QueryClient({
@@ -31,7 +32,7 @@ function App() {
                 <Route path="/evaluator" element={<EvaluatorPage />} />
                 <Route element={<ProtectedRoute requiredRole="admin" />}>
                   <Route path="/generator" element={<WizardPage />} />
-                  <Route path="/editor" element={<div className="text-center py-12 text-gray-400">Policy Editor - Coming Soon</div>} />
+                  <Route path="/editor" element={<EditorPage />} />
                 </Route>
                 <Route path="*" element={<NotFoundPage />} />
               </Route>

@@ -1,71 +1,71 @@
-name,category
-Full Name,Personal Identifiers
-Date of Birth,Personal Identifiers
-National ID,Personal Identifiers
-Passport Number,Personal Identifiers
-Social Security Number,Personal Identifiers
-Email Address,Personal Identifiers
-Phone Number,Personal Identifiers
-IP Address,Personal Identifiers
-Device Identifier,Personal Identifiers
-Employee ID,Personal Identifiers
-Tax Identification Number,Personal Identifiers
-Driver License Number,Personal Identifiers
-Bank Account Number,Financial Data
-Credit Card Number,Financial Data
-Income Details,Financial Data
-Credit Score,Financial Data
-Investment Portfolio,Financial Data
-Loan Details,Financial Data
-Transaction History,Financial Data
-Tax Records,Financial Data
-Insurance Policy,Financial Data
-Pension Details,Financial Data
-Salary Information,Financial Data
-Billing Address,Financial Data
-Medical Records,Health Data
-Diagnoses,Health Data
-Prescriptions,Health Data
-Lab Results,Health Data
-Mental Health Records,Health Data
-Disability Status,Health Data
-Genetic Data,Health Data
-Vaccination Records,Health Data
-Fingerprint,Biometric Data
-Facial Recognition Data,Biometric Data
-Voice Print,Biometric Data
-Iris Scan,Biometric Data
-Retina Pattern,Biometric Data
-Palm Print,Biometric Data
-Gait Analysis,Biometric Data
-Keystroke Dynamics,Biometric Data
-GPS Coordinates,Location Data
-Home Address,Location Data
-Work Address,Location Data
-Travel History,Location Data
-Check-in Data,Location Data
-Geofence Data,Location Data
-Cell Tower Data,Location Data
-Wi-Fi Location Data,Location Data
-Job Title,Employment Data
-Employment History,Employment Data
-Performance Reviews,Employment Data
-Disciplinary Records,Employment Data
-Training Records,Employment Data
-Attendance Records,Employment Data
-Leave Records,Employment Data
-Compensation History,Employment Data
-Email Content,Communication Data
-Chat Messages,Communication Data
-Call Records,Communication Data
-Video Conference Data,Communication Data
-Social Media Posts,Communication Data
-Correspondence Records,Communication Data
-Browsing History,Behavioral Data
-Purchase History,Behavioral Data
-App Usage Data,Behavioral Data
-Search Queries,Behavioral Data
-Click Patterns,Behavioral Data
-Content Preferences,Behavioral Data
-Subscription History,Behavioral Data
-Loyalty Program Data,Behavioral Data
+id,name,category
+full_name,Full Name,Personal Identifiers
+date_of_birth,Date of Birth,Personal Identifiers
+national_id,National ID,Personal Identifiers
+passport_number,Passport Number,Personal Identifiers
+social_security_number,Social Security Number,Personal Identifiers
+email_address,Email Address,Personal Identifiers
+phone_number,Phone Number,Personal Identifiers
+ip_address,IP Address,Personal Identifiers
+device_identifier,Device Identifier,Personal Identifiers
+employee_id,Employee ID,Personal Identifiers
+tax_identification_number,Tax Identification Number,Personal Identifiers
+driver_license_number,Driver License Number,Personal Identifiers
+bank_account_number,Bank Account Number,Financial Data
+credit_card_number,Credit Card Number,Financial Data
+income_details,Income Details,Financial Data
+credit_score,Credit Score,Financial Data
+investment_portfolio,Investment Portfolio,Financial Data
+loan_details,Loan Details,Financial Data
+transaction_history,Transaction History,Financial Data
+tax_records,Tax Records,Financial Data
+insurance_policy,Insurance Policy,Financial Data
+pension_details,Pension Details,Financial Data
+salary_information,Salary Information,Financial Data
+billing_address,Billing Address,Financial Data
+medical_records,Medical Records,Health Data
+diagnoses,Diagnoses,Health Data
+prescriptions,Prescriptions,Health Data
+lab_results,Lab Results,Health Data
+mental_health_records,Mental Health Records,Health Data
+disability_status,Disability Status,Health Data
+genetic_data,Genetic Data,Health Data
+vaccination_records,Vaccination Records,Health Data
+fingerprint,Fingerprint,Biometric Data
+facial_recognition_data,Facial Recognition Data,Biometric Data
+voice_print,Voice Print,Biometric Data
+iris_scan,Iris Scan,Biometric Data
+retina_pattern,Retina Pattern,Biometric Data
+palm_print,Palm Print,Biometric Data
+gait_analysis,Gait Analysis,Biometric Data
+keystroke_dynamics,Keystroke Dynamics,Biometric Data
+gps_coordinates,GPS Coordinates,Location Data
+home_address,Home Address,Location Data
+work_address,Work Address,Location Data
+travel_history,Travel History,Location Data
+check_in_data,Check-in Data,Location Data
+geofence_data,Geofence Data,Location Data
+cell_tower_data,Cell Tower Data,Location Data
+wi_fi_location_data,Wi-Fi Location Data,Location Data
+job_title,Job Title,Employment Data
+employment_history,Employment History,Employment Data
+performance_reviews,Performance Reviews,Employment Data
+disciplinary_records,Disciplinary Records,Employment Data
+training_records,Training Records,Employment Data
+attendance_records,Attendance Records,Employment Data
+leave_records,Leave Records,Employment Data
+compensation_history,Compensation History,Employment Data
+email_content,Email Content,Communication Data
+chat_messages,Chat Messages,Communication Data
+call_records,Call Records,Communication Data
+video_conference_data,Video Conference Data,Communication Data
+social_media_posts,Social Media Posts,Communication Data
+correspondence_records,Correspondence Records,Communication Data
+browsing_history,Browsing History,Behavioral Data
+purchase_history,Purchase History,Behavioral Data
+app_usage_data,App Usage Data,Behavioral Data
+search_queries,Search Queries,Behavioral Data
+click_patterns,Click Patterns,Behavioral Data
+content_preferences,Content Preferences,Behavioral Data
+subscription_history,Subscription History,Behavioral Data
+loyalty_program_data,Loyalty Program Data,Behavioral Data

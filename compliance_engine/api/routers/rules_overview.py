@@ -68,8 +68,9 @@ async def get_rules_overview_table(
             collect(DISTINCT og.name) AS origin_names,
             collect(DISTINCT rg.name) AS receiving_names,
             collect(DISTINCT d.name) AS duties,
-            collect(DISTINCT pb.name) AS prohibitions
-        ORDER BY r.priority_order
+            collect(DISTINCT pb.name) AS prohibitions,
+            r.priority AS sort_priority
+        ORDER BY sort_priority
         """
         raw_rows = db.execute_rules_query(query)
     except Exception as e:

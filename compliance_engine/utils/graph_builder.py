@@ -61,6 +61,25 @@ def _priority_order(priority: str) -> int:
     return PRIORITY_ORDER.get(priority, 2)
 
 
+def validate_csv_schema(
+    csv_file: Path,
+    required_cols: List[str],
+    optional_cols: List[str] | None = None,
+) -> List[str]:
+    """Validate CSV file has required columns. Returns list of error strings (empty = valid)."""
+    errors: List[str] = []
+    try:
+        with open(csv_file, newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            headers = reader.fieldnames or []
+            for col in required_cols:
+                if col not in headers:
+                    errors.append(f"Missing required column '{col}' in {csv_file.name}")
+    except Exception as e:
+        errors.append(f"Failed to read {csv_file.name}: {e}")
+    return errors
+
+
 class RulesGraphBuilder:
     """Builds the RulesGraph — the single source of truth for all rule evaluation."""
 
@@ -477,18 +496,66 @@ class RulesGraphBuilder:
     def _ingest_csv_dictionary(self, csv_file: Path, node_type: str):
         """Ingest a CSV data dictionary file using MERGE."""
         try:
+            # Validate schema first
+            errors = validate_csv_schema(
+                csv_file,
+                required_cols=['name'],
+                optional_cols=['id', 'category', 'l1', 'l2', 'l3'],
+            )
+            if errors:
+                for err in errors:
+                    logger.warning(f"CSV validation ({csv_file.name}): {err}")
+
             count = 0
             with open(csv_file, newline='', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
+                headers = reader.fieldnames or []
+                has_id = 'id' in headers
+                has_l1 = 'l1' in headers
+                has_l2 = 'l2' in headers
+                has_l3 = 'l3' in headers
+
                 for row in reader:
                     name = row.get('name', '').strip()
                     category = row.get('category', '').strip()
                     if not name:
                         continue
+
+                    # Build SET clause dynamically
+                    params: Dict[str, Any] = {"name": name, "category": category}
+                    set_parts = ["n.category = $category"]
+
+                    if has_id:
+                        node_id = row.get('id', '').strip()
+                        if node_id:
+                            params["node_id"] = node_id
+                            set_parts.append("n.id = $node_id")
+
+                    # Process-specific l1/l2/l3 handling
+                    if node_type == "Process":
+                        l1 = ''
+                        if has_l1:
+                            l1 = row.get('l1', '').strip()
+                        if not l1 and category:
+                            l1 = category  # fallback: category → l1
+                        if l1:
+                            params["l1"] = l1
+                            set_parts.append("n.l1 = $l1")
+                        if has_l2:
+                            l2 = row.get('l2', '').strip()
+                            if l2:
+                                params["l2"] = l2
+                                set_parts.append("n.l2 = $l2")
+                        if has_l3:
+                            l3 = row.get('l3', '').strip()
+                            if l3:
+                                params["l3"] = l3
+                                set_parts.append("n.l3 = $l3")
+
+                    set_clause = ", ".join(set_parts)
                     self.graph.query(
-                        f"MERGE (n:{node_type} {{name: $name}}) "
-                        f"SET n.category = $category",
-                        {"name": name, "category": category}
+                        f"MERGE (n:{node_type} {{name: $name}}) SET {set_clause}",
+                        params,
                     )
                     count += 1
             logger.info(f"Ingested {count} {node_type} nodes from {csv_file.name}")

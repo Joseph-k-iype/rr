@@ -1,52 +1,52 @@
-name,category
-Service Delivery,Contractual
-Contract Fulfillment,Contractual
-Payment Processing,Contractual
-Order Management,Contractual
-Warranty Administration,Contractual
-Subscription Management,Contractual
-Account Servicing,Contractual
-Product Delivery,Contractual
-Service Level Monitoring,Contractual
-Invoice Generation,Contractual
-Tax Compliance,Legal Obligation
-Regulatory Reporting,Legal Obligation
-AML Compliance,Legal Obligation
-KYC Verification,Legal Obligation
-Sanctions Screening,Legal Obligation
-Financial Reporting,Legal Obligation
-Employment Law Compliance,Legal Obligation
-Health and Safety Reporting,Legal Obligation
-Data Retention Compliance,Legal Obligation
-Audit Trail Maintenance,Legal Obligation
-Fraud Prevention,Legitimate Interest
-Risk Management,Legitimate Interest
-Internal Audit,Legitimate Interest
-Business Analytics,Legitimate Interest
-Network Security,Legitimate Interest
-IT Administration,Legitimate Interest
-Quality Assurance,Legitimate Interest
-Product Improvement,Legitimate Interest
-Customer Insights,Legitimate Interest
-Operational Efficiency,Legitimate Interest
-Marketing Analytics,Consent-based
-Targeted Advertising,Consent-based
-Newsletter Distribution,Consent-based
-Customer Profiling,Consent-based
-Location-based Services,Consent-based
-Cookie Tracking,Consent-based
-Third Party Sharing,Consent-based
-Research Participation,Consent-based
-Behavioral Analysis,Consent-based
-Personalization,Consent-based
-Consent Management,Consent-based
-Emergency Response,Vital Interest
-Health Monitoring,Vital Interest
-Safety Alerts,Vital Interest
-Crisis Management,Vital Interest
-Disaster Recovery Support,Vital Interest
-Public Health Reporting,Vital Interest
-Epidemic Surveillance,Vital Interest
-Medical Emergency Processing,Vital Interest
-Life Safety Systems,Vital Interest
-Critical Infrastructure Protection,Vital Interest
+id,name,category
+service_delivery,Service Delivery,Contractual
+contract_fulfillment,Contract Fulfillment,Contractual
+payment_processing,Payment Processing,Contractual
+order_management,Order Management,Contractual
+warranty_administration,Warranty Administration,Contractual
+subscription_management,Subscription Management,Contractual
+account_servicing,Account Servicing,Contractual
+product_delivery,Product Delivery,Contractual
+service_level_monitoring,Service Level Monitoring,Contractual
+invoice_generation,Invoice Generation,Contractual
+tax_compliance,Tax Compliance,Legal Obligation
+regulatory_reporting,Regulatory Reporting,Legal Obligation
+aml_compliance,AML Compliance,Legal Obligation
+kyc_verification,KYC Verification,Legal Obligation
+sanctions_screening,Sanctions Screening,Legal Obligation
+financial_reporting,Financial Reporting,Legal Obligation
+employment_law_compliance,Employment Law Compliance,Legal Obligation
+health_and_safety_reporting,Health and Safety Reporting,Legal Obligation
+data_retention_compliance,Data Retention Compliance,Legal Obligation
+audit_trail_maintenance,Audit Trail Maintenance,Legal Obligation
+fraud_prevention,Fraud Prevention,Legitimate Interest
+risk_management,Risk Management,Legitimate Interest
+internal_audit,Internal Audit,Legitimate Interest
+business_analytics,Business Analytics,Legitimate Interest
+network_security,Network Security,Legitimate Interest
+it_administration,IT Administration,Legitimate Interest
+quality_assurance,Quality Assurance,Legitimate Interest
+product_improvement,Product Improvement,Legitimate Interest
+customer_insights,Customer Insights,Legitimate Interest
+operational_efficiency,Operational Efficiency,Legitimate Interest
+marketing_analytics,Marketing Analytics,Consent-based
+targeted_advertising,Targeted Advertising,Consent-based
+newsletter_distribution,Newsletter Distribution,Consent-based
+customer_profiling,Customer Profiling,Consent-based
+location_based_services,Location-based Services,Consent-based
+cookie_tracking,Cookie Tracking,Consent-based
+third_party_sharing,Third Party Sharing,Consent-based
+research_participation,Research Participation,Consent-based
+behavioral_analysis,Behavioral Analysis,Consent-based
+personalization,Personalization,Consent-based
+consent_management,Consent Management,Consent-based
+emergency_response,Emergency Response,Vital Interest
+health_monitoring,Health Monitoring,Vital Interest
+safety_alerts,Safety Alerts,Vital Interest
+crisis_management,Crisis Management,Vital Interest
+disaster_recovery_support,Disaster Recovery Support,Vital Interest
+public_health_reporting,Public Health Reporting,Vital Interest
+epidemic_surveillance,Epidemic Surveillance,Vital Interest
+medical_emergency_processing,Medical Emergency Processing,Vital Interest
+life_safety_systems,Life Safety Systems,Vital Interest
+critical_infrastructure_protection,Critical Infrastructure Protection,Vital Interest

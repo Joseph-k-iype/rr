@@ -1,52 +1,52 @@
-name,category
-Employees,Internal
-Contractors,Internal
-Interns,Internal
-Board Members,Internal
-Executive Officers,Internal
-Temporary Staff,Internal
-Volunteers,Internal
-Former Employees,Internal
-Retirees,Internal
-Applicants,Internal
-Trainees,Internal
-Secondees,Internal
-Consultants,Internal
-Agency Workers,Internal
-Part-time Workers,Internal
-Remote Workers,Internal
-Expatriates,Internal
-Customers,External
-Prospects,External
-Beneficiaries,External
-Dependents,External
-Account Holders,External
-Cardholders,External
-Loan Applicants,External
-Policyholders,External
-Claimants,External
-Guarantors,External
-Patients,External
-Students,External
-Minors,External
-Vulnerable Persons,External
-Power of Attorney Holders,External
-Joint Account Holders,External
-Authorized Representatives,External
-Suppliers,Third Party
-Vendors,Third Party
-Agents,Third Party
-Brokers,Third Party
-Shareholders,Third Party
-Regulators,Third Party
-Auditors,Third Party
-Legal Representatives,Third Party
-Witnesses,Third Party
-Referees,Third Party
-Emergency Contacts,Third Party
-Next of Kin,Third Party
-Business Partners,Third Party
-Correspondent Banks,Third Party
-Intermediaries,Third Party
-Sub-processors,Third Party
-Service Providers,Third Party
+id,name,category
+employees,Employees,Internal
+contractors,Contractors,Internal
+interns,Interns,Internal
+board_members,Board Members,Internal
+executive_officers,Executive Officers,Internal
+temporary_staff,Temporary Staff,Internal
+volunteers,Volunteers,Internal
+former_employees,Former Employees,Internal
+retirees,Retirees,Internal
+applicants,Applicants,Internal
+trainees,Trainees,Internal
+secondees,Secondees,Internal
+consultants,Consultants,Internal
+agency_workers,Agency Workers,Internal
+part_time_workers,Part-time Workers,Internal
+remote_workers,Remote Workers,Internal
+expatriates,Expatriates,Internal
+customers,Customers,External
+prospects,Prospects,External
+beneficiaries,Beneficiaries,External
+dependents,Dependents,External
+account_holders,Account Holders,External
+cardholders,Cardholders,External
+loan_applicants,Loan Applicants,External
+policyholders,Policyholders,External
+claimants,Claimants,External
+guarantors,Guarantors,External
+patients,Patients,External
+students,Students,External
+minors,Minors,External
+vulnerable_persons,Vulnerable Persons,External
+power_of_attorney_holders,Power of Attorney Holders,External
+joint_account_holders,Joint Account Holders,External
+authorized_representatives,Authorized Representatives,External
+suppliers,Suppliers,Third Party
+vendors,Vendors,Third Party
+agents,Agents,Third Party
+brokers,Brokers,Third Party
+shareholders,Shareholders,Third Party
+regulators,Regulators,Third Party
+auditors,Auditors,Third Party
+legal_representatives,Legal Representatives,Third Party
+witnesses,Witnesses,Third Party
+referees,Referees,Third Party
+emergency_contacts,Emergency Contacts,Third Party
+next_of_kin,Next of Kin,Third Party
+business_partners,Business Partners,Third Party
+correspondent_banks,Correspondent Banks,Third Party
+intermediaries,Intermediaries,Third Party
+sub_processors,Sub-processors,Third Party
+service_providers,Service Providers,Third Party
