@@ -4,6 +4,7 @@ import { useAuthStore } from '../../stores/authStore';
 const NAV_ITEMS = [
   { path: '/', label: 'Policy Overview', roles: ['admin', 'user'] },
   { path: '/evaluator', label: 'Policy Evaluator', roles: ['admin', 'user'] },
+  { path: '/saved-policies', label: 'Saved Policies', roles: ['admin', 'user'] },
   { path: '/generator', label: 'Policy Generator', roles: ['admin'] },
   { path: '/editor', label: 'Policy Editor', roles: ['admin'] },
 ];

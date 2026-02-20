@@ -10,12 +10,16 @@ interface MetadataEntry { key: string; value: string; }
 export function EvaluatorForm() {
   const { data: dropdowns, isLoading: loadingDropdowns } = useDropdownData();
   const evaluate = useEvaluation();
-  const { setResult, setLoading, setError } = useEvaluationStore();
+  const { setResult, setScenarioInput, setLoading, setError } = useEvaluationStore();
 
   const [formData, setFormData] = useState<RulesEvaluationRequest>({
     origin_country: '',
     receiving_country: [],
     pii: false,
+    purpose_of_processing: [],
+    data_categories: [],
+    processes: [],
+    personal_data_names: [],
     purposes: [],
     process_l1: [],
     process_l2: [],
@@ -25,6 +29,7 @@ export function EvaluatorForm() {
   });
 
   const [metadataEntries, setMetadataEntries] = useState<MetadataEntry[]>([]);
+  const [personalDataInput, setPersonalDataInput] = useState('');
   const [originLEs, setOriginLEs] = useState<string[]>([]);
   const [receivingLEs, setReceivingLEs] = useState<string[]>([]);
 
@@ -69,6 +74,7 @@ export function EvaluatorForm() {
         ...formData,
         ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
       };
+      setScenarioInput(payload);
       const result = await evaluate.mutateAsync(payload);
       setResult(result);
     } catch (err) {
@@ -178,6 +184,47 @@ export function EvaluatorForm() {
           </div>
         </div>
       </div>
+
+      {/* Data Categories & Personal Data */}
+      <div className="grid grid-cols-2 gap-6">
+        <div>
+          <label className="block text-sm font-semibold text-white mb-2">Data Categories</label>
+          <select
+            multiple
+            value={Array.isArray(formData.data_categories) ? formData.data_categories : []}
+            onChange={(e) => setFormData(f => ({ ...f, data_categories: Array.from(e.target.selectedOptions, o => o.value) }))}
+            className="input-dark h-20"
+          >
+            {(dropdowns?.data_categories || []).map(dc => <option key={dc.name} value={dc.name}>{dc.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-semibold text-white mb-2">Personal Data Names</label>
+          <input
+            type="text"
+            value={personalDataInput}
+            onChange={(e) => {
+              setPersonalDataInput(e.target.value);
+              const names = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
+              setFormData(f => ({ ...f, personal_data_names: names }));
+            }}
+            placeholder="e.g., Credit Card Number, Medical Records"
+            className="input-dark"
+          />
+          <p className="text-xs text-gray-400 mt-1">Comma-separated list</p>
+        </div>
+      </div>
+
+      {/* PII toggle */}
+      <label className="flex items-center gap-2 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={formData.pii || false}
+          onChange={(e) => setFormData(f => ({ ...f, pii: e.target.checked }))}
+          className="w-4 h-4 rounded border-gray-500"
+        />
+        <span className="text-sm text-gray-300">Transfer involves PII</span>
+      </label>
 
       {/* Other metadata */}
       <div>

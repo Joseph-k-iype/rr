@@ -1,4 +1,5 @@
 import { useEvaluationStore } from '../../stores/evaluationStore';
+import { RuleCard } from './RuleCard';
 
 export function EvaluationResult() {
   const { result } = useEvaluationStore();
@@ -11,61 +12,157 @@ export function EvaluationResult() {
     );
   }
 
+  const consolidatedDuties = result.consolidated_duties || [];
+  const hasManyDuties = consolidatedDuties.length > 6;
+
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
-      {/* Triggered Rules */}
-      {(result.triggered_rules || []).map((rule, i) => (
-        <div key={`${rule.rule_id}-${i}`} className="border border-gray-200 rounded-lg p-4">
-          <div className="flex items-start justify-between mb-2">
-            <span className="text-sm font-medium text-gray-600">Rule {i + 1}</span>
-            <span className={rule.outcome === 'permission' ? 'badge-permission text-sm' : 'badge-prohibition text-sm'}>
-              {rule.outcome === 'permission' ? 'Permission' : 'Prohibition'}
-            </span>
-          </div>
-          <p className="text-sm text-gray-800 font-medium mb-2">{rule.rule_name}</p>
-          {rule.description && <p className="text-xs text-gray-500 mb-2">{rule.description}</p>}
-
-          {/* Duties for permissions */}
-          {rule.outcome === 'permission' && (rule.permissions || []).map(p =>
-            (p.duties || []).map(d => (
-              <div key={d.duty_id} className="mt-1">
-                <span className="text-xs font-semibold text-blue-600">Duty</span>
-                <p className="text-xs text-gray-700">{d.name}</p>
-              </div>
-            ))
-          )}
-        </div>
-      ))}
-
-      {/* Precedent Cases */}
-      {result.precedent_validation && (result.precedent_validation.matching_cases || []).length > 0 && (
-        <div className="border-t pt-3">
-          <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-            <span>List of cases matched</span>
-            <span>{(result.precedent_validation.matching_cases || []).map(c => c.case_ref_id).join(', ')}</span>
-          </div>
+    <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+      {/* Scenario Summary */}
+      {result.scenario_summary && (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Scenario</span>
+          <p className="text-xs text-gray-700 mt-1">{result.scenario_summary}</p>
         </div>
       )}
 
-      {/* Overall Result */}
-      <div className="border-t pt-3">
+      {/* Transfer Status Banner */}
+      <div className={`rounded-lg p-3 ${
+        result.transfer_status === 'ALLOWED' ? 'bg-green-50 border border-green-200' :
+        result.transfer_status === 'PROHIBITED' ? 'bg-red-50 border border-red-200' :
+        'bg-yellow-50 border border-yellow-200'
+      }`}>
         <div className="flex items-center justify-between">
-          <span className="text-sm font-bold text-gray-900">Evaluation Result</span>
+          <span className="text-sm font-bold text-gray-900">Transfer Status</span>
           <span className={`text-sm font-bold ${
             result.transfer_status === 'ALLOWED' ? 'text-green-600' :
             result.transfer_status === 'PROHIBITED' ? 'text-red-600' :
             'text-yellow-600'
           }`}>
-            {result.transfer_status === 'ALLOWED' ? 'Permission' :
-             result.transfer_status === 'PROHIBITED' ? 'Prohibition' :
-             result.transfer_status}
+            {result.transfer_status}
           </span>
         </div>
+        {result.message && (
+          <p className="text-xs text-gray-600 mt-1">{result.message}</p>
+        )}
       </div>
 
+      {/* Triggered Rules — rich accordion display */}
+      {(result.triggered_rules || []).length > 0 && (
+        <div>
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+            Triggered Rules ({result.triggered_rules.length})
+          </span>
+          <div className="mt-2 space-y-2">
+            {result.triggered_rules.map((rule, i) => (
+              <RuleCard key={`${rule.rule_id}-${i}`} rule={rule} index={i} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Assessment Compliance */}
+      {result.assessment_compliance && (
+        <div className="border-t pt-3">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Required Assessments</span>
+          <div className="mt-1.5 flex flex-wrap gap-2">
+            {(['pia', 'tia', 'hrpr'] as const).map(key => {
+              const ac = result.assessment_compliance!;
+              const required = ac[`${key}_required`];
+              const compliant = ac[`${key}_compliant`];
+              if (!required) return null;
+              return (
+                <span key={key} className={`px-2 py-1 rounded text-xs font-semibold ${
+                  compliant ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                }`}>
+                  {key.toUpperCase()}: {compliant ? 'Compliant' : 'Required'}
+                </span>
+              );
+            })}
+          </div>
+          {result.assessment_compliance.missing_assessments &&
+            result.assessment_compliance.missing_assessments.length > 0 && (
+            <p className="text-xs text-red-600 mt-1">
+              Missing: {result.assessment_compliance.missing_assessments.join(', ')}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Consolidated Duties — with overflow protection */}
+      {consolidatedDuties.length > 0 && (
+        <div className="border-t pt-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Consolidated Duties</span>
+            <span className="bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full text-[10px] font-medium">{consolidatedDuties.length}</span>
+          </div>
+          <div className={`mt-1.5 space-y-1 ${hasManyDuties ? 'max-h-[200px] overflow-y-auto pr-1' : ''}`}>
+            {consolidatedDuties.map((d, i) => (
+              <div key={i}>
+                <span className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-medium break-words inline-block" style={{ overflowWrap: 'break-word' }}>
+                  {d}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Detected Attributes */}
+      {result.detected_attributes && result.detected_attributes.length > 0 && (
+        <div className="border-t pt-3">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Detected Attributes</span>
+          <div className="mt-1 space-y-1">
+            {result.detected_attributes.map((attr, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs">
+                <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium">
+                  {attr.attribute_name}
+                </span>
+                {attr.detection_method && (
+                  <span className="text-gray-400">{attr.detection_method}</span>
+                )}
+                {attr.confidence != null && (
+                  <span className="text-gray-400">({(attr.confidence * 100).toFixed(0)}%)</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Prohibition Reasons */}
       {(result.prohibition_reasons || []).length > 0 && (
-        <div className="text-xs text-red-600">
-          {(result.prohibition_reasons || []).map((r, i) => <p key={i}>{r}</p>)}
+        <div className="border-t pt-3">
+          <span className="text-xs font-semibold text-red-500 uppercase tracking-wide">Prohibition Reasons</span>
+          <ul className="mt-1 space-y-1">
+            {result.prohibition_reasons.map((r, i) => (
+              <li key={i} className="text-xs text-red-700 break-words" style={{ overflowWrap: 'break-word' }}>{r}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Precedent Cases */}
+      {result.precedent_validation && (
+        <div className="border-t pt-3">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Precedent Cases</span>
+          <div className="mt-1 text-xs text-gray-600">
+            <p>{result.precedent_validation.total_matches} total match(es), {result.precedent_validation.compliant_matches} compliant</p>
+            {result.precedent_validation.evidence_summary?.evidence_narrative && (
+              <p className="mt-1 text-gray-500">{result.precedent_validation.evidence_summary.evidence_narrative}</p>
+            )}
+            {(result.precedent_validation.matching_cases || []).length > 0 && (
+              <p className="mt-1 text-gray-400">
+                Cases: {result.precedent_validation.matching_cases.map(c => c.case_ref_id).join(', ')}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Evaluation Time */}
+      {result.evaluation_time_ms != null && (
+        <div className="text-right">
+          <span className="text-[10px] text-gray-400">{result.evaluation_time_ms.toFixed(0)}ms</span>
         </div>
       )}
     </div>

@@ -16,6 +16,11 @@ into a two-tiered evaluation engine:
 - **Tier 1 (Exact)**: Structured fields (data_categories, purposes, processes) are matched via case-insensitive set intersection.
 - **Tier 2 (Fuzzy)**: Free-text fields (personal_data_names, metadata) are matched via keyword substring matching with thresholds.
 
+The graph database supports rich entity linking via LINKED_TO relationships. Rules can be linked to:
+Regulator, Authority, PurposeOfProcessing, DataCategory, SensitiveDataCategory, Process, GDC,
+DataSubject, LegalEntity, and GlobalBusinessFunction nodes. The analyzer now produces
+`suggested_linked_entities` and the Cypher generator creates `rule_links` queries for these.
+
 Your routing decisions determine the quality and efficiency of rule creation.
 
 ## Input Schema
@@ -45,7 +50,7 @@ You receive the current workflow state including:
 ### Context Sharing Protocol
 Each agent passes specific context to the next:
 - **rule_analyzer → data_dictionary**: Full CoT analysis (domain, ontologies, acronyms), rule_definition, PII flag
-- **rule_analyzer → cypher_generator**: rule_definition with all fields
+- **rule_analyzer → cypher_generator**: rule_definition with all fields + suggested_linked_entities (regulators, authorities, GBGFs, sensitive data categories, data subjects, legal entities, purposes, data categories, processes, GDCs)
 - **data_dictionary → cypher_generator**: Keywords and patterns for attribute_keywords/attribute_patterns
 - **all agents → validator**: Their complete outputs for cross-validation
 - **validator → failing agent**: Specific error messages and suggested_fixes

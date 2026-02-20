@@ -5,18 +5,25 @@ import { useAgentEvents } from '../../hooks/useAgentEvents';
 import { startWizardSession, submitWizardStep, getWizardSession, loadSandbox, approveWizard } from '../../services/wizardApi';
 import { WizardNavigation } from './WizardNavigation';
 import { AgentProgressPanel } from './shared/AgentProgressPanel';
-import { Step1Country } from './steps/Step1Country';
+import { Step1RuleInput } from './steps/Step1RuleInput';
+import { Step2AIAnalysis } from './steps/Step2AIAnalysis';
 import { Step2Metadata } from './steps/Step2Metadata';
-import { Step3RuleText } from './steps/Step3RuleText';
 import { Step4Review } from './steps/Step4Review';
 import { Step5SandboxTest } from './steps/Step5SandboxTest';
 import { Step6Approve } from './steps/Step6Approve';
 import gsap from 'gsap';
 
+// New workflow order:
+// 1: Rule Input (text + country + PII) → triggers AI
+// 2: AI Analysis (auto-progress, read-only)
+// 3: Metadata (pre-filled from AI, editable)
+// 4: Review
+// 5: Sandbox Test
+// 6: Approve
 const stepComponents: Record<number, React.FC> = {
-  1: Step1Country,
-  2: Step2Metadata,
-  3: Step3RuleText,
+  1: Step1RuleInput,
+  2: Step2AIAnalysis,
+  3: Step2Metadata,   // Reuse existing metadata component as step 3
   4: Step4Review,
   5: Step5SandboxTest,
   6: Step6Approve,
@@ -28,7 +35,8 @@ export function WizardContainer() {
   const stepRef = useRef<HTMLDivElement>(null);
   const prevStepRef = useRef(store.currentStep);
 
-  const sseSessionId = store.currentStep >= 3 ? store.sessionId : null;
+  // SSE for step 2 (AI analysis)
+  const sseSessionId = store.currentStep === 2 ? store.sessionId : null;
   const { events, connected } = useAgentEvents(sseSessionId);
 
   // Animate step transitions
@@ -46,9 +54,9 @@ export function WizardContainer() {
 
   const canGoNext = useCallback(() => {
     switch (store.currentStep) {
-      case 1: return !!store.originCountry;
-      case 2: return store.dataCategories.length > 0;
-      case 3: return store.ruleText.length > 10;
+      case 1: return !!store.originCountry && store.ruleText.length > 10;
+      case 2: return !store.isProcessing && !!store.analysisResult; // AI must complete
+      case 3: return true; // Metadata is all optional
       case 4: return !!store.editedRuleDefinition;
       case 5: return !!store.editedRuleDefinition;
       case 6: return true;
@@ -58,6 +66,8 @@ export function WizardContainer() {
 
   const getNextLabel = () => {
     const step = store.currentStep;
+    if (step === 1) return 'Analyze Rule';
+    if (step === 2) return store.isProcessing ? 'Processing...' : 'Configure Metadata';
     if (step === 5 && !store.sandboxGraphName) return 'Load Sandbox';
     if (step === 6) return 'Approve & Load';
     return 'Next';
@@ -72,23 +82,54 @@ export function WizardContainer() {
     store.setProcessing(true);
 
     try {
-      // Step 1: create session if needed
-      if (step === 1 && !sessionId) {
-        const { session_id } = await startWizardSession();
-        store.setSessionId(session_id);
-        sessionId = session_id;
+      // Step 1: create session + submit rule text + country → triggers AI
+      if (step === 1) {
+        if (!sessionId) {
+          const { session_id } = await startWizardSession();
+          store.setSessionId(session_id);
+          sessionId = session_id;
+        }
+        if (sessionId) {
+          await submitWizardStep(sessionId, {
+            step: 1,
+            data: {
+              origin_country: state.originCountry,
+              receiving_countries: state.receivingCountries,
+              origin_legal_entity: Array.isArray(state.originLegalEntity) ? state.originLegalEntity : state.originLegalEntity ? [state.originLegalEntity] : [],
+              receiving_legal_entity: state.receivingLegalEntity,
+              rule_text: state.ruleText,
+              is_pii_related: state.isPiiRelated,
+            },
+          });
+        }
+        store.setStep(2);
+        // Don't clear isProcessing — Step 2 shows AI progress
+        return;
       }
 
-      // Steps 1-3: submit step data to backend
-      if (step <= 3 && sessionId) {
-        const stepData: Record<number, Record<string, unknown>> = {
-          1: {
-            origin_country: state.originCountry,
-            receiving_countries: state.receivingCountries,
-            origin_legal_entity: Array.isArray(state.originLegalEntity) ? state.originLegalEntity : state.originLegalEntity ? [state.originLegalEntity] : [],
-            receiving_legal_entity: state.receivingLegalEntity,
-          },
-          2: {
+      // Step 2: AI analysis done → poll session for results, advance to metadata
+      if (step === 2 && sessionId) {
+        const session = await getWizardSession(sessionId);
+        if (session.status === 'failed') {
+          store.setError(session.error_message || 'AI processing failed. Go Back to edit and retry.');
+          store.setProcessing(false);
+          return;
+        }
+        if (session.analysis_result) store.setAnalysisResult(session.analysis_result);
+        if (session.dictionary_result) store.setDictionaryResult(session.dictionary_result);
+        if (session.edited_rule_definition) store.setEditedRuleDefinition(session.edited_rule_definition);
+        if (session.edited_terms_dictionary) store.setEditedTermsDictionary(session.edited_terms_dictionary);
+        await submitWizardStep(sessionId, { step: 2, data: {} });
+        store.setStep(3);
+        store.setProcessing(false);
+        return;
+      }
+
+      // Step 3: submit metadata
+      if (step === 3 && sessionId) {
+        await submitWizardStep(sessionId, {
+          step: 3,
+          data: {
             data_categories: state.dataCategories,
             purposes_of_processing: state.purposesOfProcessing,
             process_l1: state.processL1,
@@ -97,24 +138,17 @@ export function WizardContainer() {
             group_data_categories: state.groupDataCategories,
             valid_until: state.validUntil || null,
           },
-          3: { rule_text: state.ruleText, is_pii_related: state.isPiiRelated },
-        };
+        });
+        store.setStep(4);
+        store.setProcessing(false);
+        return;
+      }
 
-        const result = await submitWizardStep(sessionId, { step, data: stepData[step] || {} });
-
-        if (step === 3) {
-          if (result.status === 'failed') {
-            store.setError(result.error_message || 'AI processing failed. You can go Back and resubmit.');
-            store.setProcessing(false);
-            return;
-          } else {
-            const session = await getWizardSession(sessionId);
-            if (session.analysis_result) store.setAnalysisResult(session.analysis_result);
-            if (session.dictionary_result) store.setDictionaryResult(session.dictionary_result);
-            if (session.edited_rule_definition) store.setEditedRuleDefinition(session.edited_rule_definition);
-            if (session.edited_terms_dictionary) store.setEditedTermsDictionary(session.edited_terms_dictionary);
-          }
-        }
+      // Step 4: review → advance to sandbox
+      if (step === 4) {
+        store.setStep(5);
+        store.setProcessing(false);
+        return;
       }
 
       // Step 5: load sandbox
@@ -150,7 +184,6 @@ export function WizardContainer() {
         await approveWizard(sessionId);
         store.setApproved(true);
         store.setProcessing(false);
-        // Auto-navigate to homepage after a brief success display
         setTimeout(() => {
           store.reset();
           navigate('/');
@@ -158,7 +191,7 @@ export function WizardContainer() {
         return;
       }
 
-      // Advance step
+      // Fallback advance
       if (step < 6) {
         store.setStep(step + 1);
       }
@@ -197,7 +230,7 @@ export function WizardContainer() {
         <StepComponent />
       </div>
 
-      {store.sessionId && (store.isProcessing || store.currentStep === 3) && (
+      {store.sessionId && store.currentStep === 2 && store.isProcessing && (
         <AgentProgressPanel events={events} connected={connected} />
       )}
 

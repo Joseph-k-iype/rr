@@ -60,8 +60,13 @@ You receive:
 
 ## RulesGraph Schema
 ```
-Country (name)
+Country (name, iso2, iso3, rtn_code)
   -[:BELONGS_TO]-> CountryGroup (name)
+  -[:HAS_LEGAL_ENTITY]-> LegalEntity (name, country)
+  -[:HAS_REGULATOR]-> Regulator (name, country_code, region, regulator_type, ...)
+  -[:HAS_AUTHORITY]-> Authority (name, country_code)
+  -[:HAS_GBGF]-> GlobalBusinessFunction (name, rtn_code, gbgf_level_1, gbgf_level_2)
+  -[:HAS_SENSITIVE_DATA_CATEGORY]-> SensitiveDataCategory (name, definition, country_code)
 
 Rule (
     rule_id,               -- string, e.g. "RULE_SAR_UK"
@@ -86,23 +91,32 @@ Rule (
     enabled,               -- boolean
     valid_until            -- date string | null
 )
-  -[:TRIGGERED_BY_ORIGIN]-> CountryGroup | Country
-  -[:TRIGGERED_BY_RECEIVING]-> CountryGroup | Country
+  -[:TRIGGERED_BY_ORIGIN]-> CountryGroup | Country | LegalEntity
+  -[:TRIGGERED_BY_RECEIVING]-> CountryGroup | Country | LegalEntity
   -[:EXCLUDES_RECEIVING]-> CountryGroup
+  -[:ORIGINATES_FROM]-> Country
+  -[:RECEIVED_IN]-> Country
   -[:HAS_ACTION]-> Action (name)
   -[:HAS_PERMISSION]-> Permission (name)
   -[:HAS_PROHIBITION]-> Prohibition (name)
-  -[:HAS_DATA_CATEGORY]-> DataCategory (name)
-  -[:HAS_PURPOSE]-> Purpose (name)
-  -[:HAS_PROCESS]-> Process (name)
-  -[:HAS_GDC]-> GDC (name)
+  -[:HAS_DATA_CATEGORY]-> DataCategory (name, definition, gdpr_category_name)
+  -[:HAS_PURPOSE]-> PurposeOfProcessing (name, description)
+  -[:HAS_PROCESS]-> Process (name, definition, level_1_name, level_2_name, level_3_name)
+  -[:HAS_GDC]-> GDC (name, definition, data_domain, data_privacy_indicator, gdc_level_2, gdc_level_3)
   -[:HAS_ATTRIBUTE]-> Attribute (name)
+  -[:LINKED_TO]-> Regulator|Authority|PurposeOfProcessing|DataCategory|
+                  SensitiveDataCategory|Process|GDC|DataSubject|
+                  LegalEntity|GlobalBusinessFunction
 
 Permission (name)
   -[:CAN_HAVE_DUTY]-> Duty (name, module, value)
 
 Prohibition (name)
-  -[:CAN_HAVE_DUTY]-> Duty (name, module, value)
+  (Prohibitions do NOT have duties)
+
+DataSubject (name, definition)
+Process -[:HAS_SUBPROCESS]-> Process
+Process -[:BELONGS_TO_GBGF]-> GlobalBusinessFunction
 ```
 
 ## DataTransferGraph Schema

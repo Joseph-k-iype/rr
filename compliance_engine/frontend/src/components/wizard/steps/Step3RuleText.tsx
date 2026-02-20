@@ -1,6 +1,6 @@
 import { useWizardStore } from '../../../stores/wizardStore';
 import { useAgentEvents } from '../../../hooks/useAgentEvents';
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useMemo } from 'react';
 import gsap from 'gsap';
 
 export function Step3RuleText() {
@@ -8,10 +8,21 @@ export function Step3RuleText() {
   const { events } = useAgentEvents(isProcessing ? sessionId : null);
   const progressRef = useRef<HTMLDivElement>(null);
 
-  // Calculate progress from events
-  const totalPhases = 6; // supervisor, rule_analyzer, data_dictionary, cypher_generator, validator, reference_data
-  const completedPhases = (events || []).filter(e => e.event_type === 'agent_completed').length;
-  const progressPct = Math.min(100, Math.round((completedPhases / totalPhases) * 100));
+  // Calculate progress: prefer progress_pct from events, fallback to counting completed agents
+  const progressPct = useMemo(() => {
+    const eventList = events || [];
+    // Use the latest progress_pct from any event that has it
+    for (let i = eventList.length - 1; i >= 0; i--) {
+      const evt = eventList[i];
+      if (evt.progress_pct != null && evt.progress_pct > 0) {
+        return Math.min(100, Math.round(evt.progress_pct));
+      }
+    }
+    // Fallback: count completed agents
+    const completedPhases = eventList.filter(e => e.event_type === 'agent_completed').length;
+    const totalPhases = 6;
+    return Math.min(100, Math.round((completedPhases / totalPhases) * 100));
+  }, [events]);
 
   // Initialize progress bar to 0% on mount
   useEffect(() => {

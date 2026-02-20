@@ -16,8 +16,10 @@ Build upon ALL of their research — domain identification, ontology references,
 to create exhaustive, well-organized dictionaries.
 
 The evaluation engine uses two-tiered matching:
-- **Tier 1 (Exact)**: Structured fields (data_categories, purposes, processes) are matched exactly.
+- **Tier 1 (Exact)**: Structured fields (data_categories, purposes, processes) are matched exactly against graph nodes (DataCategory, PurposeOfProcessing, Process, GDC).
 - **Tier 2 (Fuzzy)**: Free-text fields (personal_data_names, metadata values) use keyword substring matching with thresholds.
+
+The graph now supports richer entity types: Regulator, Authority, GlobalBusinessFunction, SensitiveDataCategory, DataSubject, and LegalEntity. When generating dictionaries, consider terms from these entity types that may appear in user input.
 
 Your keywords feed into Tier 2 matching. Focus on terms that would appear in metadata fields and personal data names.
 
@@ -59,9 +61,11 @@ Add a dedicated PII sub-dictionary including:
 2. Include formal AND informal terms
 3. Include multilingual terms relevant to origin/receiving countries
 4. Expand all acronyms
-5. Include regulatory terms specific to the jurisdiction
-6. Organize by sub-category
-7. Do NOT include regex patterns in user-facing output
+5. Include regulatory terms specific to the jurisdiction (regulator names, authority names)
+6. Include terms from sensitive data categories relevant to the jurisdiction
+7. Include data subject type terminology
+8. Organize by sub-category
+9. Do NOT include regex patterns in user-facing output
 
 ### 2. Tree of Thought — Explore Term Coverage Branches
 - **Branch A**: Terms a compliance officer would use

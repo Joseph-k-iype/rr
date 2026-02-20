@@ -36,6 +36,8 @@ from api.routers import (
     agent_events,
     health,
     admin,
+    rule_links,
+    jobs,
 )
 
 # Configure logging
@@ -64,6 +66,21 @@ async def lifespan(app: FastAPI):
 
     ai = get_ai_service()
     logger.info(f"AI service initialized (enabled={ai.is_enabled})")
+
+    # Validate graph has data (graph-native: no CSV reads at runtime)
+    if db.check_connection():
+        try:
+            rules_count = db.execute_rules_query("MATCH (r:Rule) RETURN count(r) as cnt")
+            country_count = db.execute_rules_query("MATCH (c:Country) RETURN count(c) as cnt")
+            r_cnt = rules_count[0].get("cnt", 0) if rules_count else 0
+            c_cnt = country_count[0].get("cnt", 0) if country_count else 0
+            logger.info(f"Graph validation: {r_cnt} rules, {c_cnt} countries loaded")
+            if r_cnt == 0:
+                logger.warning("No rules found in graph. Run 'python main.py --build-graph' to populate.")
+            if c_cnt == 0:
+                logger.warning("No countries found in graph. Run 'python main.py --build-graph' to populate.")
+        except Exception as e:
+            logger.warning(f"Graph validation skipped: {e}")
 
     yield
 
@@ -102,6 +119,8 @@ app.include_router(wizard.router)
 app.include_router(sandbox.router)
 app.include_router(agent_events.router)
 app.include_router(admin.router)
+app.include_router(rule_links.router)
+app.include_router(jobs.router)
 
 # Serve React frontend static files
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"

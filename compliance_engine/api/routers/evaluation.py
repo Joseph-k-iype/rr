@@ -3,6 +3,7 @@ Evaluation Router
 ==================
 Endpoints for rule evaluation and case search.
 Supports legal entity parameters, multi-select, case-insensitive matching.
+All matching rules fire — no short-circuit. Results are aggregated.
 """
 
 import logging
@@ -15,6 +16,8 @@ from models.schemas import (
     SearchCasesRequest,
     SearchCasesResponse,
     CaseMatch,
+    TransferStatus,
+    AssessmentCompliance,
 )
 from services.database import get_db_service
 from services.rules_evaluator import get_rules_evaluator
@@ -39,10 +42,17 @@ async def evaluate_rules(
 ):
     """Evaluate compliance rules for a data transfer.
     Supports multi-select receiving countries - evaluates each and merges results.
+    ALL matching rules fire — no short-circuit.
     If ANY rule is a prohibition, overall result is PROHIBITION.
     """
     try:
         receiving_countries = request.get_receiving_countries()
+
+        # Resolve fields using new getter methods (backward compatible)
+        purposes = request.get_purposes()
+        processes = request.get_processes()
+        data_categories = request.get_data_categories()
+        personal_data_names = request.get_personal_data_names()
 
         if len(receiving_countries) <= 1:
             receiving = receiving_countries[0] if receiving_countries else ""
@@ -50,11 +60,12 @@ async def evaluate_rules(
                 origin_country=request.origin_country,
                 receiving_country=receiving,
                 pii=request.pii,
-                purposes=request.purposes,
+                purposes=purposes or request.purposes,
                 process_l1=request.process_l1,
                 process_l2=request.process_l2,
                 process_l3=request.process_l3,
-                personal_data_names=request.personal_data_names,
+                personal_data_names=personal_data_names or request.personal_data_names,
+                data_categories=data_categories,
                 metadata=request.metadata,
                 origin_legal_entity=request.origin_legal_entity,
                 receiving_legal_entity=request.receiving_legal_entity[0] if request.receiving_legal_entity else None,
@@ -68,31 +79,95 @@ async def evaluate_rules(
                 origin_country=request.origin_country,
                 receiving_country=rc,
                 pii=request.pii,
-                purposes=request.purposes,
+                purposes=purposes or request.purposes,
                 process_l1=request.process_l1,
                 process_l2=request.process_l2,
                 process_l3=request.process_l3,
-                personal_data_names=request.personal_data_names,
+                personal_data_names=personal_data_names or request.personal_data_names,
+                data_categories=data_categories,
                 metadata=request.metadata,
                 origin_legal_entity=request.origin_legal_entity,
             )
             all_results.append(r)
 
-        # Merge: if any is PROHIBITED, overall is PROHIBITED
+        # Merge: aggregate ALL triggered rules across countries
+        # Deduplicate by rule_id, union all duties/assessments
+        seen_rule_ids = set()
         merged_triggered = []
-        merged_duties = []
+        merged_duties = set()
         merged_prohibition_reasons = []
+        merged_detected_attrs = []
+        merged_required_actions = set()
         has_prohibition = False
 
+        # Merge assessment compliance across all results
+        merged_assessment = AssessmentCompliance()
+
         for r in all_results:
-            merged_triggered.extend(r.triggered_rules)
-            merged_duties.extend(r.consolidated_duties)
+            # Deduplicate triggered rules by rule_id
+            for rule in r.triggered_rules:
+                if rule.rule_id not in seen_rule_ids:
+                    seen_rule_ids.add(rule.rule_id)
+                    merged_triggered.append(rule)
+
+            merged_duties.update(r.consolidated_duties)
             merged_prohibition_reasons.extend(r.prohibition_reasons)
-            if r.transfer_status.value == "PROHIBITED":
+            merged_required_actions.update(r.required_actions)
+
+            if r.detected_attributes:
+                for attr in r.detected_attributes:
+                    if not any(a.attribute_name == attr.attribute_name for a in merged_detected_attrs):
+                        merged_detected_attrs.append(attr)
+
+            if r.transfer_status == TransferStatus.PROHIBITED:
                 has_prohibition = True
 
-        from models.schemas import TransferStatus
-        final_status = TransferStatus.PROHIBITED if has_prohibition else all_results[0].transfer_status
+            # Merge assessment compliance
+            if r.assessment_compliance:
+                if r.assessment_compliance.pia_required:
+                    merged_assessment.pia_required = True
+                if r.assessment_compliance.tia_required:
+                    merged_assessment.tia_required = True
+                if r.assessment_compliance.hrpr_required:
+                    merged_assessment.hrpr_required = True
+                if r.assessment_compliance.pia_compliant:
+                    merged_assessment.pia_compliant = True
+                if r.assessment_compliance.tia_compliant:
+                    merged_assessment.tia_compliant = True
+                if r.assessment_compliance.hrpr_compliant:
+                    merged_assessment.hrpr_compliant = True
+
+        # Update all_compliant
+        merged_assessment.all_compliant = (
+            (not merged_assessment.pia_required or merged_assessment.pia_compliant) and
+            (not merged_assessment.tia_required or merged_assessment.tia_compliant) and
+            (not merged_assessment.hrpr_required or merged_assessment.hrpr_compliant)
+        )
+        missing = []
+        if merged_assessment.pia_required and not merged_assessment.pia_compliant:
+            missing.append("PIA")
+        if merged_assessment.tia_required and not merged_assessment.tia_compliant:
+            missing.append("TIA")
+        if merged_assessment.hrpr_required and not merged_assessment.hrpr_compliant:
+            missing.append("HRPR")
+        merged_assessment.missing_assessments = missing
+
+        final_status = TransferStatus.PROHIBITED if has_prohibition else (
+            all_results[0].transfer_status if all_results else TransferStatus.REQUIRES_REVIEW
+        )
+
+        # Use the best precedent validation and evidence summary
+        best_precedent = None
+        best_evidence = None
+        for r in all_results:
+            if r.precedent_validation and (
+                best_precedent is None or r.precedent_validation.compliant_matches > best_precedent.compliant_matches
+            ):
+                best_precedent = r.precedent_validation
+            if r.evidence_summary and (
+                best_evidence is None or (r.evidence_summary.strongest_match_score > best_evidence.strongest_match_score)
+            ):
+                best_evidence = r.evidence_summary
 
         return RulesEvaluationResponse(
             transfer_status=final_status,
@@ -100,12 +175,13 @@ async def evaluate_rules(
             receiving_country=", ".join(receiving_countries),
             pii=request.pii,
             triggered_rules=merged_triggered,
-            precedent_validation=all_results[0].precedent_validation if all_results else None,
-            assessment_compliance=all_results[0].assessment_compliance if all_results else None,
-            detected_attributes=all_results[0].detected_attributes if all_results else [],
-            consolidated_duties=list(set(merged_duties)),
+            precedent_validation=best_precedent,
+            assessment_compliance=merged_assessment,
+            detected_attributes=merged_detected_attrs,
+            consolidated_duties=sorted(merged_duties),
+            required_actions=sorted(merged_required_actions),
             prohibition_reasons=merged_prohibition_reasons,
-            evidence_summary=all_results[0].evidence_summary if all_results else None,
+            evidence_summary=best_evidence,
             message=f"Evaluated {len(receiving_countries)} receiving countries. Status: {final_status.value}",
             evaluation_time_ms=sum(r.evaluation_time_ms for r in all_results),
         )

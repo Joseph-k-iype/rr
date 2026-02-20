@@ -1,13 +1,27 @@
 export interface RulesEvaluationRequest {
   origin_country: string;
-  receiving_country: string | string[];
-  pii: boolean;
+  receiving_country?: string | string[];
+  pii?: boolean;
+
+  // New simplified fields (comma-separated strings or arrays)
+  purpose_of_processing?: string | string[];
+  data_categories?: string | string[];
+  sensitive_data_categories?: string | string[];
+  processes?: string | string[];
+  gbgf?: string | string[];
+  gdc?: string | string[];
+  data_subjects?: string | string[];
+  regulator?: string | string[];
+  authority?: string | string[];
+  legal_entities?: string | string[];
+  personal_data_names?: string | string[];
+  metadata?: Record<string, unknown>;
+
+  // Legacy fields (backward compatibility)
   purposes?: string[];
   process_l1?: string[];
   process_l2?: string[];
   process_l3?: string[];
-  personal_data_names?: string[];
-  metadata?: Record<string, unknown>;
   origin_legal_entity?: string;
   receiving_legal_entity?: string[];
 }
@@ -17,7 +31,10 @@ export interface TriggeredRule {
   rule_name: string;
   rule_type: string;
   priority: string;
+  origin_match_type?: string;
+  receiving_match_type?: string;
   odrl_type: string;
+  has_pii_required?: boolean;
   outcome: string;
   description?: string;
   required_assessments: string[];
@@ -80,6 +97,7 @@ export interface RulesEvaluationResponse {
   origin_country: string;
   receiving_country: string;
   pii: boolean;
+  scenario_summary?: string;
   triggered_rules: TriggeredRule[];
   precedent_validation?: {
     total_matches: number;
@@ -91,6 +109,7 @@ export interface RulesEvaluationResponse {
   assessment_compliance?: AssessmentCompliance;
   detected_attributes: DetectedAttribute[];
   consolidated_duties: string[];
+  required_actions: string[];
   prohibition_reasons: string[];
   evidence_summary?: EvidenceSummary;
   message: string;
@@ -117,6 +136,13 @@ export interface DropdownValues {
   legal_entities: Record<string, string[]>;
   purpose_of_processing: string[];
   group_data_categories: DictionaryEntry[];
+
+  // New entity types (graph-native)
+  regulators?: { id: string; name: string; country_code: string }[];
+  authorities?: { id: string; name: string; country_code: string }[];
+  global_business_functions?: DictionaryEntry[];
+  sensitive_data_categories?: DictionaryEntry[];
+  data_categories?: DictionaryEntry[];
 }
 
 export interface RuleTableRow {

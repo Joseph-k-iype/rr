@@ -8,6 +8,8 @@ import { HomePage } from './pages/HomePage';
 import { EvaluatorPage } from './pages/EvaluatorPage';
 import { WizardPage } from './pages/WizardPage';
 import { EditorPage } from './pages/EditorPage';
+import { RuleEditorPage } from './components/editor/RuleEditorPage';
+import { SavedPoliciesPage } from './pages/SavedPoliciesPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 
 const queryClient = new QueryClient({
@@ -30,9 +32,11 @@ function App() {
               <Route element={<AppLayout />}>
                 <Route path="/" element={<HomePage />} />
                 <Route path="/evaluator" element={<EvaluatorPage />} />
+                <Route path="/saved-policies" element={<SavedPoliciesPage />} />
                 <Route element={<ProtectedRoute requiredRole="admin" />}>
                   <Route path="/generator" element={<WizardPage />} />
                   <Route path="/editor" element={<EditorPage />} />
+                  <Route path="/editor/:ruleId" element={<RuleEditorPage />} />
                 </Route>
                 <Route path="*" element={<NotFoundPage />} />
               </Route>

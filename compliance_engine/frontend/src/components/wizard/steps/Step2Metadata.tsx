@@ -33,7 +33,7 @@ export function Step2Metadata() {
 
   return (
     <div className="space-y-5">
-      <h3 className="text-sm font-semibold uppercase tracking-widest text-gray-900">Step 2: Metadata</h3>
+      <h3 className="text-sm font-semibold uppercase tracking-widest text-gray-900">Step 3: Metadata</h3>
 
       <div className="card-dark p-5 space-y-5">
         {/* Data Categories - REQUIRED */}

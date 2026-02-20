@@ -96,6 +96,24 @@ export function PolicyEditorCanvas() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataLoaded]);
 
+  // Re-trigger fitView on container resize for responsive aspect ratio
+  const containerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(() => {
+      if (reactFlowInstanceRef.current && dataLoaded) {
+        reactFlowInstanceRef.current.fitView({
+          padding: 0.08,
+          maxZoom: 0.85,
+          minZoom: 0.15,
+        });
+      }
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [dataLoaded]);
+
   const laneRanges = useMemo(() => computeLaneRanges(visibleLanes), [visibleLanes]);
 
   const onNodesChange = useCallback(
@@ -215,7 +233,7 @@ export function PolicyEditorCanvas() {
     <div className="flex flex-col h-full">
       <EditorToolbar />
       <FilterBar />
-      <div className="flex-1 relative">
+      <div ref={containerRef} className="flex-1 relative min-h-[600px]">
         <LaneHeader />
         {addEdgeMode && (
           <div className="absolute top-1 left-1/2 -translate-x-1/2 z-20 bg-blue-600 text-white text-xs px-3 py-1 rounded-full shadow">

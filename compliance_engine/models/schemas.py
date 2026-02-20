@@ -41,38 +41,99 @@ class AssessmentStatus(str, Enum):
 # REQUEST MODELS
 # =============================================================================
 
+def parse_csv_field(value: Any) -> List[str]:
+    """Parse a comma-separated string or list into a list of trimmed strings."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if isinstance(value, str):
+        return [v.strip() for v in value.split(",") if v.strip()]
+    return [str(value).strip()] if str(value).strip() else []
+
+
 class RulesEvaluationRequest(BaseModel):
-    """Request model for evaluating transfer rules"""
+    """Request model for evaluating transfer rules.
+    Only origin_country is required. All other fields are optional.
+    String fields can be comma-separated for multiple values.
+    """
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "origin_country": "United Kingdom",
-                "receiving_country": ["India"],
+                "receiving_country": "India",
                 "pii": True,
-                "purposes": ["Marketing", "Analytics"],
-                "process_l1": ["Customer Management"],
+                "purpose_of_processing": "Risk Management, Fraud Detection",
+                "processes": "Anti-Money Laundering",
             }
         }
     )
 
-    origin_country: str = Field(..., description="Country where data originates")
-    receiving_country: Any = Field(..., description="Country/countries receiving the data (string or list)")
+    origin_country: str = Field(..., description="Country where data originates (REQUIRED)")
+    receiving_country: Any = Field(default="", description="Country/countries receiving the data (string, CSV, or list)")
     pii: bool = Field(default=False, description="Whether the transfer involves PII")
-    purposes: Optional[List[str]] = Field(default=None, description="Processing purposes")
-    process_l1: Optional[List[str]] = Field(default=None, description="Level 1 processes")
-    process_l2: Optional[List[str]] = Field(default=None, description="Level 2 processes")
-    process_l3: Optional[List[str]] = Field(default=None, description="Level 3 processes")
-    personal_data_names: Optional[List[str]] = Field(default=None, description="Types of personal data")
+
+    # New simplified fields (comma-separated strings or lists)
+    purpose_of_processing: Any = Field(default="", description="Purposes of processing (comma-separated or list)")
+    data_categories: Any = Field(default="", description="Data categories (comma-separated or list)")
+    sensitive_data_categories: Any = Field(default="", description="Sensitive data categories (comma-separated or list)")
+    processes: Any = Field(default="", description="Processes (comma-separated or list)")
+    gbgf: Any = Field(default="", description="Global business functions (comma-separated or list)")
+    gdc: Any = Field(default="", description="Group data categories (comma-separated or list)")
+    data_subjects: Any = Field(default="", description="Data subjects (comma-separated or list)")
+    regulator: Any = Field(default="", description="Regulators (comma-separated or list)")
+    authority: Any = Field(default="", description="Authorities (comma-separated or list)")
+    legal_entities: Any = Field(default="", description="Legal entities (comma-separated or list)")
+    personal_data_names: Any = Field(default=None, description="Types of personal data (comma-separated, list, or None)")
     metadata: Optional[Dict[str, Any]] = Field(default=None, description="Additional metadata for attribute detection")
+
+    # Legacy fields (backward compatibility)
+    purposes: Optional[List[str]] = Field(default=None, description="Processing purposes (legacy)")
+    process_l1: Optional[List[str]] = Field(default=None, description="Level 1 processes (legacy)")
+    process_l2: Optional[List[str]] = Field(default=None, description="Level 2 processes (legacy)")
+    process_l3: Optional[List[str]] = Field(default=None, description="Level 3 processes (legacy)")
     use_ai: bool = Field(default=False, description="Whether to use AI for rule interpretation")
     origin_legal_entity: Optional[str] = Field(default=None, description="Legal entity in the origin country")
     receiving_legal_entity: Optional[List[str]] = Field(default=None, description="Legal entities in receiving countries")
 
     def get_receiving_countries(self) -> List[str]:
         """Normalize receiving_country to a list."""
-        if isinstance(self.receiving_country, list):
-            return self.receiving_country
-        return [self.receiving_country] if self.receiving_country else []
+        return parse_csv_field(self.receiving_country)
+
+    def get_purposes(self) -> List[str]:
+        """Get purposes from new or legacy field."""
+        result = parse_csv_field(self.purpose_of_processing)
+        if not result and self.purposes:
+            result = self.purposes
+        return result
+
+    def get_processes(self) -> List[str]:
+        """Get processes from new or legacy field."""
+        result = parse_csv_field(self.processes)
+        if not result:
+            # Combine all legacy process levels
+            for field in [self.process_l1, self.process_l2, self.process_l3]:
+                if field:
+                    result.extend(field)
+        return result
+
+    def get_data_categories(self) -> List[str]:
+        return parse_csv_field(self.data_categories)
+
+    def get_personal_data_names(self) -> List[str]:
+        return parse_csv_field(self.personal_data_names)
+
+    def get_data_subjects(self) -> List[str]:
+        return parse_csv_field(self.data_subjects)
+
+    def get_gdc(self) -> List[str]:
+        return parse_csv_field(self.gdc)
+
+    def get_regulators(self) -> List[str]:
+        return parse_csv_field(self.regulator)
+
+    def get_authorities(self) -> List[str]:
+        return parse_csv_field(self.authority)
 
 
 class SearchCasesRequest(BaseModel):
@@ -238,6 +299,7 @@ class RulesEvaluationResponse(BaseModel):
     origin_country: str
     receiving_country: str
     pii: bool
+    scenario_summary: Optional[str] = Field(default=None, description="Human-readable summary of the evaluated scenario")
     triggered_rules: List[TriggeredRule] = Field(default_factory=list)
     precedent_validation: Optional[PrecedentValidation] = None
     assessment_compliance: Optional[AssessmentCompliance] = None

@@ -1,12 +1,13 @@
 """
 Metadata Router
 ================
-Endpoints for countries, purposes, processes, legal entities, and dropdown values.
+Graph-native endpoints for countries, purposes, processes, legal entities,
+regulators, authorities, GBGF, data categories, and dropdown values.
+All data is served from the RulesGraph — no runtime file I/O.
 """
 
-import json
 import logging
-from pathlib import Path
+from typing import Optional
 from fastapi import APIRouter, Depends
 
 from services.database import get_db_service
@@ -21,120 +22,223 @@ def get_db():
     return get_db_service()
 
 
+# ─── Helper ─────────────────────────────────────────────────────────────
+
+def _rules_query(db, query: str, params: dict = None) -> list:
+    """Execute a Cypher query against the rules graph and return list of dicts."""
+    try:
+        result = db.get_rules_graph().query(query, params)
+        if not hasattr(result, 'result_set') or not result.result_set:
+            return []
+        headers = result.header
+        rows = []
+        for row in result.result_set:
+            row_dict = {}
+            for i, header in enumerate(headers):
+                col_name = header[1] if isinstance(header, (list, tuple)) else header
+                row_dict[col_name] = row[i]
+            rows.append(row_dict)
+        return rows
+    except Exception as e:
+        logger.warning(f"Rules graph query error: {e}")
+        return []
+
+
+# ─── Countries ──────────────────────────────────────────────────────────
+
 @router.get("/countries")
 async def get_countries(db=Depends(get_db)):
-    """Get list of all countries."""
+    """Get list of all countries with ISO codes."""
     cache = get_cache_service()
     cached = cache.get("countries_list", "metadata")
     if cached:
         return cached
 
-    try:
-        query = "MATCH (c:Country) RETURN c.name as name ORDER BY c.name"
-        result = db.execute_data_query(query)
-        countries = [r.get('name') for r in result if r.get('name')]
-    except Exception as e:
-        logger.warning(f"Error fetching countries: {e}")
-        countries = []
+    rows = _rules_query(db, """
+    MATCH (c:Country)
+    RETURN c.name as name, c.iso2 as iso2, c.iso3 as iso3
+    ORDER BY c.name
+    """)
+    countries = [r.get('name') for r in rows if r.get('name')]
 
     cache.set("countries_list", countries, "metadata", ttl=600)
     return countries
 
 
+@router.get("/countries/detailed")
+async def get_countries_detailed(db=Depends(get_db)):
+    """Get countries with full details including ISO codes and RTN."""
+    cache = get_cache_service()
+    cached = cache.get("countries_detailed", "metadata")
+    if cached:
+        return cached
+
+    rows = _rules_query(db, """
+    MATCH (c:Country)
+    RETURN c.name as name, c.iso2 as iso2, c.iso3 as iso3, c.rtn_code as rtn_code
+    ORDER BY c.name
+    """)
+    result = [
+        {"name": r["name"], "iso2": r.get("iso2", ""), "iso3": r.get("iso3", ""), "rtn_code": r.get("rtn_code", "")}
+        for r in rows if r.get("name")
+    ]
+
+    cache.set("countries_detailed", result, "metadata", ttl=600)
+    return result
+
+
+# ─── Purposes ───────────────────────────────────────────────────────────
+
 @router.get("/purposes")
 async def get_purposes(db=Depends(get_db)):
-    """Get list of all purposes."""
+    """Get list of all purposes (from PurposeOfProcessing and Purpose nodes)."""
     cache = get_cache_service()
     cached = cache.get("purposes_list", "metadata")
     if cached:
         return cached
 
-    try:
-        query = "MATCH (p:Purpose) RETURN p.name as name ORDER BY p.name"
-        result = db.execute_data_query(query)
-        purposes = [r.get('name') for r in result if r.get('name')]
-    except Exception as e:
-        logger.warning(f"Error fetching purposes: {e}")
-        purposes = []
+    # Try PurposeOfProcessing first, fall back to Purpose
+    rows = _rules_query(db, """
+    MATCH (p:PurposeOfProcessing)
+    RETURN p.name as name, p.description as description
+    ORDER BY p.name
+    """)
+    if not rows:
+        rows = _rules_query(db, """
+        MATCH (p:Purpose)
+        RETURN p.name as name
+        ORDER BY p.name
+        """)
+
+    purposes = [r.get('name') for r in rows if r.get('name')]
 
     cache.set("purposes_list", purposes, "metadata", ttl=600)
     return purposes
 
 
+@router.get("/purpose-of-processing")
+async def get_purpose_of_processing(db=Depends(get_db)):
+    """Get purpose of processing reference list from graph."""
+    cache = get_cache_service()
+    cached = cache.get("purpose_of_processing", "metadata")
+    if cached:
+        return cached
+
+    rows = _rules_query(db, """
+    MATCH (p:PurposeOfProcessing)
+    RETURN p.name as name, p.description as description
+    ORDER BY p.name
+    """)
+    result = [{"name": r["name"], "description": r.get("description", "")} for r in rows if r.get("name")]
+
+    # If no PurposeOfProcessing nodes, fall back to Purpose nodes
+    if not result:
+        rows = _rules_query(db, "MATCH (p:Purpose) RETURN p.name as name ORDER BY p.name")
+        result = [{"name": r["name"], "description": ""} for r in rows if r.get("name")]
+
+    cache.set("purpose_of_processing", result, "metadata", ttl=600)
+    return result
+
+
+# ─── Processes ──────────────────────────────────────────────────────────
+
 @router.get("/processes")
 async def get_processes(db=Depends(get_db)):
-    """Get list of all processes by level."""
+    """Get list of all processes by level, derived from Process nodes."""
     cache = get_cache_service()
     cached = cache.get("processes_list", "metadata")
     if cached:
         return cached
 
-    processes = {"l1": [], "l2": [], "l3": []}
+    processes: dict = {"l1": [], "l2": [], "l3": [], "hierarchy": []}
 
-    for level in ["L1", "L2", "L3"]:
-        try:
-            query = f"MATCH (p:Process{level}) RETURN p.name as name ORDER BY p.name"
-            result = db.execute_data_query(query)
-            processes[level.lower()] = [r.get('name') for r in result if r.get('name')]
-        except Exception as e:
-            logger.warning(f"Error fetching processes {level}: {e}")
-            processes[level.lower()] = []
+    rows = _rules_query(db, """
+    MATCH (p:Process)
+    RETURN p.name as name, p.l1 as l1, p.l2 as l2, p.l3 as l3,
+           p.global_business_function as gbgf, p.definition as definition
+    ORDER BY p.name
+    """)
+
+    l1_set: set = set()
+    l2_set: set = set()
+    l3_set: set = set()
+    hierarchy: dict = {}
+
+    for r in rows:
+        l1 = r.get('l1') or ''
+        l2 = r.get('l2') or ''
+        l3 = r.get('l3') or ''
+        if l1:
+            l1_set.add(l1)
+            if l1 not in hierarchy:
+                hierarchy[l1] = {}
+        if l2:
+            l2_set.add(l2)
+            if l1 and l2 not in hierarchy.get(l1, {}):
+                if l1 not in hierarchy:
+                    hierarchy[l1] = {}
+                hierarchy[l1][l2] = []
+        if l3:
+            l3_set.add(l3)
+            if l1 and l2 and l3 not in hierarchy.get(l1, {}).get(l2, []):
+                if l1 not in hierarchy:
+                    hierarchy[l1] = {}
+                if l2 not in hierarchy[l1]:
+                    hierarchy[l1][l2] = []
+                hierarchy[l1][l2].append(l3)
+
+    processes["l1"] = sorted(l1_set)
+    processes["l2"] = sorted(l2_set)
+    processes["l3"] = sorted(l3_set)
+    processes["hierarchy"] = hierarchy
 
     cache.set("processes_list", processes, "metadata", ttl=600)
     return processes
 
 
+# ─── Legal Entities (graph-native) ──────────────────────────────────────
+
 @router.get("/legal-entities")
-async def get_legal_entities():
-    """Get all legal entities with country mapping."""
+async def get_legal_entities(db=Depends(get_db)):
+    """Get all legal entities with country mapping from graph."""
     cache = get_cache_service()
     cached = cache.get("legal_entities", "metadata")
     if cached:
         return cached
 
-    le_file = Path(__file__).parent.parent.parent / "rules" / "data_dictionaries" / "legal_entities.json"
-    try:
-        with open(le_file) as f:
-            data = json.load(f)
-        result = data.get("entities", {})
-    except Exception as e:
-        logger.warning(f"Error loading legal entities: {e}")
-        result = {}
+    rows = _rules_query(db, """
+    MATCH (c:Country)-[:HAS_LEGAL_ENTITY]->(le:LegalEntity)
+    RETURN c.name as country, le.name as entity_name
+    ORDER BY c.name, le.name
+    """)
+
+    result: dict = {}
+    for r in rows:
+        country = r.get('country', '')
+        entity = r.get('entity_name', '')
+        if country and entity:
+            if country not in result:
+                result[country] = []
+            result[country].append(entity)
 
     cache.set("legal_entities", result, "metadata", ttl=600)
     return result
 
 
 @router.get("/legal-entities/{country}")
-async def get_legal_entities_for_country(country: str):
-    """Get legal entities for a specific country."""
-    le_file = Path(__file__).parent.parent.parent / "rules" / "data_dictionaries" / "legal_entities.json"
-    try:
-        with open(le_file) as f:
-            data = json.load(f)
-        entities = data.get("entities", {})
-        # Case-insensitive lookup
-        for key, value in entities.items():
-            if key.lower() == country.lower():
-                return value
-        return []
-    except Exception as e:
-        logger.warning(f"Error loading legal entities for {country}: {e}")
-        return []
+async def get_legal_entities_for_country(country: str, db=Depends(get_db)):
+    """Get legal entities for a specific country from graph."""
+    rows = _rules_query(db, """
+    MATCH (c:Country)-[:HAS_LEGAL_ENTITY]->(le:LegalEntity)
+    WHERE toLower(c.name) = toLower($country) OR c.iso2 = $country OR c.iso3 = $country
+    RETURN le.name as entity_name
+    ORDER BY le.name
+    """, {"country": country})
+
+    return [r.get('entity_name') for r in rows if r.get('entity_name')]
 
 
-@router.get("/purpose-of-processing")
-async def get_purpose_of_processing():
-    """Get the purpose of processing reference list."""
-    pop_file = Path(__file__).parent.parent.parent / "rules" / "data_dictionaries" / "purpose_of_processing.json"
-    try:
-        with open(pop_file) as f:
-            data = json.load(f)
-        return data.get("purposes", [])
-    except Exception as e:
-        logger.warning(f"Error loading purpose of processing: {e}")
-        return []
-
+# ─── Group Data Categories ──────────────────────────────────────────────
 
 @router.get("/group-data-categories")
 async def get_group_data_categories(db=Depends(get_db)):
@@ -144,75 +248,233 @@ async def get_group_data_categories(db=Depends(get_db)):
     if cached:
         return cached
 
-    try:
-        query = "MATCH (n:GDC) RETURN n.name as name, n.category as category ORDER BY n.category, n.name"
-        result = db.execute_rules_query(query)
-        categories = [{"name": r["name"], "category": r.get("category", "")} for r in result if r.get("name")]
-    except Exception as e:
-        logger.warning(f"Error fetching group data categories: {e}")
-        categories = []
+    rows = _rules_query(db, """
+    MATCH (n:GDC)
+    RETURN n.name as name, n.category as category, n.data_domain as data_domain,
+           n.data_privacy_indicator as data_privacy_indicator,
+           n.gdc_level_2 as gdc_level_2, n.gdc_level_3 as gdc_level_3
+    ORDER BY n.category, n.name
+    """)
+    categories = [
+        {"name": r["name"], "category": r.get("category", ""), "data_domain": r.get("data_domain", "")}
+        for r in rows if r.get("name")
+    ]
 
     cache.set("group_data_categories", categories, "metadata", ttl=600)
     return categories
 
 
+# ─── Regulators (NEW) ───────────────────────────────────────────────────
+
+@router.get("/regulators")
+async def get_regulators(db=Depends(get_db)):
+    """Get all regulators from graph."""
+    cache = get_cache_service()
+    cached = cache.get("regulators_list", "metadata")
+    if cached:
+        return cached
+
+    rows = _rules_query(db, """
+    MATCH (reg:Regulator)
+    RETURN reg.name as name, reg.country_code as country_code, reg.region as region,
+           reg.regulator as regulator, reg.regulator_type as regulator_type,
+           reg.regulator_definition as definition
+    ORDER BY reg.name
+    """)
+    result = [
+        {
+            "name": r["name"], "country_code": r.get("country_code", ""),
+            "region": r.get("region", ""), "regulator": r.get("regulator", ""),
+            "regulator_type": r.get("regulator_type", ""), "definition": r.get("definition", ""),
+        }
+        for r in rows if r.get("name")
+    ]
+
+    cache.set("regulators_list", result, "metadata", ttl=600)
+    return result
+
+
+@router.get("/regulators/{country_iso2}")
+async def get_regulators_for_country(country_iso2: str, db=Depends(get_db)):
+    """Get regulators for a specific country by ISO 2 code."""
+    rows = _rules_query(db, """
+    MATCH (c:Country)-[:HAS_REGULATOR]->(reg:Regulator)
+    WHERE c.iso2 = $iso2 OR toLower(c.name) = toLower($iso2)
+    RETURN reg.name as name, reg.country_code as country_code,
+           reg.regulator_type as regulator_type, reg.regulator_definition as definition
+    ORDER BY reg.name
+    """, {"iso2": country_iso2})
+
+    return [
+        {"name": r["name"], "country_code": r.get("country_code", ""),
+         "regulator_type": r.get("regulator_type", ""), "definition": r.get("definition", "")}
+        for r in rows if r.get("name")
+    ]
+
+
+# ─── Authorities (NEW) ──────────────────────────────────────────────────
+
+@router.get("/authorities")
+async def get_authorities(db=Depends(get_db)):
+    """Get all authorities from graph."""
+    cache = get_cache_service()
+    cached = cache.get("authorities_list", "metadata")
+    if cached:
+        return cached
+
+    rows = _rules_query(db, """
+    MATCH (auth:Authority)
+    RETURN auth.name as name, auth.country_code as country_code
+    ORDER BY auth.name
+    """)
+    result = [{"name": r["name"], "country_code": r.get("country_code", "")} for r in rows if r.get("name")]
+
+    cache.set("authorities_list", result, "metadata", ttl=600)
+    return result
+
+
+@router.get("/authorities/{country_iso2}")
+async def get_authorities_for_country(country_iso2: str, db=Depends(get_db)):
+    """Get authorities for a specific country by ISO 2 code."""
+    rows = _rules_query(db, """
+    MATCH (c:Country)-[:HAS_AUTHORITY]->(auth:Authority)
+    WHERE c.iso2 = $iso2 OR toLower(c.name) = toLower($iso2)
+    RETURN auth.name as name, auth.country_code as country_code
+    ORDER BY auth.name
+    """, {"iso2": country_iso2})
+
+    return [{"name": r["name"], "country_code": r.get("country_code", "")} for r in rows if r.get("name")]
+
+
+# ─── Global Business Functions (NEW) ────────────────────────────────────
+
+@router.get("/global-business-functions")
+async def get_global_business_functions(db=Depends(get_db)):
+    """Get all global business functions from graph."""
+    cache = get_cache_service()
+    cached = cache.get("gbgf_list", "metadata")
+    if cached:
+        return cached
+
+    rows = _rules_query(db, """
+    MATCH (gbgf:GlobalBusinessFunction)
+    RETURN gbgf.name as name, gbgf.rtn_code as rtn_code,
+           gbgf.gbgf_level_1 as gbgf_level_1, gbgf.privacy_notice as privacy_notice,
+           gbgf.gbgf_level_2 as gbgf_level_2
+    ORDER BY gbgf.name
+    """)
+    result = [
+        {
+            "name": r["name"], "rtn_code": r.get("rtn_code", ""),
+            "gbgf_level_1": r.get("gbgf_level_1", ""), "gbgf_level_2": r.get("gbgf_level_2", ""),
+        }
+        for r in rows if r.get("name")
+    ]
+
+    cache.set("gbgf_list", result, "metadata", ttl=600)
+    return result
+
+
+# ─── Sensitive Data Categories (NEW) ────────────────────────────────────
+
+@router.get("/sensitive-data-categories")
+async def get_sensitive_data_categories(db=Depends(get_db)):
+    """Get all sensitive data categories from graph."""
+    cache = get_cache_service()
+    cached = cache.get("sdc_list", "metadata")
+    if cached:
+        return cached
+
+    rows = _rules_query(db, """
+    MATCH (sdc:SensitiveDataCategory)
+    RETURN sdc.name as name, sdc.country_code as country_code,
+           sdc.definition as definition,
+           sdc.sensitive_data_category_name as sensitive_data_category_name
+    ORDER BY sdc.country_code, sdc.name
+    """)
+    result = [
+        {
+            "name": r["name"], "country_code": r.get("country_code", ""),
+            "definition": r.get("definition", ""),
+            "sensitive_data_category_name": r.get("sensitive_data_category_name", ""),
+        }
+        for r in rows if r.get("name")
+    ]
+
+    cache.set("sdc_list", result, "metadata", ttl=600)
+    return result
+
+
+# ─── Data Categories (NEW) ──────────────────────────────────────────────
+
+@router.get("/data-categories")
+async def get_data_categories(db=Depends(get_db)):
+    """Get all data categories with GDPR info from graph."""
+    cache = get_cache_service()
+    cached = cache.get("data_categories_list", "metadata")
+    if cached:
+        return cached
+
+    rows = _rules_query(db, """
+    MATCH (dc:DataCategory)
+    RETURN dc.name as name, dc.definition as definition,
+           dc.gdpr_category_name as gdpr_category_name
+    ORDER BY dc.gdpr_category_name, dc.name
+    """)
+    result = [
+        {
+            "name": r["name"], "definition": r.get("definition", ""),
+            "gdpr_category_name": r.get("gdpr_category_name", ""),
+        }
+        for r in rows if r.get("name")
+    ]
+
+    cache.set("data_categories_list", result, "metadata", ttl=600)
+    return result
+
+
+# ─── All Dropdown Values (unified) ──────────────────────────────────────
+
 @router.get("/all-dropdown-values")
 async def get_all_dropdown_values(db=Depends(get_db)):
-    """Get all dropdown values in one call including legal entities and purpose of processing."""
+    """Get all dropdown values in one call — purely graph-based."""
     cache = get_cache_service()
     cached = cache.get("all_dropdown_values", "metadata")
     if cached:
         return cached
 
-    try:
-        countries = await get_countries(db)
-        purposes = await get_purposes(db)
-        processes = await get_processes(db)
+    result = {}
 
-        result = {
-            "countries": countries if countries else [],
-            "purposes": purposes if purposes else [],
-            "processes": processes if processes else {"l1": [], "l2": [], "l3": []}
-        }
-    except Exception as e:
-        logger.warning(f"Error fetching dropdown values: {e}")
-        result = {
-            "countries": [],
-            "purposes": [],
-            "processes": {"l1": [], "l2": [], "l3": []}
-        }
+    # Core dropdown values
+    result["countries"] = await get_countries(db)
+    result["purposes"] = await get_purposes(db)
+    result["processes"] = await get_processes(db)
 
-    # Fetch dictionary-based values from the rules graph
+    # Dictionary-based values from the rules graph
     for node_type, key in [("Process", "processes_dict"), ("Purpose", "purposes_dict"),
                             ("DataSubject", "data_subjects"), ("GDC", "gdc")]:
-        try:
-            query = f"MATCH (n:{node_type}) RETURN n.name as name, n.category as category ORDER BY n.category, n.name"
-            raw = db.execute_rules_query(query)
-            values = [{"name": r["name"], "category": r.get("category", "")} for r in raw if r.get("name")]
-        except Exception:
-            values = []
-        result[key] = values
+        rows = _rules_query(db, f"""
+        MATCH (n:{node_type})
+        RETURN n.name as name, n.category as category
+        ORDER BY n.category, n.name
+        """)
+        result[key] = [{"name": r["name"], "category": r.get("category", "")} for r in rows if r.get("name")]
 
-    # Legal entities
-    try:
-        legal_entities = await get_legal_entities()
-        result["legal_entities"] = legal_entities
-    except Exception:
-        result["legal_entities"] = {}
+    # Legal entities (graph-native)
+    result["legal_entities"] = await get_legal_entities(db)
 
-    # Purpose of processing reference list
-    try:
-        pop = await get_purpose_of_processing()
-        result["purpose_of_processing"] = pop
-    except Exception:
-        result["purpose_of_processing"] = []
+    # Purpose of processing
+    result["purpose_of_processing"] = await get_purpose_of_processing(db)
 
     # Group data categories
-    try:
-        gdc = await get_group_data_categories(db)
-        result["group_data_categories"] = gdc
-    except Exception:
-        result["group_data_categories"] = []
+    result["group_data_categories"] = await get_group_data_categories(db)
+
+    # New entity types
+    result["regulators"] = await get_regulators(db)
+    result["authorities"] = await get_authorities(db)
+    result["global_business_functions"] = await get_global_business_functions(db)
+    result["sensitive_data_categories"] = await get_sensitive_data_categories(db)
+    result["data_categories"] = await get_data_categories(db)
 
     cache.set("all_dropdown_values", result, "metadata", ttl=600)
     return result

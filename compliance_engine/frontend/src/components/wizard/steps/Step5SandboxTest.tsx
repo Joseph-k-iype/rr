@@ -294,19 +294,27 @@ export function Step5SandboxTest() {
                           </div>
                         )}
 
-                        {/* Duties from permissions */}
-                        {rule.permissions?.flatMap(p => p.duties || []).filter(d => d.name).length > 0 && (
-                          <div>
-                            <span className="text-[10px] font-semibold text-gray-400 uppercase">Duties</span>
-                            <div className="flex flex-wrap gap-1 mt-0.5">
-                              {rule.permissions.flatMap(p => p.duties || []).filter(d => d.name).map((duty, di) => (
-                                <span key={di} className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-medium">
-                                  {duty.module && duty.module !== 'action' ? `[${duty.module}] ` : ''}{duty.name}
-                                </span>
-                              ))}
+                        {/* Duties from permissions — with overflow protection */}
+                        {rule.permissions?.flatMap(p => p.duties || []).filter(d => d.name).length > 0 && (() => {
+                          const allDuties = rule.permissions.flatMap(p => p.duties || []).filter(d => d.name);
+                          return (
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-semibold text-gray-400 uppercase">Duties</span>
+                                <span className="bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full text-[10px] font-medium">{allDuties.length}</span>
+                              </div>
+                              <div className={`mt-0.5 space-y-1 ${allDuties.length > 6 ? 'max-h-[200px] overflow-y-auto pr-1' : ''}`}>
+                                {allDuties.map((duty, di) => (
+                                  <div key={di}>
+                                    <span className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-medium break-words inline-block" style={{ overflowWrap: 'break-word' }}>
+                                      {duty.module && duty.module !== 'action' ? `[${duty.module}] ` : ''}{duty.name}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
-                          </div>
-                        )}
+                          );
+                        })()}
 
                         {/* Prohibition details */}
                         {rule.prohibitions && rule.prohibitions.length > 0 && (
@@ -351,13 +359,18 @@ export function Step5SandboxTest() {
                 </div>
               )}
 
-              {/* Consolidated Duties */}
+              {/* Consolidated Duties — with overflow protection */}
               {latestResult.consolidated_duties && latestResult.consolidated_duties.length > 0 && (
                 <div className="border-t pt-3">
-                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Consolidated Duties</span>
-                  <div className="mt-1.5 flex flex-wrap gap-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Consolidated Duties</span>
+                    <span className="bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full text-[10px] font-medium">{latestResult.consolidated_duties.length}</span>
+                  </div>
+                  <div className={`mt-1.5 space-y-1 ${latestResult.consolidated_duties.length > 6 ? 'max-h-[200px] overflow-y-auto pr-1' : ''}`}>
                     {latestResult.consolidated_duties.map((d, i) => (
-                      <span key={i} className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-medium">{d}</span>
+                      <div key={i}>
+                        <span className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-medium break-words inline-block" style={{ overflowWrap: 'break-word' }}>{d}</span>
+                      </div>
                     ))}
                   </div>
                 </div>

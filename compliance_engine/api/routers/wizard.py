@@ -3,8 +3,12 @@ Wizard Router
 ==============
 6-step rule ingestion wizard with save/resume support.
 Steps: 1. Country, 2. Metadata, 3. Rule, 4. Review, 5. Sandbox Test, 6. Approve
+
+Non-blocking: AI workflow runs in background via asyncio.to_thread(),
+allowing SSE events to stream in real-time.
 """
 
+import asyncio
 import uuid
 import logging
 from typing import Dict
@@ -35,6 +39,45 @@ router = APIRouter(prefix="/api/wizard", tags=["wizard"])
 _sessions: Dict[str, WizardSessionState] = {}
 
 
+async def _run_workflow_background(session: WizardSessionState, session_id: str):
+    """Run the rule ingestion workflow in a background thread.
+    This unblocks the event loop so SSE events can stream in real-time.
+    """
+    try:
+        result = await asyncio.to_thread(
+            run_rule_ingestion,
+            origin_country=session.origin_country,
+            scenario_type="attribute",
+            receiving_countries=session.receiving_countries,
+            rule_text=session.rule_text,
+            data_categories=session.data_categories,
+            is_pii_related=session.is_pii_related,
+            thread_id=session_id,
+        )
+
+        session.analysis_result = result.analysis_result
+        session.dictionary_result = result.dictionary_result
+
+        if result.success:
+            session.edited_rule_definition = result.rule_definition
+            if result.dictionary_result and not session.edited_terms_dictionary:
+                session.edited_terms_dictionary = result.dictionary_result
+            if session.valid_until and session.edited_rule_definition:
+                session.edited_rule_definition['valid_until'] = session.valid_until
+            session.status = WizardSessionStatus.AWAITING_REVIEW
+            session.current_step = 4
+        else:
+            session.error_message = result.error_message
+            session.status = WizardSessionStatus.FAILED
+
+    except Exception as e:
+        logger.error(f"Background workflow error: {e}")
+        session.error_message = str(e)
+        session.status = WizardSessionStatus.FAILED
+
+    session.updated_at = datetime.now().isoformat()
+
+
 @router.post("/start-session", response_model=WizardStartResponse)
 async def start_session(request: WizardStartRequest):
     """Start a new wizard session."""
@@ -62,7 +105,16 @@ async def start_session(request: WizardStartRequest):
 
 @router.post("/submit-step")
 async def submit_step(session_id: str, submission: WizardStepSubmission):
-    """Submit step data. Triggers AI agents at step 3."""
+    """Submit step data.
+
+    New workflow order:
+    Step 1: Rule text + origin country + PII toggle → triggers AI in background
+    Step 2: AI analysis (automatic, frontend polls session for results)
+    Step 3: Metadata (pre-filled from AI suggestions, user edits)
+    Step 4: Review
+    Step 5: Sandbox test
+    Step 6: Approve
+    """
     session = _sessions.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -72,15 +124,26 @@ async def submit_step(session_id: str, submission: WizardStepSubmission):
     session.updated_at = datetime.now().isoformat()
 
     if step == 1:
-        # Country step
+        # NEW Step 1: Rule text + country + PII → triggers AI agents
         session.origin_country = data.get("origin_country")
         session.receiving_countries = data.get("receiving_countries", [])
         session.origin_legal_entity = data.get("origin_legal_entity")
         session.receiving_legal_entity = data.get("receiving_legal_entity")
+        session.rule_text = data.get("rule_text")
+        session.is_pii_related = data.get("is_pii_related", False)
+        session.status = WizardSessionStatus.PROCESSING
         session.current_step = 2
 
+        # Launch AI workflow in background (non-blocking for SSE streaming)
+        asyncio.create_task(_run_workflow_background(session, session_id))
+
     elif step == 2:
-        # Metadata step
+        # Step 2: AI analysis complete → advance to metadata
+        # No data to submit — frontend just polls session status
+        session.current_step = 3
+
+    elif step == 3:
+        # Step 3: Metadata (user-edited, possibly pre-filled from AI)
         session.data_categories = data.get("data_categories", [])
         session.purposes_of_processing = data.get("purposes_of_processing", [])
         session.process_l1 = data.get("process_l1", [])
@@ -88,47 +151,12 @@ async def submit_step(session_id: str, submission: WizardStepSubmission):
         session.process_l3 = data.get("process_l3", [])
         session.group_data_categories = data.get("group_data_categories", [])
         session.valid_until = data.get("valid_until")
-        session.current_step = 3
-
-    elif step == 3:
-        # Rule step - triggers AI agents
-        session.rule_text = data.get("rule_text")
-        session.is_pii_related = data.get("is_pii_related", False)
-        session.status = WizardSessionStatus.PROCESSING
+        # Also accept new simplified fields
+        if data.get("sensitive_data_categories"):
+            session.data_categories = list(set(
+                (session.data_categories or []) + data.get("sensitive_data_categories", [])
+            ))
         session.current_step = 4
-
-        try:
-            result = run_rule_ingestion(
-                origin_country=session.origin_country,
-                scenario_type="attribute",
-                receiving_countries=session.receiving_countries,
-                rule_text=session.rule_text,
-                data_categories=session.data_categories,
-                is_pii_related=session.is_pii_related,
-                thread_id=session_id,
-            )
-
-            session.analysis_result = result.analysis_result
-            session.dictionary_result = result.dictionary_result
-
-            if result.success:
-                session.edited_rule_definition = result.rule_definition
-                # Set edited_terms_dictionary from dictionary_result if not already set
-                if result.dictionary_result and not session.edited_terms_dictionary:
-                    session.edited_terms_dictionary = result.dictionary_result
-                # Add valid_until to rule definition
-                if session.valid_until and session.edited_rule_definition:
-                    session.edited_rule_definition['valid_until'] = session.valid_until
-                session.status = WizardSessionStatus.AWAITING_REVIEW
-                session.current_step = 4
-            else:
-                session.error_message = result.error_message
-                session.status = WizardSessionStatus.FAILED
-
-        except Exception as e:
-            logger.error(f"AI agent error: {e}")
-            session.error_message = str(e)
-            session.status = WizardSessionStatus.FAILED
 
     elif step == 4:
         # Review step - user confirms edited rule

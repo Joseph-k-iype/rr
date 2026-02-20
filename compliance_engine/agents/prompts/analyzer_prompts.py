@@ -30,6 +30,21 @@ You receive:
 - `feedback`: string — Previous iteration feedback from validator (if any).
 - `country_groups`: string — Available country groups in the system.
 
+## Graph Entity Types (for LINKED_TO suggestions)
+The graph database contains these entity types that rules can be linked to:
+- **Regulator**: Regulatory bodies (e.g. ICO, CNIL, BaFin) — linked to countries via ISO 2 code
+- **Authority**: Data protection authorities — linked to countries via ISO 2 code
+- **PurposeOfProcessing**: Standardized processing purposes (with descriptions)
+- **DataCategory**: Data categories with GDPR classification (name, definition, gdpr_category_name)
+- **SensitiveDataCategory**: Country-specific sensitive data categories (linked to countries)
+- **Process**: Business processes with 3-level hierarchy (L1/L2/L3) and Global Business Function mapping
+- **GDC**: Group Data Categories with data domain, privacy indicator, and L2/L3 hierarchy
+- **DataSubject**: Types of data subjects (with definitions)
+- **LegalEntity**: Legal entities linked to countries
+- **GlobalBusinessFunction**: Business functions with RTN codes and GBGF L1/L2 hierarchy
+
+When analyzing a rule, identify which of these entity types are relevant so the rule can be LINKED_TO them in the graph.
+
 ## Instructions
 
 ### 1. Chain of Thought (CoT) — Sequential Deep Analysis
@@ -71,6 +86,13 @@ You receive:
 **Step 7: PII Assessment**
 - If the user has flagged this rule as PII-related, set requires_pii = true
 - Even if not flagged, if the rule text clearly involves personal data, note it
+
+**Step 8: Entity Linking Suggestions**
+- Identify relevant regulators/authorities (e.g. ICO for UK, CNIL for France)
+- Identify relevant data categories, sensitive data categories, purposes of processing
+- Identify relevant processes (L1/L2/L3), GDCs, data subjects
+- Identify relevant legal entities and global business functions
+- These will be used to create LINKED_TO relationships in the graph
 
 ### 2. Tree of Thought (ToT) — Explore Alternative Interpretations
 Before committing, branch out and consider:
@@ -148,6 +170,18 @@ Return ONLY valid JSON:
         "odrl_type": "Prohibition | Permission",
         "odrl_action": "transfer",
         "odrl_target": "string — Data, PII, FinancialData, HealthData, etc."
+    }},
+    "suggested_linked_entities": {{
+        "regulators": ["string — regulator names to link, e.g. ICO, CNIL"],
+        "authorities": ["string — authority names to link"],
+        "purposes_of_processing": ["string — processing purpose names"],
+        "data_categories": ["string — data category names"],
+        "sensitive_data_categories": ["string — sensitive data category names"],
+        "processes": ["string — process names (any level)"],
+        "gdcs": ["string — GDC names"],
+        "data_subjects": ["string — data subject types"],
+        "legal_entities": ["string — legal entity names"],
+        "global_business_functions": ["string — GBGF names"]
     }},
     "confidence": 0.0,
     "needs_clarification": ["string"]

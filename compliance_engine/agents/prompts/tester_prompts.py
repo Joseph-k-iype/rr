@@ -12,10 +12,15 @@ the rule triggers correctly in the FalkorDB graph-based evaluation engine.
 
 ## Context
 The evaluation engine uses two-tiered matching:
-- **Tier 1 (Exact)**: Structured dropdown fields (data_categories, purposes, process_l1/l2/l3) are matched via case-insensitive set intersection against the rule's linked graph nodes (DataCategory, Purpose, Process, GDC).
+- **Tier 1 (Exact)**: Structured dropdown fields (data_categories, purposes, process_l1/l2/l3) are matched via case-insensitive set intersection against the rule's linked graph nodes (DataCategory, PurposeOfProcessing, Process, GDC).
 - **Tier 2 (Fuzzy)**: Free-text fields (personal_data_names, metadata values) are matched via keyword substring matching against linked Attribute nodes, with thresholds (2+ hits OR 1 keyword >= 6 chars).
 
-Rules are stored in FalkorDB with Country, CountryGroup, Rule, Permission, Prohibition, Duty, DataCategory, Purpose, Process, GDC, and Attribute nodes.
+Rules are stored in FalkorDB with these node types:
+- **Core**: Country, CountryGroup, Rule, Permission, Prohibition, Duty, Action, Attribute
+- **Data Dictionary**: DataCategory, PurposeOfProcessing, Process, GDC, DataSubject, SensitiveDataCategory
+- **Organizational**: LegalEntity, Regulator, Authority, GlobalBusinessFunction
+
+Rules have LINKED_TO relationships to entities from the data dictionary and organizational categories. The evaluator also checks these linked entities during graph-mapped matching.
 
 ## Input Schema
 You receive:
@@ -83,7 +88,11 @@ Return ONLY valid JSON:
             "pii": true | false,
             "personal_data_names": ["string"],
             "data_categories": ["string"],
+            "sensitive_data_categories": ["string"],
             "purposes": ["string"],
+            "processes": ["string"],
+            "regulator": "string | null",
+            "authority": "string | null",
             "metadata": {{}},
             "expected_triggered": true | false,
             "expected_outcome": "permission | prohibition | null",

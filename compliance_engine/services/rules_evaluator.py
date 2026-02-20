@@ -289,6 +289,9 @@ class RulesEvaluator:
         # Detect attributes for informational enrichment
         context.detected_attributes = self._detect_attributes(context)
 
+        # Build scenario summary for response reflection
+        scenario_summary = self._build_context_info(context)
+
         triggered_rules: List[TriggeredRule] = []
         consolidated_duties: List[str] = []
         has_prohibition = False
@@ -298,6 +301,7 @@ class RulesEvaluator:
         # ── PHASE 0: Hardcoded attribute rules only (from rules_definitions.py) ──
         # These are global rules (no country matching needed).
         # Graph-stored attribute rules are handled in Phase 1 WITH country matching.
+        # NOTE: No short-circuit — collect all Phase 0 results and continue to Phase 1.
         hardcoded_triggered = self._evaluate_hardcoded_attribute_rules(context)
         for attr_rule in hardcoded_triggered:
             triggered_rules.append(attr_rule)
@@ -307,22 +311,11 @@ class RulesEvaluator:
                 prohibition_reasons.append(
                     f"Attribute rule '{attr_rule.rule_name}': {attr_rule.description}"
                 )
-
-        # Immediate prohibition for hardcoded attribute rules
-        if has_prohibition:
-            context_info = self._build_context_info(context)
-            return RulesEvaluationResponse(
-                transfer_status=TransferStatus.PROHIBITED,
-                origin_country=norm_origin,
-                receiving_country=norm_receiving,
-                pii=pii,
-                triggered_rules=triggered_rules,
-                detected_attributes=self._format_detected(context),
-                consolidated_duties=consolidated_duties,
-                prohibition_reasons=prohibition_reasons,
-                message=f"Transfer PROHIBITED [{context_info}]: Attribute-level rule triggered.",
-                evaluation_time_ms=(time.time() - start_time) * 1000,
-            )
+            # Collect duties from Phase 0 permissions
+            for perm in (attr_rule.permissions or []):
+                for duty in (perm.duties or []):
+                    if duty.name:
+                        consolidated_duties.append(duty.name)
 
         # ── PHASE 1: All graph rules (unified country-based matching) ──
         # Queries ALL enabled rules (case_matching, transfer, attribute) with
@@ -406,6 +399,7 @@ class RulesEvaluator:
                 origin_country=norm_origin,
                 receiving_country=norm_receiving,
                 pii=pii,
+                scenario_summary=scenario_summary,
                 triggered_rules=triggered_rules,
                 detected_attributes=self._format_detected(context),
                 message=f"REQUIRES REVIEW [{context_info}]: No applicable rules found. Please raise a governance ticket.",
@@ -455,6 +449,7 @@ class RulesEvaluator:
                 origin_country=norm_origin,
                 receiving_country=norm_receiving,
                 pii=pii,
+                scenario_summary=scenario_summary,
                 triggered_rules=triggered_rules,
                 precedent_validation=precedent_result,
                 detected_attributes=self._format_detected(context),
@@ -482,6 +477,7 @@ class RulesEvaluator:
                 origin_country=norm_origin,
                 receiving_country=norm_receiving,
                 pii=pii,
+                scenario_summary=scenario_summary,
                 triggered_rules=triggered_rules,
                 precedent_validation=precedent_result,
                 assessment_compliance=assessment_compliance,
@@ -513,6 +509,7 @@ class RulesEvaluator:
             origin_country=norm_origin,
             receiving_country=norm_receiving,
             pii=pii,
+            scenario_summary=scenario_summary,
             triggered_rules=triggered_rules,
             precedent_validation=precedent_result,
             assessment_compliance=assessment_compliance,
@@ -732,47 +729,79 @@ class RulesEvaluator:
         if not linked_attrs and not linked_cats and not linked_purposes and not linked_processes and not linked_gdcs:
             return False
 
-        # ── Tier 1: Exact match on structured fields ──
-        # Data categories (exact, case-insensitive)
-        if linked_cats and context.data_categories:
-            rule_cats_lower = {str(c).lower().strip() for c in linked_cats if c}
-            ctx_cats_lower = {str(c).lower().strip() for c in context.data_categories if c}
-            overlap = rule_cats_lower & ctx_cats_lower
-            if overlap:
-                logger.debug(f"Tier 1 exact match: data_categories overlap={overlap}")
-                return True
+        # ── Tier 1: AND-across-dimensions, OR-within-dimension ──
+        # For each dimension the rule specifies, check if input matches ANY value.
+        # Rule triggers only if ALL specified dimensions match.
+        dimension_results = []
 
-        # GDCs match against data_categories too (GDC = Group Data Category)
-        if linked_gdcs and context.data_categories:
+        # Data categories (exact, case-insensitive) — also check GDCs
+        if linked_cats or linked_gdcs:
+            rule_cats_lower = {str(c).lower().strip() for c in linked_cats if c}
             rule_gdcs_lower = {str(g).lower().strip() for g in linked_gdcs if g}
+            combined_rule_cats = rule_cats_lower | rule_gdcs_lower
             ctx_cats_lower = {str(c).lower().strip() for c in context.data_categories if c}
-            overlap = rule_gdcs_lower & ctx_cats_lower
-            if overlap:
-                logger.debug(f"Tier 1 exact match: GDC overlap={overlap}")
-                return True
+            if ctx_cats_lower and (combined_rule_cats & ctx_cats_lower):
+                dimension_results.append(True)
+                logger.debug(f"Tier 1: data_categories/GDC dimension matched")
+            else:
+                dimension_results.append(False)
+                logger.debug(f"Tier 1: data_categories/GDC dimension NOT matched")
 
         # Purposes (exact, case-insensitive)
-        if linked_purposes and context.purposes:
+        if linked_purposes:
             rule_purp_lower = {str(p).lower().strip() for p in linked_purposes if p}
             ctx_purp_lower = {str(p).lower().strip() for p in context.purposes if p}
-            overlap = rule_purp_lower & ctx_purp_lower
-            if overlap:
-                logger.debug(f"Tier 1 exact match: purposes overlap={overlap}")
-                return True
+            if ctx_purp_lower and (rule_purp_lower & ctx_purp_lower):
+                dimension_results.append(True)
+                logger.debug(f"Tier 1: purposes dimension matched")
+            else:
+                dimension_results.append(False)
+                logger.debug(f"Tier 1: purposes dimension NOT matched")
 
-        # Processes (exact, case-insensitive)
+        # Processes (hierarchical, case-insensitive)
         if linked_processes:
             ctx_processes = set()
-            for proc_list in [context.process_l1, context.process_l2, context.process_l3]:
-                for p in proc_list:
-                    if p:
-                        ctx_processes.add(str(p).lower().strip())
+            for p in context.process_l1:
+                if p:
+                    ctx_processes.add(str(p).lower().strip())
+            for p in context.process_l2:
+                if p:
+                    ctx_processes.add(str(p).lower().strip())
+            for p in context.process_l3:
+                if p:
+                    ctx_processes.add(str(p).lower().strip())
+
+            proc_matched = False
             if ctx_processes:
                 rule_proc_lower = {str(p).lower().strip() for p in linked_processes if p}
-                overlap = rule_proc_lower & ctx_processes
-                if overlap:
-                    logger.debug(f"Tier 1 exact match: processes overlap={overlap}")
-                    return True
+                # Build ancestor set for hierarchical matching
+                ancestor_set = set(ctx_processes)
+                for proc_name in list(ctx_processes):
+                    try:
+                        ancestor_result = self._graph_query("""
+                        MATCH (ancestor:Process)-[:HAS_SUBPROCESS*1..3]->(child:Process)
+                        WHERE toLower(child.name) = toLower($name)
+                        RETURN DISTINCT ancestor.name AS ancestor_name
+                        """, {"name": proc_name})
+                        for row in ancestor_result:
+                            a = row.get('ancestor_name')
+                            if a:
+                                ancestor_set.add(str(a).lower().strip())
+                    except Exception:
+                        pass
+                if rule_proc_lower & ancestor_set:
+                    proc_matched = True
+            dimension_results.append(proc_matched)
+            logger.debug(f"Tier 1: processes dimension {'matched' if proc_matched else 'NOT matched'}")
+
+        # If rule specifies structured dimensions: AND across all
+        if dimension_results:
+            if all(dimension_results):
+                logger.debug(f"Tier 1: all {len(dimension_results)} dimension(s) matched — rule triggers")
+                return True
+            else:
+                logger.debug(f"Tier 1: not all dimensions matched ({dimension_results}) — checking Tier 2")
+                # Don't return False yet — fall through to Tier 2 for linked_attrs
 
         # ── Tier 2: Fuzzy match on free-text fields only ──
         if not linked_attrs:

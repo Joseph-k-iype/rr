@@ -24,6 +24,7 @@ You receive:
 - Identify rule_type (attribute vs case_matching)
 - Determine origin/receiving country matching strategy (group, specific, any, not_in)
 - Note all linked entities: data categories, purposes, processes, GDCs, attributes
+- Check for suggested_linked_entities from the analyzer (regulators, authorities, GBGFs, sensitive data categories, data subjects, legal entities)
 
 ### Step 2: Apply Mixture of Experts Reasoning
 
@@ -42,10 +43,11 @@ You receive:
 - Validate country names exist in graph
 - Ensure data integrity
 
-### Step 3: Generate Three Queries
+### Step 3: Generate Four Queries
 1. `rule_check` — Check for matching historical cases in DataTransferGraph
-2. `rule_insert` — Insert the rule into RulesGraph (use MERGE for idempotency)
-3. `validation` — Validate the rule works after insertion
+2. `rule_insert` — Insert the rule into RulesGraph (use MERGE for idempotency). Include ORIGINATES_FROM and RECEIVED_IN country relationships.
+3. `rule_links` — Create LINKED_TO edges from the Rule to relevant entities (Regulator, Authority, PurposeOfProcessing, DataCategory, SensitiveDataCategory, Process, GDC, DataSubject, LegalEntity, GlobalBusinessFunction). Use MERGE for idempotency. If no entities to link, return an empty string.
+4. `validation` — Validate the rule works after insertion
 
 ## Constraints
 1. **SINGLE STATEMENT ONLY**: Each query must be exactly ONE Cypher statement. NO semicolons. NO multiple statements.
@@ -61,8 +63,18 @@ You receive:
 
 ## RulesGraph Schema
 ```
-Country (name)
+Country (name, iso2, iso3, rtn_code)
   -[:BELONGS_TO]-> CountryGroup (name)
+  -[:HAS_LEGAL_ENTITY]-> LegalEntity (name, country)
+  -[:HAS_REGULATOR]-> Regulator (name, country_code, region, regulator_type,
+                       regulator_definition, regulator_address, notification_m,
+                       notification_nm, approval_m, approval_nm, approval_time,
+                       internal_engagement, automated_notification, regulator_original_name)
+  -[:HAS_AUTHORITY]-> Authority (name, country_code)
+  -[:HAS_GBGF]-> GlobalBusinessFunction (name, rtn_code, gbgf_level_1,
+                  privacy_notice, gbgf_level_2)
+  -[:HAS_SENSITIVE_DATA_CATEGORY]-> SensitiveDataCategory (name, definition,
+                                    country_code, sensitive_data_category_name)
 
 Rule (
     rule_id,               -- string, e.g. "RULE_SAR_UK"
@@ -87,23 +99,34 @@ Rule (
     enabled,               -- boolean
     valid_until            -- date string | null
 )
-  -[:TRIGGERED_BY_ORIGIN]-> CountryGroup | Country
-  -[:TRIGGERED_BY_RECEIVING]-> CountryGroup | Country
+  -[:TRIGGERED_BY_ORIGIN]-> CountryGroup | Country | LegalEntity
+  -[:TRIGGERED_BY_RECEIVING]-> CountryGroup | Country | LegalEntity
   -[:EXCLUDES_RECEIVING]-> CountryGroup
+  -[:ORIGINATES_FROM]-> Country     (mandatory origin country link)
+  -[:RECEIVED_IN]-> Country         (receiving country links)
   -[:HAS_ACTION]-> Action (name)
   -[:HAS_PERMISSION]-> Permission (name)
   -[:HAS_PROHIBITION]-> Prohibition (name)
-  -[:HAS_DATA_CATEGORY]-> DataCategory (name)
-  -[:HAS_PURPOSE]-> Purpose (name)
-  -[:HAS_PROCESS]-> Process (name)
-  -[:HAS_GDC]-> GDC (name)
+  -[:HAS_DATA_CATEGORY]-> DataCategory (name, definition, gdpr_category_name)
+  -[:HAS_PURPOSE]-> PurposeOfProcessing (name, description)
+  -[:HAS_PROCESS]-> Process (name, definition, global_business_function,
+                    process_level_indicator, level_1_name, level_2_name, level_3_name)
+  -[:HAS_GDC]-> GDC (name, definition, data_domain, data_privacy_indicator,
+                gdc_level_2, gdc_level_3)
   -[:HAS_ATTRIBUTE]-> Attribute (name)
+  -[:LINKED_TO]-> Regulator|Authority|PurposeOfProcessing|DataCategory|
+                  SensitiveDataCategory|Process|GDC|DataSubject|
+                  LegalEntity|GlobalBusinessFunction
 
 Permission (name)
   -[:CAN_HAVE_DUTY]-> Duty (name, module, value)
 
 Prohibition (name)
-  -[:CAN_HAVE_DUTY]-> Duty (name, module, value)
+  (Prohibitions do NOT have duties)
+
+DataSubject (name, definition)
+Process -[:HAS_SUBPROCESS]-> Process
+Process -[:BELONGS_TO_GBGF]-> GlobalBusinessFunction
 ```
 
 ## DataTransferGraph Schema
@@ -136,7 +159,8 @@ Return ONLY valid JSON:
     "selected_approach": "performance" | "comprehensive" | "hybrid",
     "cypher_queries": {{
         "rule_check": "string — SINGLE Cypher statement to check for matching cases",
-        "rule_insert": "string — SINGLE Cypher statement to insert rule into RulesGraph",
+        "rule_insert": "string — SINGLE Cypher statement to insert rule into RulesGraph (include ORIGINATES_FROM/RECEIVED_IN)",
+        "rule_links": "string — SINGLE Cypher statement to create LINKED_TO edges to entities (or empty string if none)",
         "validation": "string — SINGLE Cypher statement to validate rule works"
     }},
     "query_params": {{}},
